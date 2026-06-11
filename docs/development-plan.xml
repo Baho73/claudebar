@@ -316,11 +316,11 @@
       </checkpoint>
     </Phase-7>
 
-    <Phase-8 name="Drag-reorder секций и окон" status="pending">
-      <goal>Ручной порядок секций и окон; режим перетаскивания включается ПКМ, ручки видны только в нём</goal>
-      <step-1 module="M-CONFIG" status="pending" verification="V-M-CONFIG">order: порядок секций (os=) и окон в секции (o=); применение и перемещение; персист</step-1>
-      <step-2 module="M-RENDER" status="pending" verification="V-M-RENDER">build_rows применяет order; отрисовка ручек в режиме reorder; индикатор позиции при drag</step-2>
-      <step-3 module="M-MAIN" status="pending" verification="V-M-MAIN">ПКМ -> режим reorder; SetCapture/мышь/ReleaseCapture; вычисление целевого индекса -> order.move + save</step-3>
+    <Phase-8 name="Drag-reorder секций и окон" status="done">
+      <goal>Ручной порядок секций и окон; режим перетаскивания включается ПКМ по заголовку секции, ручки видны только в нём</goal>
+      <step-1 module="M-CONFIG" status="done" verification="V-M-CONFIG">order: порядок секций (os=) и окон в секции (o=); section_index_order/window_rank/move_section/move_window; персист</step-1>
+      <step-2 module="M-RENDER" status="done" verification="V-M-RENDER">build_rows применяет order; Zone::DragHandle; ручки (6 точек) в режиме reorder; подсветка перетаскиваемой строки; чистые section_of_row/section_blocks/window_names</step-2>
+      <step-3 module="M-MAIN" status="done" verification="V-M-MAIN">ПКМ по секции -> режим reorder; SetCapture/мышь/ReleaseCapture; drop_reorder -> move + save. NB: интерактивный drag требует ручного smoke (см. deferred.md)</step-3>
       <checkpoint>
         <tests>cargo test (order применяется к секциям и окнам; os=/o= round-trip); cargo build --release</tests>
         <smoke>ПКМ показывает ручки; перетаскивание меняет порядок секции и окна; порядок переживает перезапуск; в боевом режиме ручек нет</smoke>

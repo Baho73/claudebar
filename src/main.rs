@@ -21,7 +21,7 @@ use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, ReleaseCapture, SetFocus};
+use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, ReleaseCapture, SetCapture, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 const EM_SETSEL: u32 = 0x00B1;
@@ -44,6 +44,8 @@ pub(crate) struct App {
     pub(crate) menu_target: usize, // индекс строки, по которой открыли меню
     pub(crate) last_h: i32,
     pub(crate) bell: HashSet<String>, // имена проектов со «звоночком» (lower) — подсветка строк
+    pub(crate) reorder: bool, // режим перетаскивания: ручки видны, ✕ скрыт
+    pub(crate) drag: Option<i32>, // индекс перетаскиваемой строки во время drag
 }
 
 thread_local! {
@@ -274,6 +276,32 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     }
                     return LRESULT(0);
                 }
+                // режим reorder: начать перетаскивание за ручку
+                let reorder = APP.with(|c| c.borrow().as_ref().map(|a| a.reorder).unwrap_or(false));
+                if reorder {
+                    let w = client_w(hwnd);
+                    let start = APP.with(|c| {
+                        let a = c.borrow();
+                        let a = a.as_ref()?;
+                        let (i, zone) = render::hit_test(x, y, &a.rows, w, true);
+                        if i >= 0 && zone == render::Zone::DragHandle {
+                            Some(i)
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(i) = start {
+                        SetCapture(hwnd);
+                        APP.with(|c| {
+                            if let Some(a) = c.borrow_mut().as_mut() {
+                                a.drag = Some(i);
+                                a.hover = i;
+                            }
+                        });
+                        let _ = InvalidateRect(hwnd, None, BOOL(0));
+                    }
+                    return LRESULT(0);
+                }
                 enum Act {
                     Activate(HWND),
                     Close(HWND),
@@ -286,7 +314,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 let act = APP.with(|c| {
                     let a = c.borrow();
                     let a = a.as_ref()?;
-                    let (i, zone) = render::hit_test(x, y, &a.rows, w);
+                    let (i, zone) = render::hit_test(x, y, &a.rows, w, false);
                     if i < 0 {
                         return None;
                     }
@@ -345,9 +373,32 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 }
                 LRESULT(0)
             }
+            WM_LBUTTONUP => {
+                let dragging = APP.with(|c| c.borrow().as_ref().and_then(|a| a.drag));
+                if let Some(from) = dragging {
+                    let (_, y) = xy(lp);
+                    let _ = ReleaseCapture();
+                    APP.with(|c| {
+                        if let Some(a) = c.borrow_mut().as_mut() {
+                            let to = render::row_at(y, a.rows.len());
+                            drop_reorder(a, from, to);
+                            a.drag = None;
+                            a.config.save(hwnd);
+                            a.rows = render::build_rows(&a.items, &a.recent, &a.config.apps, &a.config);
+                            render::resize(hwnd, a);
+                        }
+                    });
+                    let _ = InvalidateRect(hwnd, None, BOOL(0));
+                }
+                LRESULT(0)
+            }
             WM_RBUTTONUP => {
                 let (_, y) = xy(lp);
-                let witem = APP.with(|c| {
+                enum R {
+                    Menu(usize),
+                    ToggleReorder,
+                }
+                let act = APP.with(|c| {
                     let a = c.borrow();
                     let a = a.as_ref()?;
                     let i = render::row_at(y, a.rows.len());
@@ -355,17 +406,30 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                         return None;
                     }
                     match a.rows[i as usize] {
-                        render::Row::Window { idx } => Some(idx),
+                        render::Row::Window { idx } => Some(R::Menu(idx)),
+                        render::Row::Section { .. } => Some(R::ToggleReorder),
                         _ => None,
                     }
                 });
-                if let Some(wi) = witem {
-                    APP.with(|c| {
-                        if let Some(a) = c.borrow_mut().as_mut() {
-                            a.menu_target = wi;
-                        }
-                    });
-                    show_menu(hwnd);
+                match act {
+                    Some(R::Menu(wi)) => {
+                        APP.with(|c| {
+                            if let Some(a) = c.borrow_mut().as_mut() {
+                                a.menu_target = wi;
+                            }
+                        });
+                        show_menu(hwnd);
+                    }
+                    Some(R::ToggleReorder) => {
+                        APP.with(|c| {
+                            if let Some(a) = c.borrow_mut().as_mut() {
+                                a.reorder = !a.reorder;
+                                a.drag = None;
+                            }
+                        });
+                        let _ = InvalidateRect(hwnd, None, BOOL(0));
+                    }
+                    None => {}
                 }
                 LRESULT(0)
             }
@@ -402,6 +466,59 @@ fn client_w(hwnd: HWND) -> i32 {
         let _ = GetClientRect(hwnd, &mut rc);
     }
     rc.right
+}
+
+// Применить перетаскивание строки from на позицию to: переставить секцию или окно.
+fn drop_reorder(a: &mut App, from: i32, to: i32) {
+    if from < 0 {
+        return;
+    }
+    let rows = a.rows.clone();
+    let from = from as usize;
+    if from >= rows.len() {
+        return;
+    }
+    let to_idx = if to < 0 {
+        rows.len().saturating_sub(1)
+    } else {
+        (to as usize).min(rows.len().saturating_sub(1))
+    };
+    match rows[from] {
+        render::Row::Section { app: fa } => {
+            let blocks = render::section_blocks(&rows, &a.config.apps);
+            let from_block = a.config.apps[fa].block.clone();
+            if let Some(ta) = render::section_of_row(&rows, to_idx) {
+                let to_block = a.config.apps[ta].block.clone();
+                if let (Some(fi), Some(ti)) = (
+                    blocks.iter().position(|b| *b == from_block),
+                    blocks.iter().position(|b| *b == to_block),
+                ) {
+                    a.config.move_section(&blocks, fi, ti);
+                }
+            }
+        }
+        render::Row::Window { idx: fidx } => {
+            let fa = a.items[fidx].app;
+            // переставляем только в пределах той же секции
+            if render::section_of_row(&rows, to_idx) == Some(fa) {
+                let names = render::window_names(&rows, &a.items, fa);
+                let from_name = a.items[fidx].name.clone();
+                let to_name = match rows[to_idx] {
+                    render::Row::Window { idx } if a.items[idx].app == fa => Some(a.items[idx].name.clone()),
+                    _ => None,
+                };
+                let block = a.config.apps[fa].block.clone();
+                if let Some(fi) = names.iter().position(|n| *n == from_name) {
+                    let ti = match to_name {
+                        Some(tn) => names.iter().position(|n| *n == tn).unwrap_or(fi),
+                        None => names.len().saturating_sub(1),
+                    };
+                    a.config.move_window(&block, &names, fi, ti);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 unsafe fn show_menu(hwnd: HWND) {
@@ -516,6 +633,8 @@ fn main() -> Result<()> {
             menu_target: 0,
             last_h: 0,
             bell: HashSet::new(),
+            reorder: false,
+            drag: None,
         };
         refresh_items(&mut app);
 

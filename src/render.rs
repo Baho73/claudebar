@@ -11,15 +11,16 @@
 //
 // START_MODULE_MAP
 //   Row, Zone, W, HEAD, ROW - модель строк, зоны клика и геометрия
-//   build_rows        - сгруппировать окна в строки секций с учётом свёрнутости
-//   paint             - отрисовать строки (заголовки секций + окна + ✕ на hover)
+//   build_rows        - сгруппировать окна в строки секций с учётом свёрнутости и ручного порядка
+//   paint             - отрисовать строки (секции + окна + ✕/ручки + подсветка drag)
 //   resize            - подогнать высоту окна под число строк
 //   row_at            - индекс строки по координате Y
-//   hit_test          - (строка, Zone) по координатам клика
+//   hit_test          - (строка, Zone) по координатам клика (с учётом режима reorder)
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.6.0 - Phase-7 Step 3: Row::RecentMore — «показать все» недавних сверх 6 (VISIBLE_RECENT).
+//   LAST_CHANGE: v1.7.0 - Phase-8 Step 2: ручной порядок в build_rows, Zone::DragHandle, ручки и подсветка drag.
+//   v1.6.0 - Phase-7 Step 3: Row::RecentMore — «показать все» недавних сверх 6 (VISIBLE_RECENT).
 //   v1.5.0 - Phase-6 Step 1: Zone {Body, Close}, hit_test, отрисовка ✕ на hover строки окна.
 //   v1.4.0 - Phase-5 Step 2: иконка приложения в заголовке секции (M-ICON), сдвиг названия.
 //   v1.3.0 - Phase-4 Step 2: подсветка «звенящих» строк по набору App.bell (имя проекта из сигнала).
@@ -43,6 +44,7 @@ pub const HEAD: i32 = 24;
 pub const ROW: i32 = 30;
 const SWATCH: i32 = 14;
 const CLOSE_W: i32 = 24; // ширина правой зоны кнопки ✕ на строке окна
+const HANDLE_W: i32 = 24; // ширина правой зоны ручки drag в режиме reorder
 const VISIBLE_RECENT: usize = 6; // сколько недавних показывать до «показать все»
 
 // Строка панели: заголовок секции приложения или окно внутри секции.
@@ -58,8 +60,9 @@ pub enum Row {
 // Зона клика внутри строки.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Zone {
-    Body,  // основное тело строки (активация / открытие / сворачивание)
-    Close, // правая зона ✕ на строке окна
+    Body,       // основное тело строки (активация / открытие / сворачивание)
+    Close,      // правая зона ✕ на строке окна
+    DragHandle, // правая зона ручки drag в режиме reorder (Section/Window)
 }
 
 fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
@@ -91,6 +94,18 @@ unsafe fn fill(hdc: HDC, r: RECT, c: (u8, u8, u8)) {
     let _ = DeleteObject(br);
 }
 
+// ручка перетаскивания: 6 точек (2 столбца × 3 ряда) в правой зоне строки
+unsafe fn draw_handle(hdc: HDC, rx: i32, top: i32) {
+    let y0 = top + (ROW - 12) / 2;
+    for col in 0..2 {
+        for row in 0..3 {
+            let x = rx + col * 5;
+            let y = y0 + row * 5;
+            fill(hdc, RECT { left: x, top: y, right: x + 2, bottom: y + 2 }, C_DIM);
+        }
+    }
+}
+
 // START_CONTRACT: build_rows
 //   PURPOSE: Сгруппировать окна по приложению в строки секций, скрыть содержимое свёрнутых секций.
 //   INPUTS: { items: &[WinItem]; apps: &[AppDef]; cfg: &Config - состояние свёрнутости }
@@ -104,6 +119,18 @@ pub fn build_rows(items: &[WinItem], recent: &[RecentDoc], apps: &[AppDef], cfg:
             win_by_app[it.app].push(i);
         }
     }
+    // ручной порядок окон внутри секции (неизвестные — после, по имени)
+    for a in 0..apps.len() {
+        let block = &apps[a].block;
+        win_by_app[a].sort_by(|&x, &y| {
+            match (cfg.window_rank(block, &items[x].name), cfg.window_rank(block, &items[y].name)) {
+                (Some(p), Some(q)) => p.cmp(&q),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => items[x].name.cmp(&items[y].name),
+            }
+        });
+    }
     let mut rec_by_app: Vec<Vec<usize>> = vec![Vec::new(); apps.len()];
     for (i, d) in recent.iter().enumerate() {
         if d.app < apps.len() {
@@ -112,7 +139,7 @@ pub fn build_rows(items: &[WinItem], recent: &[RecentDoc], apps: &[AppDef], cfg:
     }
     let mut rows = Vec::new();
     // START_BLOCK_GROUP_SECTIONS
-    for a in 0..apps.len() {
+    for a in cfg.section_index_order(apps) {
         if win_by_app[a].is_empty() && rec_by_app[a].is_empty() {
             continue;
         }
@@ -205,10 +232,14 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 SelectObject(mem, app.font_main);
                 SetTextColor(mem, rgb(C_TXT.0, C_TXT.1, C_TXT.2));
                 dt(mem, &def.block, RECT { left: text_left, top, right: w - 36, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
-                let cnt = app.items.iter().filter(|it| it.app == *a).count();
-                SelectObject(mem, app.font_small);
-                SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
-                dt(mem, &cnt.to_string(), RECT { left: w - 34, top, right: w - 12, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_RIGHT);
+                if app.reorder {
+                    draw_handle(mem, w - 18, top);
+                } else {
+                    let cnt = app.items.iter().filter(|it| it.app == *a).count();
+                    SelectObject(mem, app.font_small);
+                    SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
+                    dt(mem, &cnt.to_string(), RECT { left: w - 34, top, right: w - 12, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_RIGHT);
+                }
             }
             Row::Window { idx } => {
                 let it: &WinItem = &app.items[*idx];
@@ -234,8 +265,8 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 let label = app.config.label(&it.name);
                 let hovered = app.hover == i as i32;
                 // START_BLOCK_ROW_WINDOW_RIGHT
-                // при наведении правый край отдаём под ✕, метку прячем
-                let name_right = if hovered {
+                // в режиме reorder — ручка; при наведении — ✕; иначе метка
+                let name_right = if app.reorder || hovered {
                     w - 28
                 } else if label.is_empty() {
                     w - 10
@@ -243,7 +274,9 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                     w - 96
                 };
                 dt(mem, &it.name, RECT { left: 42, top, right: name_right, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
-                if hovered {
+                if app.reorder {
+                    draw_handle(mem, w - 18, top);
+                } else if hovered {
                     SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
                     dt(mem, "✕", RECT { left: w - CLOSE_W, top, right: w - 6, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
                 } else if !label.is_empty() {
@@ -293,6 +326,16 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
         }
         // разделитель
         fill(mem, RECT { left: 0, top: top + ROW - 1, right: w, bottom: top + ROW }, C_BORDER);
+        // подсветка перетаскиваемой строки
+        if app.drag == Some(i as i32) {
+            let pen = CreatePen(PS_SOLID, 2, rgb(C_BELL_BAR.0, C_BELL_BAR.1, C_BELL_BAR.2));
+            let oldpen = SelectObject(mem, pen);
+            let oldbr = SelectObject(mem, GetStockObject(NULL_BRUSH));
+            let _ = Rectangle(mem, 1, top + 1, w - 1, top + ROW - 1);
+            SelectObject(mem, oldpen);
+            SelectObject(mem, oldbr);
+            let _ = DeleteObject(pen);
+        }
     }
 
     let pen = CreatePen(PS_SOLID, 1, rgb(C_BORDER.0, C_BORDER.1, C_BORDER.2));
@@ -346,21 +389,80 @@ pub fn row_at(y: i32, n: usize) -> i32 {
 }
 
 // START_CONTRACT: hit_test
-//   PURPOSE: Определить строку и зону клика по координатам.
-//   INPUTS: { x: i32; y: i32; rows: &[Row]; w: i32 - ширина клиента }
+//   PURPOSE: Определить строку и зону клика по координатам (с учётом режима reorder).
+//   INPUTS: { x: i32; y: i32; rows: &[Row]; w: i32 - ширина клиента; reorder: bool - режим перетаскивания }
 //   OUTPUTS: { (i32 - индекс строки или -1, Zone) }
 //   SIDE_EFFECTS: none
 // END_CONTRACT: hit_test
-pub fn hit_test(x: i32, y: i32, rows: &[Row], w: i32) -> (i32, Zone) {
+pub fn hit_test(x: i32, y: i32, rows: &[Row], w: i32, reorder: bool) -> (i32, Zone) {
     let i = row_at(y, rows.len());
     if i < 0 {
         return (-1, Zone::Body);
     }
-    let zone = match rows[i as usize] {
+    let row = rows[i as usize];
+    if reorder {
+        let draggable = matches!(row, Row::Section { .. } | Row::Window { .. });
+        if draggable && x >= w - HANDLE_W {
+            return (i, Zone::DragHandle);
+        }
+        return (i, Zone::Body);
+    }
+    let zone = match row {
         Row::Window { .. } if x >= w - CLOSE_W => Zone::Close,
         _ => Zone::Body,
     };
     (i, zone)
+}
+
+// START_CONTRACT: section_of_row
+//   PURPOSE: Индекс приложения секции, к которой относится строка (ближайший Section выше).
+//   INPUTS: { rows: &[Row]; i: usize - индекс строки }
+//   OUTPUTS: { Option<usize> - индекс app или None }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: section_of_row
+pub fn section_of_row(rows: &[Row], i: usize) -> Option<usize> {
+    let last = i.min(rows.len().saturating_sub(1));
+    (0..=last).rev().find_map(|k| match rows[k] {
+        Row::Section { app } => Some(app),
+        _ => None,
+    })
+}
+
+// START_CONTRACT: section_blocks
+//   PURPOSE: Имена блоков секций в текущем видимом порядке (для drag-reorder секций).
+//   INPUTS: { rows: &[Row]; apps: &[AppDef] }
+//   OUTPUTS: { Vec<String> - блоки в порядке строк }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: section_blocks
+pub fn section_blocks(rows: &[Row], apps: &[AppDef]) -> Vec<String> {
+    rows.iter()
+        .filter_map(|r| match r {
+            Row::Section { app } => apps.get(*app).map(|a| a.block.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+// START_CONTRACT: window_names
+//   PURPOSE: Имена окон секции в текущем видимом порядке (для drag-reorder окон).
+//   INPUTS: { rows: &[Row]; items: &[WinItem]; app: usize - индекс приложения секции }
+//   OUTPUTS: { Vec<String> - имена окон секции в порядке строк }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: window_names
+pub fn window_names(rows: &[Row], items: &[WinItem], app: usize) -> Vec<String> {
+    rows.iter()
+        .filter_map(|r| match r {
+            Row::Window { idx } => {
+                let it = &items[*idx];
+                if it.app == app {
+                    Some(it.name.clone())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -390,6 +492,8 @@ mod tests {
             collapsed: Default::default(),
             recent_expanded: Default::default(),
             recent_showall: Default::default(),
+            section_order: Default::default(),
+            window_order: Default::default(),
             pos: None,
             cfg_path: std::path::PathBuf::new(),
         };
@@ -406,15 +510,35 @@ mod tests {
     #[test]
     fn hit_test_window_close_vs_body() {
         let rows = vec![Row::Window { idx: 0 }];
-        // тело строки окна
-        assert_eq!(hit_test(50, HEAD + 2, &rows, W), (0, Zone::Body));
+        // тело строки окна (не reorder)
+        assert_eq!(hit_test(50, HEAD + 2, &rows, W, false), (0, Zone::Body));
         // правая зона ✕
-        assert_eq!(hit_test(W - 5, HEAD + 2, &rows, W), (0, Zone::Close));
+        assert_eq!(hit_test(W - 5, HEAD + 2, &rows, W, false), (0, Zone::Close));
         // секция: даже справа — Body (✕ только у окон)
         let sec = vec![Row::Section { app: 0 }];
-        assert_eq!(hit_test(W - 5, HEAD + 2, &sec, W), (0, Zone::Body));
+        assert_eq!(hit_test(W - 5, HEAD + 2, &sec, W, false), (0, Zone::Body));
         // за пределами строк
-        assert_eq!(hit_test(10, 0, &rows, W).0, -1);
+        assert_eq!(hit_test(10, 0, &rows, W, false).0, -1);
+    }
+
+    #[test]
+    fn hit_test_reorder_gives_drag_handle() {
+        let rows = vec![Row::Window { idx: 0 }, Row::Section { app: 0 }];
+        // в режиме reorder правая зона — ручка (для окна и секции)
+        assert_eq!(hit_test(W - 5, HEAD + 2, &rows, W, true), (0, Zone::DragHandle));
+        assert_eq!(hit_test(W - 5, HEAD + ROW + 2, &rows, W, true), (1, Zone::DragHandle));
+        // тело в режиме reorder — Body, без ✕
+        assert_eq!(hit_test(50, HEAD + 2, &rows, W, true), (0, Zone::Body));
+    }
+
+    #[test]
+    fn section_of_row_and_blocks() {
+        let apps = default_apps();
+        // Section(Word=2), Window, Window
+        let rows = vec![Row::Section { app: 2 }, Row::Window { idx: 0 }, Row::Window { idx: 1 }];
+        assert_eq!(section_of_row(&rows, 0), Some(2));
+        assert_eq!(section_of_row(&rows, 2), Some(2)); // окно относится к Word
+        assert_eq!(section_blocks(&rows, &apps), vec!["Word".to_string()]);
     }
 
     #[test]
@@ -426,6 +550,8 @@ mod tests {
             collapsed: Default::default(),
             recent_expanded: Default::default(),
             recent_showall: Default::default(),
+            section_order: Default::default(),
+            window_order: Default::default(),
             pos: None,
             cfg_path: std::path::PathBuf::new(),
         };

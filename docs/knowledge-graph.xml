@@ -54,11 +54,14 @@
       <depends>M-CONFIG, M-ACTIVATE, M-RECENT, M-ICON</depends>
       <verification-ref>V-M-RENDER</verification-ref>
       <annotations>
-        <fn-build_rows PURPOSE="Сгруппировать окна и недавние в строки по секциям с учётом порядка и showall (Row::RecentMore при &gt;6)" />
-        <fn-paint PURPOSE="Отрисовать строки (GDI, двойной буфер): иконки, ✕, ручки, подсветка bell" />
-        <fn-hit_test PURPOSE="Определить строку и зону (Body|Close|DragHandle|Toggle) по координатам клика" />
+        <fn-build_rows PURPOSE="Сгруппировать окна и недавние в строки по секциям с учётом ручного порядка и showall (Row::RecentMore при &gt;6)" />
+        <fn-paint PURPOSE="Отрисовать строки (GDI, двойной буфер): иконки, ✕, ручки drag, подсветка bell и перетаскивания" />
+        <fn-hit_test PURPOSE="Определить строку и зону (Body|Close|DragHandle) по координатам клика и режиму reorder" />
+        <fn-section_of_row PURPOSE="Индекс приложения секции, к которой относится строка" />
+        <fn-section_blocks PURPOSE="Блоки секций в видимом порядке (drag-reorder секций)" />
+        <fn-window_names PURPOSE="Имена окон секции в видимом порядке (drag-reorder окон)" />
         <type-Row PURPOSE="Типизированная строка: Section | Window | RecentHeader | Recent | RecentMore" />
-        <type-Zone PURPOSE="Зона клика в строке: Body | Close (DragHandle добавится в Phase-8)" />
+        <type-Zone PURPOSE="Зона клика в строке: Body | Close | DragHandle" />
       </annotations>
     </M-RENDER>
 

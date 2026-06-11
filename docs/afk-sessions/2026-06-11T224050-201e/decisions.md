@@ -18,3 +18,9 @@
 - rationale: Введён зональный hit_test и close через PostMessage WM_CLOSE; поправил сигнатуру PostMessageW (HWND, не Option). Обратимо.
 - outcome: Zone/hit_test + ✕ на hover + activate::close; 21 тест, lint 0; коммит.
 
+## 2026-06-11T23:02:29.292Z — Phase-7 показать все недавние
+- class: `reversible-act`
+- context: -
+- rationale: Снят лимит 6 в M-RECENT, состояние showall в M-CONFIG (ra=), Row::RecentMore в M-RENDER. Обратимо.
+- outcome: 22 теста, lint 0; коммит.
+
