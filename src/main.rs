@@ -4,6 +4,7 @@
 //! ЛКМ по строке — перейти в окно. ПКМ — задать цвет и метку. Привязка по имени проекта.
 
 mod config;
+mod win_enum;
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -63,56 +64,12 @@ thread_local! {
 }
 
 // ---------- перечисление окон ----------
-fn extract_project(title: &str, pattern: &str) -> String {
-    let core = title.strip_suffix(pattern).unwrap_or(title);
-    let seg = core.rsplit(" - ").next().unwrap_or(core);
-    seg.trim_start_matches(['●', '•', '*', ' ']).trim().to_string()
-}
-
-extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-    unsafe {
-        if !IsWindowVisible(hwnd).as_bool() {
-            return BOOL(1);
-        }
-        let len = GetWindowTextLengthW(hwnd);
-        if len <= 0 {
-            return BOOL(1);
-        }
-        let mut buf = vec![0u16; (len + 1) as usize];
-        let n = GetWindowTextW(hwnd, &mut buf);
-        if n <= 0 {
-            return BOOL(1);
-        }
-        let title = String::from_utf16_lossy(&buf[..n as usize]);
-        let v = &mut *(lparam.0 as *mut Vec<(HWND, String)>);
-        v.push((hwnd, title));
-        BOOL(1)
-    }
-}
-
 fn refresh_items(app: &mut App) {
-    let mut raw: Vec<(HWND, String)> = Vec::new();
-    unsafe {
-        let _ = EnumWindows(Some(enum_proc), LPARAM(&mut raw as *mut _ as isize));
-    }
-    let mut items: Vec<Item> = Vec::new();
-    for (hwnd, title) in raw {
-        for pat in &app.config.patterns {
-            if title.ends_with(pat.as_str()) {
-                let project = extract_project(&title, pat);
-                if !project.is_empty() {
-                    items.push(Item { hwnd, project });
-                }
-                break;
-            }
-        }
-    }
-    items.sort_by(|a, b| {
-        a.project
-            .cmp(&b.project)
-            .then((a.hwnd.0 as usize).cmp(&(b.hwnd.0 as usize)))
-    });
-    app.items = items;
+    let raw = win_enum::list_windows();
+    app.items = win_enum::match_windows(&raw, &app.config.patterns)
+        .into_iter()
+        .map(|(hwnd, project)| Item { hwnd, project })
+        .collect();
 }
 
 // ---------- активация чужого окна ----------
