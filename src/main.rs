@@ -414,11 +414,11 @@ fn handle_command(hwnd: HWND, id: usize) {
             let _ = InvalidateRect(hwnd, None, BOOL(0));
         }
     } else if id == ID_LABEL {
-        let (hinst, cur) = APP.with(|c| {
+        let Some((hinst, cur)) = APP.with(|c| {
             let a = c.borrow();
-            let a = a.as_ref().unwrap();
-            (a.hinst, a.config.label(&project))
-        });
+            let a = a.as_ref()?;
+            Some((a.hinst, a.config.label(&project)))
+        }) else { return };
         if let Some(s) = prompt_text(hwnd, hinst, &cur) {
             APP.with(|c| {
                 if let Some(a) = c.borrow_mut().as_mut() {

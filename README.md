@@ -21,7 +21,7 @@ When you run many Claude Code sessions, each lives in its own editor window. The
 
 ## Features
 
-- Always-on-top vertical bar, lists every editor window that matches a title pattern.
+- Always-on-top vertical bar, lists every window of a known editor/office process (VS Code, Cursor, Word, Excel, MS Project).
 - Groups by **project name**, not the active file — the row stays put when you switch files.
 - **Left-click** a row → switch to that window (restores it if minimized).
 - **Right-click** a row → pick a color (8 presets) and set a label.
@@ -49,16 +49,19 @@ When you run many Claude Code sessions, each lives in its own editor window. The
 
 ## How it finds windows
 
-ClaudeBar lists top-level visible windows whose title ends with one of the configured patterns. Defaults:
+ClaudeBar lists top-level visible windows that belong to a known editor/office **process**. Built-in set:
 
 ```
- - Visual Studio Code
- - Cursor
+code.exe    → VS Code
+cursor.exe  → Cursor
+winword.exe → Word
+excel.exe   → Excel
+winproj.exe → MS Project
 ```
 
-The **project name** is the title segment just before that suffix (VS Code titles look like `file.rs - ProjectName - Visual Studio Code`).
+The **project name** is extracted from the window title per app: for VS Code / Cursor it is the segment just before the ` - Visual Studio Code` / ` - Cursor` suffix (titles look like `file.rs - ProjectName - Visual Studio Code`); for Office apps it is the document name.
 
-To track other editors/terminals, add patterns in `claudebar.ini` (one `pattern=` line each), e.g. `pattern= - Sublime Text`.
+The tracked set is built in (matched by process name); there is no user-editable pattern list yet — see BACKLOG.
 
 ## Config file (`claudebar.ini`)
 
@@ -67,14 +70,14 @@ Created automatically next to the exe. Plain text:
 ```
 # claudebar config
 pos=1570,40
-pattern= - Visual Studio Code
-pattern= - Cursor
+c=Excel
 p=ConstructMan	3	opus
 p=Test_2026.05.28	1	sonnet
 ```
 
 - `pos=X,Y` — panel position.
-- `pattern=...` — title suffixes to match.
+- `c=<block>` — collapsed section (by app block name).
+- `re=<block>` — section with the "recent" sub-block expanded.
 - `p=<project>\t<colorIndex 0-7>\t<label>` — per-project settings (tab-separated; color `-1` means auto).
 
 ## Build from source
