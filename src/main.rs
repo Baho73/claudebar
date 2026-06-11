@@ -5,6 +5,7 @@
 
 mod activate;
 mod config;
+mod render;
 mod win_enum;
 
 use std::cell::RefCell;
@@ -21,42 +22,25 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 const EM_SETSEL: u32 = 0x00B1;
 
-// ---------- геометрия и цвета ----------
-const W: i32 = 252;
-const HEAD: i32 = 24;
-const ROW: i32 = 30;
-const SWATCH: i32 = 14;
-
-fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
-    COLORREF((r as u32) | ((g as u32) << 8) | ((b as u32) << 16))
-}
-const C_BG: (u8, u8, u8) = (16, 21, 38);
-const C_HEAD: (u8, u8, u8) = (26, 34, 58);
-const C_TXT: (u8, u8, u8) = (223, 230, 243);
-const C_DIM: (u8, u8, u8) = (150, 165, 200);
-const C_ACTIVE: (u8, u8, u8) = (34, 52, 96);
-const C_HOVER: (u8, u8, u8) = (24, 32, 60);
-const C_BORDER: (u8, u8, u8) = (40, 54, 90);
-
 // id команд меню
 const ID_COLOR_BASE: usize = 1; // 1..=8
 const ID_LABEL: usize = 20;
 const ID_LABEL_CLEAR: usize = 21;
 
 // ---------- состояние ----------
-struct Item {
-    hwnd: HWND,
-    project: String,
+pub(crate) struct Item {
+    pub(crate) hwnd: HWND,
+    pub(crate) project: String,
 }
-struct App {
-    hinst: HINSTANCE,
-    items: Vec<Item>,
-    config: Config,
-    font_main: HFONT,
-    font_small: HFONT,
-    hover: i32,
-    menu_target: usize, // индекс строки, по которой открыли меню
-    last_h: i32,
+pub(crate) struct App {
+    pub(crate) hinst: HINSTANCE,
+    pub(crate) items: Vec<Item>,
+    pub(crate) config: Config,
+    pub(crate) font_main: HFONT,
+    pub(crate) font_small: HFONT,
+    pub(crate) hover: i32,
+    pub(crate) menu_target: usize, // индекс строки, по которой открыли меню
+    pub(crate) last_h: i32,
 }
 
 thread_local! {
@@ -218,167 +202,6 @@ fn prompt_text(parent: HWND, hinst: HINSTANCE, initial: &str) -> Option<String> 
     }
 }
 
-// ---------- отрисовка ----------
-unsafe fn dt(hdc: HDC, s: &str, mut r: RECT, fmt: DRAW_TEXT_FORMAT) {
-    if s.is_empty() {
-        return;
-    }
-    let mut b: Vec<u16> = s.encode_utf16().collect();
-    DrawTextW(hdc, &mut b, &mut r, fmt | DT_NOPREFIX);
-}
-
-unsafe fn fill(hdc: HDC, r: RECT, c: (u8, u8, u8)) {
-    let br = CreateSolidBrush(rgb(c.0, c.1, c.2));
-    FillRect(hdc, &r, br);
-    let _ = DeleteObject(br);
-}
-
-unsafe fn paint(hwnd: HWND, app: &App) {
-    let mut ps = PAINTSTRUCT::default();
-    let hdc = BeginPaint(hwnd, &mut ps);
-    let mut rc = RECT::default();
-    let _ = GetClientRect(hwnd, &mut rc);
-    let w = rc.right;
-    let h = rc.bottom;
-
-    let mem = CreateCompatibleDC(hdc);
-    let bmp = CreateCompatibleBitmap(hdc, w, h);
-    let old = SelectObject(mem, bmp);
-
-    // фон + рамка
-    fill(mem, RECT { left: 0, top: 0, right: w, bottom: h }, C_BG);
-    fill(mem, RECT { left: 0, top: 0, right: w, bottom: HEAD }, C_HEAD);
-    SetBkMode(mem, TRANSPARENT);
-
-    // шапка
-    SelectObject(mem, app.font_small);
-    SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
-    dt(
-        mem,
-        "≡ ClaudeBar",
-        RECT { left: 10, top: 0, right: w - 24, bottom: HEAD },
-        DT_SINGLELINE | DT_VCENTER | DT_LEFT,
-    );
-    dt(
-        mem,
-        "✕",
-        RECT { left: w - 24, top: 0, right: w, bottom: HEAD },
-        DT_SINGLELINE | DT_VCENTER | DT_CENTER,
-    );
-
-    if app.items.is_empty() {
-        SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
-        dt(
-            mem,
-            "нет окон Claude Code",
-            RECT { left: 10, top: HEAD, right: w - 10, bottom: HEAD + ROW },
-            DT_SINGLELINE | DT_VCENTER | DT_LEFT,
-        );
-    }
-
-    let fg = GetForegroundWindow();
-    for (i, it) in app.items.iter().enumerate() {
-        let top = HEAD + i as i32 * ROW;
-        let row = RECT { left: 0, top, right: w, bottom: top + ROW };
-        if it.hwnd == fg {
-            fill(mem, row, C_ACTIVE);
-        } else if app.hover == i as i32 {
-            fill(mem, row, C_HOVER);
-        }
-        // цветная плашка
-        let cy = top + (ROW - SWATCH) / 2;
-        let (_, r, g, b) = PALETTE[app.config.color_idx(&it.project)];
-        fill(
-            mem,
-            RECT { left: 10, top: cy, right: 10 + SWATCH, bottom: cy + SWATCH },
-            (r, g, b),
-        );
-        // имя проекта
-        SelectObject(mem, app.font_main);
-        SetTextColor(mem, rgb(C_TXT.0, C_TXT.1, C_TXT.2));
-        let label = app.config.label(&it.project);
-        let right_pad = if label.is_empty() { 10 } else { 96 };
-        dt(
-            mem,
-            &it.project,
-            RECT { left: 32, top, right: w - right_pad, bottom: top + ROW },
-            DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
-        );
-        // метка справа
-        if !label.is_empty() {
-            SelectObject(mem, app.font_small);
-            SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
-            dt(
-                mem,
-                &label,
-                RECT { left: w - 92, top, right: w - 10, bottom: top + ROW },
-                DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_END_ELLIPSIS,
-            );
-        }
-        // разделитель
-        fill(
-            mem,
-            RECT { left: 0, top: top + ROW - 1, right: w, bottom: top + ROW },
-            C_BORDER,
-        );
-    }
-    // внешняя рамка
-    let pen = CreatePen(PS_SOLID, 1, rgb(C_BORDER.0, C_BORDER.1, C_BORDER.2));
-    let oldpen = SelectObject(mem, pen);
-    let oldbr = SelectObject(mem, GetStockObject(NULL_BRUSH));
-    let _ = Rectangle(mem, 0, 0, w, h);
-    SelectObject(mem, oldpen);
-    SelectObject(mem, oldbr);
-    let _ = DeleteObject(pen);
-
-    let _ = BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
-    SelectObject(mem, old);
-    let _ = DeleteObject(bmp);
-    let _ = DeleteDC(mem);
-    let _ = EndPaint(hwnd, &ps);
-}
-
-// ---------- размер окна по числу строк ----------
-unsafe fn resize(hwnd: HWND, app: &mut App) {
-    let n = app.items.len().max(1) as i32;
-    let h = HEAD + ROW * n;
-    if h != app.last_h {
-        app.last_h = h;
-        let _ = SetWindowPos(
-            hwnd,
-            HWND_TOPMOST,
-            0,
-            0,
-            W,
-            h,
-            SWP_NOMOVE | SWP_NOACTIVATE,
-        );
-    } else {
-        // переутвердить topmost без изменения размера/позиции
-        let _ = SetWindowPos(
-            hwnd,
-            HWND_TOPMOST,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-        );
-    }
-}
-
-fn row_at(y: i32, n: usize) -> i32 {
-    if y < HEAD {
-        return -1;
-    }
-    let i = (y - HEAD) / ROW;
-    if i >= 0 && (i as usize) < n {
-        i
-    } else {
-        -1
-    }
-}
-
 // ---------- оконная процедура ----------
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
@@ -387,7 +210,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 APP.with(|c| {
                     if let Some(app) = c.borrow_mut().as_mut() {
                         refresh_items(app);
-                        resize(hwnd, app);
+                        render::resize(hwnd, app);
                     }
                 });
                 let _ = InvalidateRect(hwnd, None, BOOL(0));
@@ -396,7 +219,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             WM_PAINT => {
                 APP.with(|c| {
                     if let Some(app) = c.borrow().as_ref() {
-                        paint(hwnd, app);
+                        render::paint(hwnd, app);
                     }
                 });
                 LRESULT(0)
@@ -406,7 +229,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 let new = APP.with(|c| {
                     c.borrow()
                         .as_ref()
-                        .map(|a| row_at(y, a.items.len()))
+                        .map(|a| render::row_at(y, a.items.len()))
                         .unwrap_or(-1)
                 });
                 let changed = APP.with(|c| {
@@ -425,7 +248,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             }
             WM_LBUTTONDOWN => {
                 let (x, y) = xy(lp);
-                if y < HEAD {
+                if y < render::HEAD {
                     let w = client_w(hwnd);
                     if x > w - 24 {
                         let _ = DestroyWindow(hwnd);
@@ -439,7 +262,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 let target = APP.with(|c| {
                     let a = c.borrow();
                     let a = a.as_ref()?;
-                    let i = row_at(y, a.items.len());
+                    let i = render::row_at(y, a.items.len());
                     if i >= 0 {
                         Some(a.items[i as usize].hwnd)
                     } else {
@@ -456,7 +279,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 let idx = APP.with(|c| {
                     c.borrow()
                         .as_ref()
-                        .map(|a| row_at(y, a.items.len()))
+                        .map(|a| render::row_at(y, a.items.len()))
                         .unwrap_or(-1)
                 });
                 if idx >= 0 {
@@ -630,8 +453,8 @@ fn main() -> Result<()> {
         // позиция: из конфига или правый верхний угол
         let sw = GetSystemMetrics(SM_CXSCREEN);
         let n = app.items.len().max(1) as i32;
-        let h = HEAD + ROW * n;
-        let (x, y) = app.config.pos.unwrap_or((sw - W - 20, 40));
+        let h = render::HEAD + render::ROW * n;
+        let (x, y) = app.config.pos.unwrap_or((sw - render::W - 20, 40));
 
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
@@ -640,7 +463,7 @@ fn main() -> Result<()> {
             WS_POPUP,
             x,
             y,
-            W,
+            render::W,
             h,
             None,
             None,
