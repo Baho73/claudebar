@@ -1,8 +1,8 @@
 // FILE: src/config.rs
-// VERSION: 1.0.0
+// VERSION: 1.1.0
 // START_MODULE_CONTRACT
-//   PURPOSE: Загрузка/сохранение claudebar.ini и доступ к настройкам проектов (цвет, метка).
-//   SCOPE: парсинг/сериализация ini, палитра цветов, авто-цвет по имени, позиция панели, шаблоны заголовков.
+//   PURPOSE: Конфигурация: определения приложений (по процессу), настройки проектов (цвет, метка), позиция.
+//   SCOPE: палитра, авто-цвет, AppDef/NameMode, дефолтный набор приложений, парсинг/сериализация ini.
 //   DEPENDS: none (Win32 только для чтения позиции окна при сохранении)
 //   LINKS: M-CONFIG
 //   ROLE: RUNTIME
@@ -10,14 +10,18 @@
 // END_MODULE_CONTRACT
 //
 // START_MODULE_MAP
-//   Config        - корень конфигурации: patterns, projects, pos, cfg_path
+//   Config        - корень конфигурации: apps, projects, pos, cfg_path
+//   AppDef        - приложение: имя процесса, имя блока, правило имени, расширения
+//   NameMode      - как извлекать имя из заголовка: Project{suffix} | Document
 //   ProjConf      - настройки проекта: индекс цвета (-1 = авто), метка
-//   PALETTE       - палитра из 8 цветов проектов (имя, r, g, b)
-//   auto_color    - детерминированный цвет по имени проекта
+//   PALETTE       - палитра из 8 цветов
+//   auto_color    - детерминированный цвет по имени
+//   default_apps  - встроенный набор приложений (VS Code, Cursor, Word, Excel, MS Project)
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.0.0 - Выделено из монолита main.rs (Phase-1, Step 1). Паритет v0.1: формат ini и поведение сохранены.
+//   LAST_CHANGE: v1.1.0 - Phase-2 Step 1: AppDef/NameMode и определение приложений по процессу; patterns заменены на apps.
+//   v1.0.0 - Выделено из монолита main.rs (Phase-1, Step 1).
 // END_CHANGE_SUMMARY
 
 use std::collections::HashMap;
@@ -26,7 +30,6 @@ use std::path::PathBuf;
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
-// палитра цветов проектов: (имя, r, g, b)
 pub const PALETTE: [(&str, u8, u8, u8); 8] = [
     ("Синий", 0x5B, 0x8F, 0xF9),
     ("Зелёный", 0x61, 0xD4, 0xA6),
@@ -44,19 +47,32 @@ pub struct ProjConf {
     pub label: String,
 }
 
+// Как извлекать имя элемента из заголовка окна.
+#[derive(Clone)]
+pub enum NameMode {
+    // Проект редактора: отбросить суффикс приложения, взять последний сегмент по " - ".
+    Project { suffix: String },
+    // Имя документа: первый сегмент по " - " (Word/Excel/Project).
+    Document,
+}
+
+#[derive(Clone)]
+pub struct AppDef {
+    pub proc: String, // имя exe в нижнем регистре, напр. "code.exe"
+    #[allow(dead_code)] // используется в Phase-2 Step-2 (заголовок секции)
+    pub block: String,
+    pub mode: NameMode, // правило извлечения имени
+    #[allow(dead_code)] // используется в Phase-3 (недавние документы)
+    pub exts: Vec<String>,
+}
+
 pub struct Config {
-    pub patterns: Vec<String>,
+    pub apps: Vec<AppDef>,
     pub projects: HashMap<String, ProjConf>,
     pub pos: Option<(i32, i32)>,
     pub cfg_path: PathBuf,
 }
 
-// START_CONTRACT: auto_color
-//   PURPOSE: Детерминированный индекс цвета по имени проекта (стабилен между запусками).
-//   INPUTS: { name: &str - имя проекта }
-//   OUTPUTS: { usize - индекс в PALETTE }
-//   SIDE_EFFECTS: none
-// END_CONTRACT: auto_color
 pub fn auto_color(name: &str) -> usize {
     let h = name
         .bytes()
@@ -64,21 +80,31 @@ pub fn auto_color(name: &str) -> usize {
     (h % PALETTE.len() as u32) as usize
 }
 
-fn default_patterns() -> Vec<String> {
+// START_CONTRACT: default_apps
+//   PURPOSE: Встроенный набор отслеживаемых приложений с правилами имени и расширениями.
+//   INPUTS: {}
+//   OUTPUTS: { Vec<AppDef> }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: default_apps
+pub fn default_apps() -> Vec<AppDef> {
+    fn app(proc: &str, block: &str, mode: NameMode, exts: &[&str]) -> AppDef {
+        AppDef {
+            proc: proc.to_string(),
+            block: block.to_string(),
+            mode,
+            exts: exts.iter().map(|s| s.to_string()).collect(),
+        }
+    }
     vec![
-        " - Visual Studio Code".to_string(),
-        " - Cursor".to_string(),
+        app("code.exe", "VS Code", NameMode::Project { suffix: " - Visual Studio Code".into() }, &[]),
+        app("cursor.exe", "Cursor", NameMode::Project { suffix: " - Cursor".into() }, &[]),
+        app("winword.exe", "Word", NameMode::Document, &["docx", "doc", "rtf"]),
+        app("excel.exe", "Excel", NameMode::Document, &["xlsx", "xls", "csv"]),
+        app("winproj.exe", "MS Project", NameMode::Document, &["mpp"]),
     ]
 }
 
-// START_CONTRACT: parse_ini
-//   PURPOSE: Чистый парсинг текста claudebar.ini в (patterns, projects, pos).
-//   INPUTS: { text: &str - содержимое ini }
-//   OUTPUTS: { (Vec<String>, HashMap<String,ProjConf>, Option<(i32,i32)>) }
-//   SIDE_EFFECTS: none
-// END_CONTRACT: parse_ini
-fn parse_ini(text: &str) -> (Vec<String>, HashMap<String, ProjConf>, Option<(i32, i32)>) {
-    let mut patterns: Vec<String> = Vec::new();
+fn parse_ini(text: &str) -> (HashMap<String, ProjConf>, Option<(i32, i32)>) {
     let mut projects: HashMap<String, ProjConf> = HashMap::new();
     let mut pos: Option<(i32, i32)> = None;
     // START_BLOCK_PARSE_LINES
@@ -89,10 +115,6 @@ fn parse_ini(text: &str) -> (Vec<String>, HashMap<String, ProjConf>, Option<(i32
                 if let (Ok(x), Ok(y)) = (x.trim().parse(), y.trim().parse()) {
                     pos = Some((x, y));
                 }
-            }
-        } else if let Some(v) = line.strip_prefix("pattern=") {
-            if !v.is_empty() {
-                patterns.push(v.to_string());
             }
         } else if let Some(v) = line.strip_prefix("p=") {
             let parts: Vec<&str> = v.splitn(3, '\t').collect();
@@ -105,38 +127,20 @@ fn parse_ini(text: &str) -> (Vec<String>, HashMap<String, ProjConf>, Option<(i32
         }
     }
     // END_BLOCK_PARSE_LINES
-    (patterns, projects, pos)
+    (projects, pos)
 }
 
 impl Config {
-    // START_CONTRACT: load
-    //   PURPOSE: Прочитать claudebar.ini (или дефолты при отсутствии/ошибке).
-    //   INPUTS: { cfg_path: PathBuf - путь к ini }
-    //   OUTPUTS: { Config }
-    //   SIDE_EFFECTS: чтение файла
-    // END_CONTRACT: load
     pub fn load(cfg_path: PathBuf) -> Config {
         let text = std::fs::read_to_string(&cfg_path).unwrap_or_default();
-        let (mut patterns, projects, pos) = parse_ini(&text);
-        if patterns.is_empty() {
-            patterns = default_patterns();
-        }
-        Config { patterns, projects, pos, cfg_path }
+        let (projects, pos) = parse_ini(&text);
+        Config { apps: default_apps(), projects, pos, cfg_path }
     }
 
-    // START_CONTRACT: serialize
-    //   PURPOSE: Чистая сериализация конфигурации в текст ini с заданной позицией.
-    //   INPUTS: { pos: Option<(i32,i32)> - позиция панели }
-    //   OUTPUTS: { String - содержимое ini }
-    //   SIDE_EFFECTS: none
-    // END_CONTRACT: serialize
     pub fn serialize(&self, pos: Option<(i32, i32)>) -> String {
         let mut out = String::from("# claudebar config\n");
         if let Some((x, y)) = pos {
             out += &format!("pos={},{}\n", x, y);
-        }
-        for p in &self.patterns {
-            out += &format!("pattern={}\n", p);
         }
         for (project, c) in &self.projects {
             if c.color < 0 && c.label.is_empty() {
@@ -147,12 +151,6 @@ impl Config {
         out
     }
 
-    // START_CONTRACT: save
-    //   PURPOSE: Сохранить конфигурацию в claudebar.ini, взяв позицию из окна панели.
-    //   INPUTS: { hwnd: HWND - окно панели для чтения позиции }
-    //   OUTPUTS: { () }
-    //   SIDE_EFFECTS: запись файла; чтение позиции окна (GetWindowRect)
-    // END_CONTRACT: save
     pub fn save(&self, hwnd: HWND) {
         let mut pos = self.pos;
         let mut rc = RECT::default();
@@ -186,17 +184,12 @@ impl Config {
 mod tests {
     use super::*;
 
-    fn cfg(patterns: Vec<&str>, projects: Vec<(&str, i32, &str)>) -> Config {
+    fn cfg(projects: Vec<(&str, i32, &str)>) -> Config {
         let mut map = HashMap::new();
         for (p, c, l) in projects {
             map.insert(p.to_string(), ProjConf { color: c, label: l.to_string() });
         }
-        Config {
-            patterns: patterns.into_iter().map(|s| s.to_string()).collect(),
-            projects: map,
-            pos: None,
-            cfg_path: PathBuf::new(),
-        }
+        Config { apps: default_apps(), projects: map, pos: None, cfg_path: PathBuf::new() }
     }
 
     #[test]
@@ -209,20 +202,17 @@ mod tests {
 
     #[test]
     fn color_idx_uses_set_or_auto_and_clamps() {
-        let mut c = cfg(vec![], vec![]);
-        // не задан -> авто
+        let mut c = cfg(vec![]);
         assert_eq!(c.color_idx("Proj"), auto_color("Proj"));
-        // задан -> он
         c.set_color("Proj", 3);
         assert_eq!(c.color_idx("Proj"), 3);
-        // за пределами -> клампится
         c.set_color("Proj", 100);
         assert_eq!(c.color_idx("Proj"), PALETTE.len() - 1);
     }
 
     #[test]
     fn label_set_get_clear() {
-        let mut c = cfg(vec![], vec![]);
+        let mut c = cfg(vec![]);
         assert_eq!(c.label("Proj"), "");
         c.set_label("Proj", "opus".into());
         assert_eq!(c.label("Proj"), "opus");
@@ -232,14 +222,10 @@ mod tests {
 
     #[test]
     fn serialize_parse_roundtrip() {
-        let c = cfg(
-            vec![" - Visual Studio Code", " - Cursor"],
-            vec![("Proj A", 3, "opus"), ("Empty", -1, "")],
-        );
+        let c = cfg(vec![("Proj A", 3, "opus"), ("Empty", -1, "")]);
         let text = c.serialize(Some((10, 20)));
-        let (pat, proj, pos) = parse_ini(&text);
+        let (proj, pos) = parse_ini(&text);
         assert_eq!(pos, Some((10, 20)));
-        assert_eq!(pat, vec![" - Visual Studio Code", " - Cursor"]);
         let a = proj.get("Proj A").unwrap();
         assert_eq!(a.color, 3);
         assert_eq!(a.label, "opus");
@@ -248,10 +234,11 @@ mod tests {
     }
 
     #[test]
-    fn parse_empty_has_no_patterns() {
-        let (pat, proj, pos) = parse_ini("# just a comment\n");
-        assert!(pat.is_empty());
-        assert!(proj.is_empty());
-        assert_eq!(pos, None);
+    fn default_apps_cover_expected_processes() {
+        let apps = default_apps();
+        let procs: Vec<&str> = apps.iter().map(|a| a.proc.as_str()).collect();
+        for p in ["code.exe", "cursor.exe", "winword.exe", "excel.exe", "winproj.exe"] {
+            assert!(procs.contains(&p), "missing {p}");
+        }
     }
 }

@@ -118,7 +118,7 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
         }
         // цветная плашка
         let cy = top + (ROW - SWATCH) / 2;
-        let (_, r, g, b) = PALETTE[app.config.color_idx(&it.project)];
+        let (_, r, g, b) = PALETTE[app.config.color_idx(&it.name)];
         fill(
             mem,
             RECT { left: 10, top: cy, right: 10 + SWATCH, bottom: cy + SWATCH },
@@ -127,11 +127,11 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
         // имя проекта
         SelectObject(mem, app.font_main);
         SetTextColor(mem, rgb(C_TXT.0, C_TXT.1, C_TXT.2));
-        let label = app.config.label(&it.project);
+        let label = app.config.label(&it.name);
         let right_pad = if label.is_empty() { 10 } else { 96 };
         dt(
             mem,
-            &it.project,
+            &it.name,
             RECT { left: 32, top, right: w - right_pad, bottom: top + ROW },
             DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
         );

@@ -28,13 +28,9 @@ const ID_LABEL: usize = 20;
 const ID_LABEL_CLEAR: usize = 21;
 
 // ---------- состояние ----------
-pub(crate) struct Item {
-    pub(crate) hwnd: HWND,
-    pub(crate) project: String,
-}
 pub(crate) struct App {
     pub(crate) hinst: HINSTANCE,
-    pub(crate) items: Vec<Item>,
+    pub(crate) items: Vec<win_enum::WinItem>,
     pub(crate) config: Config,
     pub(crate) font_main: HFONT,
     pub(crate) font_small: HFONT,
@@ -50,10 +46,7 @@ thread_local! {
 // ---------- перечисление окон ----------
 fn refresh_items(app: &mut App) {
     let raw = win_enum::list_windows();
-    app.items = win_enum::match_windows(&raw, &app.config.patterns)
-        .into_iter()
-        .map(|(hwnd, project)| Item { hwnd, project })
-        .collect();
+    app.items = win_enum::match_windows(&raw, &app.config.apps);
 }
 
 // ---------- ввод метки (модальный prompt) ----------
@@ -348,7 +341,7 @@ fn handle_command(hwnd: HWND, id: usize) {
     let project = APP.with(|c| {
         let a = c.borrow();
         let a = a.as_ref()?;
-        a.items.get(a.menu_target).map(|it| it.project.clone())
+        a.items.get(a.menu_target).map(|it| it.name.clone())
     });
     let Some(project) = project else { return };
 
