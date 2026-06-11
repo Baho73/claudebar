@@ -114,13 +114,15 @@
       </scenarios>
     </V-M-SIGNAL>
     <V-M-ICON MODULE="M-ICON" PRIORITY="low">
-      <test-files><file>— (Win32, ручной smoke)</file></test-files>
+      <test-files><file>src/icon.rs (#[cfg(test)] на icon_from_path)</file></test-files>
       <module-checks>
-        <check-1>Ручной smoke: иконки приложений видны в заголовках секций</check-1>
+        <check-1>cargo test icon</check-1>
+        <check-2>Ручной smoke: иконки приложений видны в заголовках секций (Code/Cursor/Word/Excel/MS Project)</check-2>
       </module-checks>
       <scenarios>
-        <scenario-1 kind="success">section_icon возвращает HICON для окна; кэш не запрашивает повторно</scenario-1>
+        <scenario-1 kind="success">section_icon возвращает HICON для окна; кэш не запрашивает повторно при успехе</scenario-1>
         <scenario-2 kind="failure">Окно без иконки -> None, заголовок рисуется без иконки (без краха)</scenario-2>
+        <scenario-3 kind="regression">Иконки не отображались у Cursor/Word/Excel/MS Project (источник WM_GETICON/class кросс-процессно ненадёжен). Фикс: иконка из exe-файла (SHGetFileInfo). Guard: icon_from_path("C:\Windows\explorer.exe") -> Some</scenario-3>
       </scenarios>
     </V-M-ICON>
     <V-M-MAIN MODULE="M-MAIN" PRIORITY="medium">

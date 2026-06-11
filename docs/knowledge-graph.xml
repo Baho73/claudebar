@@ -106,12 +106,12 @@
     </M-SIGNAL>
 
     <M-ICON NAME="Icon" TYPE="UTILITY" STATUS="implemented">
-      <purpose>Иконка приложения для заголовка секции: взять у окна (GCLP_HICONSM / WM_GETICON), кэшировать по приложению; рисуется через DrawIconEx в M-RENDER</purpose>
+      <purpose>Иконка приложения для заголовка секции: взять у exe-файла приложения (SHGetFileInfo по полному пути процесса окна), кэшировать по приложению; рисуется через DrawIconEx в M-RENDER</purpose>
       <path>src/icon.rs</path>
       <depends>none</depends>
       <verification-ref>V-M-ICON</verification-ref>
       <annotations>
-        <fn-section_icon PURPOSE="HICON приложения по образцовому окну секции, с кэшем по app_idx" />
+        <fn-section_icon PURPOSE="HICON приложения по образцовому окну секции (через exe), с кэшем по app_idx" />
       </annotations>
     </M-ICON>
 
