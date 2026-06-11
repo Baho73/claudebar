@@ -1,9 +1,9 @@
 // FILE: src/render.rs
-// VERSION: 1.2.0
+// VERSION: 1.3.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Построение строк-секций и отрисовка панели (GDI, двойной буфер) с группировкой по приложению.
-//   SCOPE: геометрия/цвета, Row, build_rows, paint (секции+окна), resize, row_at.
-//   DEPENDS: M-CONFIG (палитра, цвета/метки, свёрнутость), M-WINENUM (WinItem)
+//   SCOPE: геометрия/цвета, Row, build_rows, paint (секции+окна+недавние+подсветка звоночка), resize, row_at.
+//   DEPENDS: M-CONFIG (палитра, цвета/метки, свёрнутость), M-WINENUM (WinItem), M-RECENT (RecentDoc), App.bell (набор звенящих имён проектов)
 //   LINKS: M-RENDER
 //   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS
@@ -18,7 +18,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.2.0 - Phase-2 Step 2: секции по приложению, крыжик сворачивания, build_rows.
+//   LAST_CHANGE: v1.3.0 - Phase-4 Step 2: подсветка «звенящих» строк по набору App.bell (имя проекта из сигнала).
+//   v1.2.0 - Phase-2 Step 2: секции по приложению, крыжик сворачивания, build_rows.
 //   v1.0.0 - Выделено из монолита (Phase-1, Step 4).
 // END_CHANGE_SUMMARY
 
@@ -58,6 +59,8 @@ const C_ACTIVE: (u8, u8, u8) = (34, 52, 96);
 const C_HOVER: (u8, u8, u8) = (24, 32, 60);
 const C_BORDER: (u8, u8, u8) = (40, 54, 90);
 const C_REC: (u8, u8, u8) = (170, 182, 206);
+const C_BELL: (u8, u8, u8) = (70, 56, 22); // фон строки со «звоночком» — тёплое тёмное золото
+const C_BELL_BAR: (u8, u8, u8) = (246, 189, 22); // левая полоса-индикатор «звоночка»
 
 unsafe fn dt(hdc: HDC, s: &str, mut r: RECT, fmt: DRAW_TEXT_FORMAT) {
     if s.is_empty() {
@@ -176,11 +179,18 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
             }
             Row::Window { idx } => {
                 let it: &WinItem = &app.items[*idx];
+                // START_BLOCK_ROW_BG_WINDOW
+                let belling = app.bell.contains(&it.name.to_lowercase());
                 if it.hwnd == fg {
                     fill(mem, full, C_ACTIVE);
+                } else if belling {
+                    // «звоночек»: ИИ закончила работу в этом проекте — тёплая подсветка + левая полоса
+                    fill(mem, full, C_BELL);
+                    fill(mem, RECT { left: 0, top, right: 3, bottom: top + ROW }, C_BELL_BAR);
                 } else if app.hover == i as i32 {
                     fill(mem, full, C_HOVER);
                 }
+                // END_BLOCK_ROW_BG_WINDOW
                 // цветная плашка (с отступом — окна вложены в секцию)
                 let cy = top + (ROW - SWATCH) / 2;
                 let (_, r, g, b) = PALETTE[app.config.color_idx(&it.name)];

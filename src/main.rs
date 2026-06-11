@@ -7,6 +7,7 @@ mod activate;
 mod config;
 mod recent;
 mod render;
+mod signal;
 mod win_enum;
 
 use std::cell::RefCell;
@@ -41,6 +42,7 @@ pub(crate) struct App {
     pub(crate) hover: i32,
     pub(crate) menu_target: usize, // индекс строки, по которой открыли меню
     pub(crate) last_h: i32,
+    pub(crate) bell: HashSet<String>, // имена проектов со «звоночком» (lower) — подсветка строк
 }
 
 thread_local! {
@@ -62,6 +64,10 @@ fn refresh_items(app: &mut App) {
         .collect();
     app.recent = recent::list_recent(&app.config.apps, &open);
     app.rows = render::build_rows(&app.items, &app.recent, &app.config.apps, &app.config);
+    // звоночек: сбросить сигналы окон, получивших фокус, затем собрать активные ключи
+    let fg = unsafe { GetForegroundWindow() };
+    signal::reconcile(&app.items, fg);
+    app.bell = signal::bell_keys();
 }
 
 // ---------- ввод метки (модальный prompt) ----------
@@ -489,6 +495,7 @@ fn main() -> Result<()> {
             hover: -1,
             menu_target: 0,
             last_h: 0,
+            bell: HashSet::new(),
         };
         refresh_items(&mut app);
 

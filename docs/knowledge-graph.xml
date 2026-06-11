@@ -86,8 +86,8 @@
       </annotations>
     </M-RECENT>
 
-    <M-SIGNAL NAME="Signal" TYPE="INTEGRATION" STATUS="planned">
-      <purpose>«Звоночек»: читать файлы-сигналы завершения ИИ из %APPDATA%\claudebar\signals\, отдавать набор имён проектов для подсветки, сбрасывать сигнал при получении окном проекта фокуса</purpose>
+    <M-SIGNAL NAME="Signal" TYPE="INTEGRATION" STATUS="implemented">
+      <purpose>«Звоночек»: читать файлы-сигналы завершения ИИ из %APPDATA%\claudebar\signals\, отдавать набор имён проектов для подсветки, сбрасывать сигнал при получении окном проекта фокуса. Пишущая сторона — hooks/claudebar-bell.ps1.</purpose>
       <path>src/signal.rs</path>
       <depends>M-WINENUM</depends>
       <verification-ref>V-M-SIGNAL</verification-ref>
@@ -97,7 +97,8 @@
         <fn-signal_dir PURPOSE="Путь к папке сигналов (создать при отсутствии)" />
         <fn-parse_signal PURPOSE="Извлечь cwd проекта из содержимого .signal" />
         <fn-project_key PURPOSE="basename(cwd) в нижнем регистре — ключ сопоставления со строкой окна" />
-        <type-Signal PURPOSE="Активный сигнал: ключ проекта, время" />
+        <fn-should_clear PURPOSE="Чистое: сигнал гасится, если его ключ == ключ окна в фокусе" />
+        <type-Signal PURPOSE="Активный сигнал: путь файла, ключ проекта" />
       </annotations>
     </M-SIGNAL>
 

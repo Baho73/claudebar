@@ -118,7 +118,7 @@
       <verification-ref>V-M-RECENT</verification-ref>
     </M-RECENT>
 
-    <M-SIGNAL NAME="Signal" TYPE="INTEGRATION" LAYER="2" ORDER="2" STATUS="planned">
+    <M-SIGNAL NAME="Signal" TYPE="INTEGRATION" LAYER="2" ORDER="2" STATUS="implemented">
       <contract>
         <purpose>«Звоночек»: читать файлы-сигналы завершения ИИ из %APPDATA%\claudebar\signals\, отдавать набор имён проектов для подсветки, сбрасывать сигнал при получении окном проекта фокуса</purpose>
         <inputs><param name="open" type="&amp;[WinItem]" /><param name="fg" type="HWND" /></inputs>
@@ -263,12 +263,12 @@
       </checkpoint>
     </Phase-3>
 
-    <Phase-4 name="Звоночек завершения ИИ (главная)" status="pending">
+    <Phase-4 name="Звоночек завершения ИИ (главная)" status="done">
       <goal>Подсветка строки проекта по сигналу из Claude Code; сброс по фокусу окна</goal>
-      <step-1 module="M-SIGNAL" status="pending" verification="V-M-SIGNAL">Модуль сигналов: signal_dir, bell_keys (чтение папки, project_key=basename(cwd)), reconcile (удалить .signal при fg==окно проекта)</step-1>
-      <step-2 module="M-RENDER" status="pending" verification="V-M-RENDER">paint принимает набор bell и подсвечивает строки окон с совпадающим именем проекта</step-2>
-      <step-3 module="M-MAIN" status="pending" verification="V-M-MAIN">На тике: bell_keys + reconcile, проброс bell в paint</step-3>
-      <step-4 module="M-SIGNAL" status="pending" verification="V-M-SIGNAL">Пишущая сторона интеграции: hooks/claudebar-bell.ps1 в репозитории + документация подключения в settings.json (Stop). Правка внешнего settings.json — с показом и подтверждением пользователя</step-4>
+      <step-1 module="M-SIGNAL" status="done" verification="V-M-SIGNAL">Модуль сигналов: signal_dir, bell_keys (чтение папки, project_key=basename(cwd)), reconcile (удалить .signal при fg==окно проекта)</step-1>
+      <step-2 module="M-RENDER" status="done" verification="V-M-RENDER">paint принимает набор bell и подсвечивает строки окон с совпадающим именем проекта</step-2>
+      <step-3 module="M-MAIN" status="done" verification="V-M-MAIN">На тике: bell_keys + reconcile, проброс bell в paint</step-3>
+      <step-4 module="M-SIGNAL" status="done" verification="V-M-SIGNAL">Пишущая сторона интеграции: hooks/claudebar-bell.ps1 + hooks/README.md в репозитории. Подключение в внешний settings.json отложено в deferred.md (требует правки ~/.claude с подтверждением пользователя)</step-4>
       <checkpoint>
         <tests>cargo test (parse_signal, project_key, сопоставление/reconcile); cargo build --release</tests>
         <smoke>После завершения ИИ строка проекта подсвечивается; фокус окна гасит подсветку и удаляет .signal</smoke>
