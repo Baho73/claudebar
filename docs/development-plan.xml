@@ -7,6 +7,36 @@
     <risk-3>Рефактор не должен сломать паритет v0.1 — Phase-1 закрывается smoke-проверкой текущего поведения.</risk-3>
   </ArchitectureNotes>
 
+  <DependencyRationale>
+    <dep-windows crate="windows" version="0.58">
+      <duplicate>Нет: единственный практичный путь к Win32 из Rust</duplicate>
+      <size>Крупный крейт, но используется узкий набор features; итоговый exe ~280 КБ</size>
+      <maintenance>Официальный Microsoft (microsoft/windows-rs), активная поддержка</maintenance>
+      <license>MIT / Apache-2.0 — совместимо с MIT проекта</license>
+      <security>Известных CVE нет; тонкая обёртка над системными API</security>
+      <blast-radius>Импортируется во всех модулях — ожидаемо для нативной Win32-утилиты, в отдельный модуль не изолируется</blast-radius>
+    </dep-windows>
+    <new-features-this-stage>Этап A+B+C новых крейтов НЕ добавляет. Для M-RECENT добавляются только features к уже используемому windows 0.58: Win32_UI_Shell (IShellLinkW, ShellExecuteW), Win32_System_Com (CoCreateInstance). COM-инициализация (CoInitializeEx) — в M-MAIN при старте.</new-features-this-stage>
+  </DependencyRationale>
+
+  <Walkthroughs>
+    <WT-1 name="Переключить на окно Word" flow="DF-SWITCH">
+      <steps>таймер -> M-WINENUM (WINWORD.EXE -> блок Word, имя документа) -> M-RENDER.build_rows (секция Word) -> ЛКМ -> hit_test(Body) -> M-ACTIVATE.activate</steps>
+      <break-points>process_name чужого процесса без прав (fallback: окно не показываем); поведенческий антивирус на SetForegroundWindow</break-points>
+      <evidence>GetForegroundWindow == целевой HWND</evidence>
+    </WT-1>
+    <WT-2 name="Открыть недавний .docx" flow="DF-RECENT">
+      <steps>M-RECENT.list (.docx -> Word, исключил открытые по basename) -> клик -> hit_test(Body на Recent) -> M-RECENT.open (ShellExecuteW) -> следующий опрос: окно Word -> basename совпал -> документ ушёл из недавних в активные</steps>
+      <break-points>одноимённые файлы; .lnk без валидного пути (пропускаем)</break-points>
+      <evidence>ShellExecute успешен; на следующем опросе документ распознан как окно</evidence>
+    </WT-2>
+    <WT-3 name="Свернуть секцию Excel" flow="DF-GROUP">
+      <steps>клик по заголовку секции -> hit_test(Toggle) -> M-CONFIG.collapsed[Excel]=true, save -> build_rows пропускает тело -> repaint</steps>
+      <break-points>ключ свёрнутости = имя процесса, стабилен между перезапусками</break-points>
+      <evidence>после перезапуска секция остаётся свёрнутой (из ini)</evidence>
+    </WT-3>
+  </Walkthroughs>
+
   <Modules>
     <M-CONFIG NAME="Config" TYPE="DATA_LAYER" LAYER="0" ORDER="1" STATUS="planned">
       <contract>
@@ -126,16 +156,33 @@
       <step-2 module="M-WINENUM" status="pending" verification="V-M-WINENUM">Выделить перечисление окон + извлечение имени</step-2>
       <step-3 module="M-ACTIVATE" status="pending" verification="V-M-ACTIVATE">Выделить активацию окна</step-3>
       <step-4 module="M-RENDER" status="pending" verification="V-M-RENDER">Выделить отрисовку/hit-test</step-4>
+      <checkpoint>
+        <tests>cargo test (config, win_enum) зелёные; cargo build --release</tests>
+        <smoke>Переключение окон VS Code/Cursor работает идентично v0.1</smoke>
+        <artifacts>graph/plan/verification синхронны с кодом; grace lint = 0</artifacts>
+        <on-fail>grace-fix; откат последним коммитом</on-fail>
+      </checkpoint>
     </Phase-1>
     <Phase-2 name="Мультиприложения + секции (A+B)" status="pending">
       <goal>Определение приложения по процессу, секции по приложению, сворачивание</goal>
       <step-1 module="M-WINENUM" status="pending" verification="V-M-WINENUM">Процесс по окну + AppDef-дефолты (Code/Cursor/Word/Excel/Project)</step-1>
       <step-2 module="M-RENDER" status="pending" verification="V-M-RENDER">Секции с заголовками, счётчики, крыжик сворачивания, состояние в конфиг</step-2>
+      <checkpoint>
+        <tests>cargo test (extract_name для Code/Cursor/Word/Excel/Project); cargo build --release</tests>
+        <smoke>Word/Excel/MS Project — отдельные секции с верными счётчиками; сворачивание переживает перезапуск</smoke>
+        <flows>DF-GROUP отрабатывает end-to-end</flows>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
     </Phase-2>
     <Phase-3 name="Недавние документы (C)" status="pending">
       <goal>Под-кат недавних из Windows Recent, открытие, «закрылось — уехало»</goal>
       <step-1 module="M-RECENT" status="pending" verification="V-M-RECENT">Парсинг Recent (.lnk), фильтр по расширению, исключение открытых</step-1>
       <step-2 module="M-RENDER" status="pending" verification="V-M-RENDER">Под-блок недавних в секции, клик -> open</step-2>
+      <checkpoint>
+        <tests>cargo test (фильтр расширений, сопоставление по basename); cargo build --release</tests>
+        <flows>VF-002 end-to-end: клик открывает документ; закрытое окно появляется в недавних на следующем опросе</flows>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
     </Phase-3>
   </ImplementationOrder>
 

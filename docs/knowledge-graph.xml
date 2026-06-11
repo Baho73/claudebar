@@ -27,6 +27,7 @@
         <fn-enum_windows PURPOSE="EnumWindows -> список (hwnd, process, title)" />
         <fn-process_name PURPOSE="GetWindowThreadProcessId + QueryFullProcessImageNameW -> имя exe" />
         <fn-extract_name PURPOSE="Имя проекта/документа из заголовка по AppDef" />
+        <type-WinItem PURPOSE="Окно: hwnd, ключ приложения, имя проекта/документа, заголовок" />
       </annotations>
     </M-WINENUM>
 
@@ -38,7 +39,10 @@
       <annotations>
         <fn-load PURPOSE="Распарсить claudebar.ini в структуру конфигурации" />
         <fn-save PURPOSE="Сериализовать конфигурацию обратно в claudebar.ini" />
+        <type-Config PURPOSE="Корень конфигурации: apps, проекты, секции, позиция панели" />
         <type-AppDef PURPOSE="Определение приложения: процесс, имя блока, расширения" />
+        <type-ProjConf PURPOSE="Настройки проекта: индекс цвета, метка" />
+        <type-SectionState PURPOSE="Состояние секции: collapsed, recent_collapsed" />
       </annotations>
     </M-CONFIG>
 
@@ -51,6 +55,8 @@
         <fn-build_rows PURPOSE="Сгруппировать окна и недавние в строки по секциям" />
         <fn-paint PURPOSE="Отрисовать строки (GDI, двойной буфер)" />
         <fn-hit_test PURPOSE="Определить строку и зону по координатам клика" />
+        <type-Row PURPOSE="Типизированная строка: SectionHeader | Window | RecentHeader | Recent" />
+        <type-Zone PURPOSE="Зона клика в строке: Toggle | Body | Close | ColorSwatch" />
       </annotations>
     </M-RENDER>
 
@@ -73,6 +79,7 @@
         <fn-list_recent PURPOSE="Распарсить .lnk Recent в пути с временем" />
         <fn-resolve_lnk PURPOSE="IShellLinkW::GetPath -> целевой путь" />
         <fn-open_doc PURPOSE="ShellExecuteW(open, path)" />
+        <type-RecentDoc PURPOSE="Недавний документ: путь, ключ приложения, время последнего открытия" />
       </annotations>
     </M-RECENT>
 
