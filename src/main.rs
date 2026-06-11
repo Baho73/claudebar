@@ -276,19 +276,28 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 }
                 enum Act {
                     Activate(HWND),
+                    Close(HWND),
                     Toggle(usize),
                     ToggleRecent(usize),
                     Open(usize),
                 }
+                let w = client_w(hwnd);
                 let act = APP.with(|c| {
                     let a = c.borrow();
                     let a = a.as_ref()?;
-                    let i = render::row_at(y, a.rows.len());
+                    let (i, zone) = render::hit_test(x, y, &a.rows, w);
                     if i < 0 {
                         return None;
                     }
                     match a.rows[i as usize] {
-                        render::Row::Window { idx } => Some(Act::Activate(a.items[idx].hwnd)),
+                        render::Row::Window { idx } => {
+                            let hwnd = a.items[idx].hwnd;
+                            if zone == render::Zone::Close {
+                                Some(Act::Close(hwnd))
+                            } else {
+                                Some(Act::Activate(hwnd))
+                            }
+                        }
                         render::Row::Section { app } => Some(Act::Toggle(app)),
                         render::Row::RecentHeader { app } => Some(Act::ToggleRecent(app)),
                         render::Row::Recent { ridx } => Some(Act::Open(ridx)),
@@ -312,6 +321,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 };
                 match act {
                     Some(Act::Activate(t)) => activate::activate(t),
+                    Some(Act::Close(t)) => activate::close(t),
                     Some(Act::Toggle(sec)) => toggle_section(sec, false),
                     Some(Act::ToggleRecent(sec)) => toggle_section(sec, true),
                     Some(Act::Open(ridx)) => {

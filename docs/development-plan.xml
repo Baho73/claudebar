@@ -289,11 +289,11 @@
       </checkpoint>
     </Phase-5>
 
-    <Phase-6 name="Зоны hit-test + кнопка закрытия ✕" status="pending">
+    <Phase-6 name="Зоны hit-test + кнопка закрытия ✕" status="done">
       <goal>Зональный hit-test строки; ✕ закрывает окно штатно</goal>
-      <step-1 module="M-RENDER" status="pending" verification="V-M-RENDER">Zone {Body, Close, DragHandle, Toggle}; hit_test(x,y) -> (row, Zone); отрисовка ✕ на hover строки окна</step-1>
-      <step-2 module="M-ACTIVATE" status="pending" verification="V-M-ACTIVATE">close(hwnd) = PostMessageW(WM_CLOSE)</step-2>
-      <step-3 module="M-MAIN" status="pending" verification="V-M-MAIN">Клик Window: Zone::Close -> close, иначе activate</step-3>
+      <step-1 module="M-RENDER" status="done" verification="V-M-RENDER">Zone {Body, Close} (DragHandle в Phase-8); hit_test(x,y) -> (row, Zone); отрисовка ✕ на hover строки окна</step-1>
+      <step-2 module="M-ACTIVATE" status="done" verification="V-M-ACTIVATE">close(hwnd) = PostMessageW(WM_CLOSE)</step-2>
+      <step-3 module="M-MAIN" status="done" verification="V-M-MAIN">Клик Window: Zone::Close -> close, иначе activate</step-3>
       <checkpoint>
         <tests>cargo test (hit_test зон: Close vs Body по x); cargo build --release</tests>
         <smoke>Клик ✕ вызывает диалог сохранения приложения; при закрытии строка уходит</smoke>

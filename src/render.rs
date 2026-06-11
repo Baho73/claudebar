@@ -10,15 +10,17 @@
 // END_MODULE_CONTRACT
 //
 // START_MODULE_MAP
-//   Row, W, HEAD, ROW - модель строк и геометрия
+//   Row, Zone, W, HEAD, ROW - модель строк, зоны клика и геометрия
 //   build_rows        - сгруппировать окна в строки секций с учётом свёрнутости
-//   paint             - отрисовать строки (заголовки секций + окна)
+//   paint             - отрисовать строки (заголовки секций + окна + ✕ на hover)
 //   resize            - подогнать высоту окна под число строк
 //   row_at            - индекс строки по координате Y
+//   hit_test          - (строка, Zone) по координатам клика
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.4.0 - Phase-5 Step 2: иконка приложения в заголовке секции (M-ICON), сдвиг названия.
+//   LAST_CHANGE: v1.5.0 - Phase-6 Step 1: Zone {Body, Close}, hit_test, отрисовка ✕ на hover строки окна.
+//   v1.4.0 - Phase-5 Step 2: иконка приложения в заголовке секции (M-ICON), сдвиг названия.
 //   v1.3.0 - Phase-4 Step 2: подсветка «звенящих» строк по набору App.bell (имя проекта из сигнала).
 //   v1.2.0 - Phase-2 Step 2: секции по приложению, крыжик сворачивания, build_rows.
 //   v1.0.0 - Выделено из монолита (Phase-1, Step 4).
@@ -39,6 +41,7 @@ pub const W: i32 = 252;
 pub const HEAD: i32 = 24;
 pub const ROW: i32 = 30;
 const SWATCH: i32 = 14;
+const CLOSE_W: i32 = 24; // ширина правой зоны кнопки ✕ на строке окна
 
 // Строка панели: заголовок секции приложения или окно внутри секции.
 #[derive(Clone, Copy)]
@@ -47,6 +50,13 @@ pub enum Row {
     Window { idx: usize }, // индекс в App.items
     RecentHeader { app: usize }, // под-заголовок «Недавние»
     Recent { ridx: usize }, // индекс в App.recent
+}
+
+// Зона клика внутри строки.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Zone {
+    Body,  // основное тело строки (активация / открытие / сворачивание)
+    Close, // правая зона ✕ на строке окна
 }
 
 fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
@@ -211,14 +221,26 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 SelectObject(mem, app.font_main);
                 SetTextColor(mem, rgb(C_TXT.0, C_TXT.1, C_TXT.2));
                 let label = app.config.label(&it.name);
-                let right_pad = if label.is_empty() { 10 } else { 96 };
-                dt(mem, &it.name, RECT { left: 42, top, right: w - right_pad, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
-                // метка
-                if !label.is_empty() {
+                let hovered = app.hover == i as i32;
+                // START_BLOCK_ROW_WINDOW_RIGHT
+                // при наведении правый край отдаём под ✕, метку прячем
+                let name_right = if hovered {
+                    w - 28
+                } else if label.is_empty() {
+                    w - 10
+                } else {
+                    w - 96
+                };
+                dt(mem, &it.name, RECT { left: 42, top, right: name_right, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+                if hovered {
+                    SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
+                    dt(mem, "✕", RECT { left: w - CLOSE_W, top, right: w - 6, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+                } else if !label.is_empty() {
                     SelectObject(mem, app.font_small);
                     SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
                     dt(mem, &label, RECT { left: w - 92, top, right: w - 10, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_END_ELLIPSIS);
                 }
+                // END_BLOCK_ROW_WINDOW_RIGHT
             }
             Row::RecentHeader { app: a } => {
                 if app.hover == i as i32 {
@@ -297,6 +319,24 @@ pub fn row_at(y: i32, n: usize) -> i32 {
     }
 }
 
+// START_CONTRACT: hit_test
+//   PURPOSE: Определить строку и зону клика по координатам.
+//   INPUTS: { x: i32; y: i32; rows: &[Row]; w: i32 - ширина клиента }
+//   OUTPUTS: { (i32 - индекс строки или -1, Zone) }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: hit_test
+pub fn hit_test(x: i32, y: i32, rows: &[Row], w: i32) -> (i32, Zone) {
+    let i = row_at(y, rows.len());
+    if i < 0 {
+        return (-1, Zone::Body);
+    }
+    let zone = match rows[i as usize] {
+        Row::Window { .. } if x >= w - CLOSE_W => Zone::Close,
+        _ => Zone::Body,
+    };
+    (i, zone)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,6 +374,20 @@ mod tests {
         assert!(matches!(rows[0], Row::Section { app: 0 }));
         assert!(matches!(rows[1], Row::Window { .. }));
         assert!(matches!(rows[3], Row::Section { app: 2 }));
+    }
+
+    #[test]
+    fn hit_test_window_close_vs_body() {
+        let rows = vec![Row::Window { idx: 0 }];
+        // тело строки окна
+        assert_eq!(hit_test(50, HEAD + 2, &rows, W), (0, Zone::Body));
+        // правая зона ✕
+        assert_eq!(hit_test(W - 5, HEAD + 2, &rows, W), (0, Zone::Close));
+        // секция: даже справа — Body (✕ только у окон)
+        let sec = vec![Row::Section { app: 0 }];
+        assert_eq!(hit_test(W - 5, HEAD + 2, &sec, W), (0, Zone::Body));
+        // за пределами строк
+        assert_eq!(hit_test(10, 0, &rows, W).0, -1);
     }
 
     #[test]

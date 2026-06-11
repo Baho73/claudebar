@@ -58,7 +58,7 @@
         <fn-paint PURPOSE="Отрисовать строки (GDI, двойной буфер): иконки, ✕, ручки, подсветка bell" />
         <fn-hit_test PURPOSE="Определить строку и зону (Body|Close|DragHandle|Toggle) по координатам клика" />
         <type-Row PURPOSE="Типизированная строка: Section | Window | RecentHeader | Recent | RecentMore" />
-        <type-Zone PURPOSE="Зона клика в строке: Toggle | Body | Close | DragHandle" />
+        <type-Zone PURPOSE="Зона клика в строке: Body | Close (DragHandle добавится в Phase-8)" />
       </annotations>
     </M-RENDER>
 
