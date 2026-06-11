@@ -18,7 +18,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.1.0 - Phase-2 Step 1: приложение по процессу (process_name), AppDef-правила имени, WinItem с индексом приложения.
+//   LAST_CHANGE: v1.1.1 - fix: extract_name поддерживает DocumentLast (MS Project: имя файла в последнем сегменте).
+//   v1.1.0 - Phase-2 Step 1: приложение по процессу (process_name), AppDef-правила имени, WinItem с индексом приложения.
 //   v1.0.0 - Выделено из монолита main.rs (Phase-1, Step 2).
 // END_CHANGE_SUMMARY
 
@@ -52,6 +53,7 @@ pub fn extract_name(title: &str, app: &AppDef) -> String {
             core.rsplit(" - ").next().unwrap_or(core)
         }
         NameMode::Document => title.split(" - ").next().unwrap_or(title),
+        NameMode::DocumentLast => title.rsplit(" - ").next().unwrap_or(title),
     };
     seg.trim_start_matches(['●', '•', '*', ' ']).trim().to_string()
 }
@@ -174,9 +176,20 @@ mod tests {
         let word = &apps[2]; // Word, Document
         assert_eq!(extract_name("Договор.docx - Word", word), "Договор.docx");
         let excel = &apps[3];
-        assert_eq!(extract_name("Смета.xlsx - Excel", excel), "Смета.xlsx");
+        assert_eq!(extract_name("Счет-Договор_ИП_Пономарев.xlsx - Excel", excel), "Счет-Договор_ИП_Пономарев.xlsx");
         // несохранённый
         assert_eq!(extract_name("Документ1 - Word", word), "Документ1");
+    }
+
+    #[test]
+    fn extract_name_msproject_takes_last_segment() {
+        // регрессия: заголовок MS Project — "App - Файл" (имя приложения первым)
+        let apps = default_apps();
+        let proj = &apps[4]; // MS Project, DocumentLast
+        assert_eq!(
+            extract_name("Project профессиональный - Задание на КСП_v02.mpp", proj),
+            "Задание на КСП_v02.mpp"
+        );
     }
 
     #[test]

@@ -20,7 +20,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.2.0 - Phase-2 Step 2: свёрнутость секций (collapsed) с персистом в ini.
+//   LAST_CHANGE: v1.2.1 - fix: NameMode::DocumentLast для MS Project (заголовок "App - Файл"), показываем имя файла.
+//   v1.2.0 - Phase-2 Step 2: свёрнутость секций (collapsed) с персистом в ini.
 //   v1.1.0 - Phase-2 Step 1: AppDef/NameMode, приложения по процессу.
 //   v1.0.0 - Выделено из монолита (Phase-1, Step 1).
 // END_CHANGE_SUMMARY
@@ -52,8 +53,10 @@ pub struct ProjConf {
 pub enum NameMode {
     // Проект редактора: отбросить суффикс приложения, взять последний сегмент по " - ".
     Project { suffix: String },
-    // Имя документа: первый сегмент по " - " (Word/Excel/Project).
+    // Имя документа в первом сегменте по " - " (Word/Excel: "Файл - App").
     Document,
+    // Имя документа в последнем сегменте по " - " (MS Project: "App - Файл").
+    DocumentLast,
 }
 
 #[derive(Clone)]
@@ -100,7 +103,7 @@ pub fn default_apps() -> Vec<AppDef> {
         app("cursor.exe", "Cursor", NameMode::Project { suffix: " - Cursor".into() }, &[]),
         app("winword.exe", "Word", NameMode::Document, &["docx", "doc", "rtf"]),
         app("excel.exe", "Excel", NameMode::Document, &["xlsx", "xls", "csv"]),
-        app("winproj.exe", "MS Project", NameMode::Document, &["mpp"]),
+        app("winproj.exe", "MS Project", NameMode::DocumentLast, &["mpp"]),
     ]
 }
 

@@ -45,6 +45,7 @@
       <scenarios>
         <scenario-1 kind="success">extract_name извлекает проект из "file - Project - Visual Studio Code" и документ из "Doc.docx - Word"</scenario-1>
         <scenario-2 kind="success">Заголовок без " - " -> весь заголовок как имя; ведущие маркеры (точка несохранённого) обрезаются</scenario-2>
+        <scenario-3 kind="regression">MS Project: заголовок "App - Файл" (имя приложения первым) -> DocumentLast берёт имя файла из последнего сегмента</scenario-3>
       </scenarios>
     </V-M-WINENUM>
     <V-M-ACTIVATE MODULE="M-ACTIVATE" PRIORITY="medium">
