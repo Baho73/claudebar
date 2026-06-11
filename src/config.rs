@@ -65,8 +65,8 @@ pub struct AppDef {
     pub proc: String, // имя exe в нижнем регистре, напр. "code.exe"
     pub block: String, // отображаемое имя секции
     pub mode: NameMode, // правило извлечения имени
-    #[allow(dead_code)] // используется в Phase-3 (недавние документы)
-    pub exts: Vec<String>,
+    pub exts: Vec<String>, // расширения недавних документов (Office)
+    pub editor_storage: Option<String>, // для редакторов: подпапка в %APPDATA% (Code/Cursor) — недавние проекты
 }
 
 pub struct Config {
@@ -92,20 +92,21 @@ pub fn auto_color(name: &str) -> usize {
 //   SIDE_EFFECTS: none
 // END_CONTRACT: default_apps
 pub fn default_apps() -> Vec<AppDef> {
-    fn app(proc: &str, block: &str, mode: NameMode, exts: &[&str]) -> AppDef {
+    fn app(proc: &str, block: &str, mode: NameMode, exts: &[&str], editor: Option<&str>) -> AppDef {
         AppDef {
             proc: proc.to_string(),
             block: block.to_string(),
             mode,
             exts: exts.iter().map(|s| s.to_string()).collect(),
+            editor_storage: editor.map(|s| s.to_string()),
         }
     }
     vec![
-        app("code.exe", "VS Code", NameMode::Project { suffix: " - Visual Studio Code".into() }, &[]),
-        app("cursor.exe", "Cursor", NameMode::Project { suffix: " - Cursor".into() }, &[]),
-        app("winword.exe", "Word", NameMode::Document, &["docx", "doc", "rtf"]),
-        app("excel.exe", "Excel", NameMode::Document, &["xlsx", "xls", "csv"]),
-        app("winproj.exe", "MS Project", NameMode::DocumentLast, &["mpp"]),
+        app("code.exe", "VS Code", NameMode::Project { suffix: " - Visual Studio Code".into() }, &[], Some("Code")),
+        app("cursor.exe", "Cursor", NameMode::Project { suffix: " - Cursor".into() }, &[], Some("Cursor")),
+        app("winword.exe", "Word", NameMode::Document, &["docx", "doc", "rtf"], None),
+        app("excel.exe", "Excel", NameMode::Document, &["xlsx", "xls", "csv"], None),
+        app("winproj.exe", "MS Project", NameMode::DocumentLast, &["mpp"], None),
     ]
 }
 

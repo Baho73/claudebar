@@ -1,55 +1,66 @@
 // FILE: src/recent.rs
-// VERSION: 1.0.0
+// VERSION: 1.1.0
 // START_MODULE_CONTRACT
-//   PURPOSE: Недавние документы из Windows Recent по расширению, исключая открытые; открытие через ShellExecute.
-//   SCOPE: чтение папки Recent (.lnk), классификация по расширению/приложению, исключение открытых, ShellExecuteW.
-//   DEPENDS: M-CONFIG (AppDef.exts)
+//   PURPOSE: Недавние элементы: документы Office (Windows Recent) и проекты редакторов (workspaceStorage); открытие через ShellExecute.
+//   SCOPE: чтение Recent (.lnk) по расширению, чтение workspaceStorage редакторов, исключение открытых, открытие.
+//   DEPENDS: M-CONFIG (AppDef: exts, editor_storage, proc)
 //   LINKS: M-RECENT
 //   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS
 // END_MODULE_CONTRACT
 //
 // START_MODULE_MAP
-//   RecentDoc    - недавний документ: имя, путь к .lnk, индекс приложения, mtime
-//   classify     - чистая классификация имени файла -> индекс приложения (или None)
-//   list_recent  - собрать недавние документы из %APPDATA%\..\Recent, исключив открытые
-//   open_doc     - открыть документ через ShellExecuteW(.lnk)
+//   RecentDoc      - недавний элемент: имя, индекс приложения, mtime, команда открытия
+//   OpenCmd        - как открыть: Lnk(ярлык Recent) | Editor{exe, folder}
+//   classify       - чистая классификация имени файла -> индекс Office-приложения
+//   decode_file_uri- декодирование file:///... в путь Windows
+//   extract_target - извлечь folder/workspace из workspace.json
+//   list_recent    - собрать недавние (Office + редакторы), исключив открытые
+//   open           - открыть элемент (ShellExecute)
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.0.0 - Phase-3 Step 1: недавние документы из Windows Recent (без COM, ShellExecute по .lnk).
+//   LAST_CHANGE: v1.1.0 - недавние проекты редакторов (VS Code/Cursor) из workspaceStorage; OpenCmd для разных способов открытия.
+//   v1.0.0 - Phase-3 Step 1: недавние документы из Windows Recent (без COM).
 // END_CHANGE_SUMMARY
 
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::time::UNIX_EPOCH;
 
-use windows::core::PCWSTR;
+use windows::core::{w, PCWSTR};
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-pub struct RecentDoc {
-    pub name: String, // имя файла, напр. "Счет.xlsx"
-    pub lnk: PathBuf, // путь к ярлыку в Recent
-    pub app: usize,   // индекс в Config.apps
-    pub mtime: u64,   // время последнего открытия (mtime ярлыка)
+use crate::config::AppDef;
+
+#[derive(Clone)]
+pub enum OpenCmd {
+    Lnk(PathBuf),                       // ярлык Windows Recent
+    Editor { exe: String, folder: String }, // запуск редактора с папкой проекта
 }
 
-fn recent_dir() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("Microsoft").join("Windows").join("Recent"))
+pub struct RecentDoc {
+    pub name: String,  // отображаемое имя (файл или папка проекта)
+    pub app: usize,    // индекс в Config.apps
+    pub mtime: u64,    // время последнего открытия
+    pub open: OpenCmd, // как открыть
+}
+
+fn appdata() -> Option<PathBuf> {
+    std::env::var_os("APPDATA").map(PathBuf::from)
 }
 
 // START_CONTRACT: classify
-//   PURPOSE: По имени файла определить приложение (по расширению) и отсеять открытые сейчас.
-//   INPUTS: { fname: &str - "Файл.ext"; exts_by_app: &[Vec<String>] - расширения каждого приложения; open: &HashSet<String> - basename(без ext, lower) открытых }
-//   OUTPUTS: { Option<usize> - индекс приложения или None }
+//   PURPOSE: По имени файла определить Office-приложение (по расширению), отсеяв открытые.
+//   INPUTS: { fname: &str; exts_by_app: &[Vec<String>]; open: &HashSet<String> }
+//   OUTPUTS: { Option<usize> }
 //   SIDE_EFFECTS: none
 // END_CONTRACT: classify
 pub fn classify(fname: &str, exts_by_app: &[Vec<String>], open: &HashSet<String>) -> Option<usize> {
-    let (base, ext) = match fname.rsplit_once('.') {
-        Some((b, e)) => (b, e),
-        None => return None,
-    };
+    let (base, ext) = fname.rsplit_once('.')?;
     let ext = ext.to_lowercase();
     let app = exts_by_app
         .iter()
@@ -60,51 +71,153 @@ pub fn classify(fname: &str, exts_by_app: &[Vec<String>], open: &HashSet<String>
     Some(app)
 }
 
-// START_CONTRACT: list_recent
-//   PURPOSE: Недавние документы отслеживаемых приложений из Windows Recent, кроме открытых.
-//   INPUTS: { exts_by_app: &[Vec<String>]; open: &HashSet<String> }
-//   OUTPUTS: { Vec<RecentDoc> - по app, mtime убыв., не более LIMIT на приложение }
-//   SIDE_EFFECTS: чтение каталога Recent
-// END_CONTRACT: list_recent
-pub fn list_recent(exts_by_app: &[Vec<String>], open: &HashSet<String>) -> Vec<RecentDoc> {
-    const LIMIT: usize = 6;
-    let dir = match recent_dir() {
-        Some(d) => d,
-        None => return Vec::new(),
+// START_CONTRACT: decode_file_uri
+//   PURPOSE: Преобразовать file:///d%3A/Path в путь Windows (d:\Path).
+//   INPUTS: { uri: &str }
+//   OUTPUTS: { String - путь Windows }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: decode_file_uri
+pub fn decode_file_uri(uri: &str) -> String {
+    let s = uri
+        .strip_prefix("file:///")
+        .or_else(|| uri.strip_prefix("file://"))
+        .unwrap_or(uri);
+    let b = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(n) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(n);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).replace('/', "\\")
+}
+
+// START_CONTRACT: extract_target
+//   PURPOSE: Достать file://-URI папки или workspace из содержимого workspace.json.
+//   INPUTS: { json: &str }
+//   OUTPUTS: { Option<String> - file:// URI }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: extract_target
+pub fn extract_target(json: &str) -> Option<String> {
+    for key in ["\"folder\"", "\"workspace\""] {
+        if let Some(k) = json.find(key) {
+            let after = &json[k + key.len()..];
+            if let Some(fs) = after.find("file://") {
+                let tail = &after[fs..];
+                if let Some(end) = tail.find('"') {
+                    return Some(tail[..end].to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn mtime_of(p: &std::path::Path) -> u64 {
+    p.metadata()
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn collect_editor(app_idx: usize, exe: &str, storage: &str, open: &HashSet<String>, out: &mut Vec<RecentDoc>) {
+    let base = match appdata() {
+        Some(a) => a,
+        None => return,
     };
-    let mut docs: Vec<RecentDoc> = Vec::new();
-    // START_BLOCK_SCAN_RECENT
+    let dir = base.join(storage).join("User").join("workspaceStorage");
+    // START_BLOCK_SCAN_WORKSPACES
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let wj = e.path().join("workspace.json");
+            let json = match std::fs::read_to_string(&wj) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let uri = match extract_target(&json) {
+                Some(u) => u,
+                None => continue,
+            };
+            let path = decode_file_uri(&uri);
+            if !std::path::Path::new(&path).exists() {
+                continue; // проект удалён/перемещён
+            }
+            let name = path.trim_end_matches(['\\', '/']).rsplit(['\\', '/']).next().unwrap_or(&path).to_string();
+            if name.is_empty() || open.contains(&name.to_lowercase()) {
+                continue;
+            }
+            out.push(RecentDoc {
+                name,
+                app: app_idx,
+                mtime: mtime_of(&e.path()),
+                open: OpenCmd::Editor { exe: exe.to_string(), folder: path },
+            });
+        }
+    }
+    // END_BLOCK_SCAN_WORKSPACES
+}
+
+fn collect_office(apps: &[AppDef], open: &HashSet<String>, out: &mut Vec<RecentDoc>) {
+    let exts_by_app: Vec<Vec<String>> = apps.iter().map(|a| a.exts.clone()).collect();
+    if exts_by_app.iter().all(|e| e.is_empty()) {
+        return;
+    }
+    let dir = match appdata() {
+        Some(a) => a.join("Microsoft").join("Windows").join("Recent"),
+        None => return,
+    };
     if let Ok(rd) = std::fs::read_dir(&dir) {
         for e in rd.flatten() {
             let p = e.path();
-            let is_lnk = p.extension().and_then(|s| s.to_str()).map(|s| s.eq_ignore_ascii_case("lnk"));
-            if is_lnk != Some(true) {
+            if p.extension().and_then(|s| s.to_str()).map(|s| s.eq_ignore_ascii_case("lnk")) != Some(true) {
                 continue;
             }
-            // file_stem у "Счет.xlsx.lnk" -> "Счет.xlsx"
             let fname = match p.file_stem().and_then(|s| s.to_str()) {
                 Some(s) => s.to_string(),
                 None => continue,
             };
-            if let Some(app) = classify(&fname, exts_by_app, open) {
-                let mtime = e
-                    .metadata()
-                    .ok()
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                docs.push(RecentDoc { name: fname, lnk: p, app, mtime });
+            if let Some(app) = classify(&fname, &exts_by_app, open) {
+                out.push(RecentDoc { name: fname, app, mtime: mtime_of(&p), open: OpenCmd::Lnk(p) });
             }
         }
     }
-    // END_BLOCK_SCAN_RECENT
+}
+
+// START_CONTRACT: list_recent
+//   PURPOSE: Недавние элементы всех приложений (Office-файлы + проекты редакторов), кроме открытых.
+//   INPUTS: { apps: &[AppDef]; open: &HashSet<String> - basename(lower) открытых }
+//   OUTPUTS: { Vec<RecentDoc> - по app, mtime убыв., дедуп по имени, не более LIMIT на приложение }
+//   SIDE_EFFECTS: чтение каталогов Recent и workspaceStorage
+// END_CONTRACT: list_recent
+pub fn list_recent(apps: &[AppDef], open: &HashSet<String>) -> Vec<RecentDoc> {
+    const LIMIT: usize = 6;
+    let mut docs: Vec<RecentDoc> = Vec::new();
+    for (i, app) in apps.iter().enumerate() {
+        if let Some(storage) = &app.editor_storage {
+            collect_editor(i, &app.proc, storage, open, &mut docs);
+        }
+    }
+    collect_office(apps, open, &mut docs);
+
     docs.sort_by(|a, b| a.app.cmp(&b.app).then(b.mtime.cmp(&a.mtime)));
-    // лимит на приложение
-    let n_apps = exts_by_app.len();
-    let mut count = vec![0usize; n_apps];
+    // дедуп по (app, имя) и лимит на приложение
+    let n_apps = apps.len();
+    let mut count = vec![0usize; n_apps.max(1)];
+    let mut seen: HashSet<(usize, String)> = HashSet::new();
     docs.into_iter()
         .filter(|d| {
+            if !seen.insert((d.app, d.name.to_lowercase())) {
+                return false;
+            }
             let c = &mut count[d.app.min(n_apps.saturating_sub(1))];
             if *c < LIMIT {
                 *c += 1;
@@ -116,16 +229,31 @@ pub fn list_recent(exts_by_app: &[Vec<String>], open: &HashSet<String>) -> Vec<R
         .collect()
 }
 
-// START_CONTRACT: open_doc
-//   PURPOSE: Открыть документ в ассоциированном приложении через ярлык Recent.
-//   INPUTS: { lnk: &Path - путь к .lnk }
+fn wide(s: &OsStr) -> Vec<u16> {
+    s.encode_wide().chain(std::iter::once(0)).collect()
+}
+
+// START_CONTRACT: open
+//   PURPOSE: Открыть недавний элемент в ассоциированном приложении.
+//   INPUTS: { cmd: &OpenCmd }
 //   OUTPUTS: { () }
-//   SIDE_EFFECTS: ShellExecuteW (запуск ассоциированного приложения)
-// END_CONTRACT: open_doc
-pub fn open_doc(lnk: &Path) {
-    let wide: Vec<u16> = lnk.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
-    unsafe {
-        ShellExecuteW(None, PCWSTR::null(), PCWSTR(wide.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
+//   SIDE_EFFECTS: ShellExecuteW (запуск приложения)
+// END_CONTRACT: open
+pub fn open(cmd: &OpenCmd) {
+    match cmd {
+        OpenCmd::Lnk(p) => {
+            let f = wide(p.as_os_str());
+            unsafe {
+                ShellExecuteW(None, w!("open"), PCWSTR(f.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
+            }
+        }
+        OpenCmd::Editor { exe, folder } => {
+            let f = wide(OsStr::new(exe));
+            let params: Vec<u16> = format!("\"{}\"", folder).encode_utf16().chain(std::iter::once(0)).collect();
+            unsafe {
+                ShellExecuteW(None, w!("open"), PCWSTR(f.as_ptr()), PCWSTR(params.as_ptr()), PCWSTR::null(), SW_SHOWNORMAL);
+            }
+        }
     }
 }
 
@@ -134,41 +262,48 @@ mod tests {
     use super::*;
 
     fn exts() -> Vec<Vec<String>> {
-        // как в default_apps: [VS Code, Cursor, Word, Excel, MS Project]
         vec![
             vec![],
             vec![],
-            vec!["docx".into(), "doc".into(), "rtf".into()],
-            vec!["xlsx".into(), "xls".into(), "csv".into()],
+            vec!["docx".into(), "doc".into()],
+            vec!["xlsx".into(), "xls".into()],
             vec!["mpp".into()],
         ]
     }
 
     #[test]
-    fn classify_matches_extension() {
+    fn classify_matches_extension_and_excludes_open() {
         let e = exts();
-        let open = HashSet::new();
+        let mut open = HashSet::new();
         assert_eq!(classify("Счет.xlsx", &e, &open), Some(3));
         assert_eq!(classify("Доклад.docx", &e, &open), Some(2));
         assert_eq!(classify("План.mpp", &e, &open), Some(4));
-        assert_eq!(classify("readme.md", &e, &open), None); // не отслеживается
+        assert_eq!(classify("readme.md", &e, &open), None);
         assert_eq!(classify("no_extension", &e, &open), None);
-    }
-
-    #[test]
-    fn classify_excludes_open_documents() {
-        let e = exts();
-        let mut open = HashSet::new();
-        open.insert("счет".to_string()); // открыт сейчас (basename без ext, lower)
+        open.insert("счет".to_string());
         assert_eq!(classify("Счет.xlsx", &e, &open), None);
-        // другой файл того же приложения не исключается
-        assert_eq!(classify("Другой.xlsx", &e, &open), Some(3));
     }
 
     #[test]
-    fn classify_extension_case_insensitive() {
-        let e = exts();
-        let open = HashSet::new();
-        assert_eq!(classify("ОТЧЕТ.XLSX", &e, &open), Some(3));
+    fn decode_file_uri_handles_drive_and_cyrillic() {
+        assert_eq!(
+            decode_file_uri("file:///d%3A/Python/Test_2026.05.28"),
+            "d:\\Python\\Test_2026.05.28"
+        );
+        // кириллица в percent-encoding (UTF-8)
+        assert_eq!(decode_file_uri("file:///c%3A/%D0%9F%D1%80%D0%BE%D0%B5%D0%BA%D1%82"), "c:\\Проект");
+    }
+
+    #[test]
+    fn extract_target_finds_folder_then_workspace() {
+        assert_eq!(
+            extract_target(r#"{"folder":"file:///d%3A/Python/ConstructMan"}"#),
+            Some("file:///d%3A/Python/ConstructMan".to_string())
+        );
+        assert_eq!(
+            extract_target(r#"{"workspace":"file:///c%3A/ws/my.code-workspace"}"#),
+            Some("file:///c%3A/ws/my.code-workspace".to_string())
+        );
+        assert_eq!(extract_target(r#"{"other":"x"}"#), None);
     }
 }

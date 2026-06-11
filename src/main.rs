@@ -60,8 +60,7 @@ fn refresh_items(app: &mut App) {
             n.rsplit_once('.').map(|(b, _)| b).unwrap_or(n).to_lowercase()
         })
         .collect();
-    let exts: Vec<Vec<String>> = app.config.apps.iter().map(|a| a.exts.clone()).collect();
-    app.recent = recent::list_recent(&exts, &open);
+    app.recent = recent::list_recent(&app.config.apps, &open);
     app.rows = render::build_rows(&app.items, &app.recent, &app.config.apps, &app.config);
 }
 
@@ -309,11 +308,11 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     Some(Act::Toggle(sec)) => toggle_section(sec, false),
                     Some(Act::ToggleRecent(sec)) => toggle_section(sec, true),
                     Some(Act::Open(ridx)) => {
-                        let lnk = APP.with(|c| {
-                            c.borrow().as_ref().and_then(|a| a.recent.get(ridx).map(|d| d.lnk.clone()))
+                        let cmd = APP.with(|c| {
+                            c.borrow().as_ref().and_then(|a| a.recent.get(ridx).map(|d| d.open.clone()))
                         });
-                        if let Some(l) = lnk {
-                            recent::open_doc(&l);
+                        if let Some(cmd) = cmd {
+                            recent::open(&cmd);
                         }
                     }
                     None => {}
