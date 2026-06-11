@@ -24,3 +24,15 @@
 - rationale: Снят лимит 6 в M-RECENT, состояние showall в M-CONFIG (ra=), Row::RecentMore в M-RENDER. Обратимо.
 - outcome: 22 теста, lint 0; коммит.
 
+## 2026-06-11T23:14:19.542Z — Phase-8 drag-reorder
+- class: `reversible-act`
+- context: -
+- rationale: Логика порядка/маппинга вынесена в чистые тестируемые функции (config + render helpers); UI drag через SetCapture. Интерактивный drag не проверить в AFK — отложен ручной smoke.
+- outcome: ручной порядок секций/окон + режим reorder по ПКМ; 26 тестов, lint 0; коммит.
+
+## 2026-06-11T23:15:11.180Z — План v0.3 исчерпан — все 5 фаз готовы
+- class: `checkpoint`
+- context: -
+- rationale: Phase-4..8 реализованы, по коммиту на фазу на afk-ветке; cargo test 26 passed, grace lint 0, release build exit 0.
+- outcome: 8/8 модулей покрыты, 0 pending. 2 отложенных: подключение хука в settings.json, ручной smoke drag.
+
