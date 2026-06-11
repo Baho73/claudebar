@@ -31,7 +31,7 @@
       </annotations>
     </M-WINENUM>
 
-    <M-CONFIG NAME="Config" TYPE="DATA_LAYER" STATUS="planned">
+    <M-CONFIG NAME="Config" TYPE="DATA_LAYER" STATUS="implemented">
       <purpose>Чтение/запись claudebar.ini: определения приложений (процесс-блок-расширения), цвета и метки по проекту, свёрнутость секций, позиция панели</purpose>
       <path>src/config.rs</path>
       <depends>none</depends>

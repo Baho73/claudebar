@@ -152,7 +152,7 @@
   <ImplementationOrder>
     <Phase-1 name="Рефактор в модули (паритет v0.1)" status="pending">
       <goal>Вынести логику из монолита в M-CONFIG/M-WINENUM/M-ACTIVATE/M-RENDER без изменения поведения v0.1</goal>
-      <step-1 module="M-CONFIG" status="pending" verification="V-M-CONFIG">Выделить конфиг (ini) в модуль</step-1>
+      <step-1 module="M-CONFIG" status="done" verification="V-M-CONFIG">Выделить конфиг (ini) в модуль</step-1>
       <step-2 module="M-WINENUM" status="pending" verification="V-M-WINENUM">Выделить перечисление окон + извлечение имени</step-2>
       <step-3 module="M-ACTIVATE" status="pending" verification="V-M-ACTIVATE">Выделить активацию окна</step-3>
       <step-4 module="M-RENDER" status="pending" verification="V-M-RENDER">Выделить отрисовку/hit-test</step-4>
