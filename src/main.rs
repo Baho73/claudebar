@@ -3,6 +3,7 @@
 //! окнами редакторов (VS Code / Cursor), в которых крутится Claude Code.
 //! ЛКМ по строке — перейти в окно. ПКМ — задать цвет и метку. Привязка по имени проекта.
 
+mod activate;
 mod config;
 mod win_enum;
 
@@ -15,7 +16,6 @@ use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, ReleaseCapture, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -70,23 +70,6 @@ fn refresh_items(app: &mut App) {
         .into_iter()
         .map(|(hwnd, project)| Item { hwnd, project })
         .collect();
-}
-
-// ---------- активация чужого окна ----------
-fn activate(target: HWND) {
-    unsafe {
-        if IsIconic(target).as_bool() {
-            let _ = ShowWindow(target, SW_RESTORE);
-        }
-        let fg = GetForegroundWindow();
-        let cur = GetCurrentThreadId();
-        let other = GetWindowThreadProcessId(fg, None);
-        let _ = AttachThreadInput(cur, other, BOOL(1));
-        let _ = BringWindowToTop(target);
-        let _ = SetForegroundWindow(target);
-        let _ = SetFocus(target);
-        let _ = AttachThreadInput(cur, other, BOOL(0));
-    }
 }
 
 // ---------- ввод метки (модальный prompt) ----------
@@ -464,7 +447,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     }
                 });
                 if let Some(t) = target {
-                    activate(t);
+                    activate::activate(t);
                 }
                 LRESULT(0)
             }
