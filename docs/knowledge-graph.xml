@@ -60,7 +60,7 @@
       </annotations>
     </M-RENDER>
 
-    <M-ACTIVATE NAME="Activate" TYPE="CORE_LOGIC" STATUS="planned">
+    <M-ACTIVATE NAME="Activate" TYPE="CORE_LOGIC" STATUS="implemented">
       <purpose>Надёжная активация чужого окна: restore из свёрнутого, AttachThreadInput-трюк, SetForegroundWindow, SetFocus</purpose>
       <path>src/activate.rs</path>
       <depends>none</depends>
