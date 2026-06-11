@@ -29,9 +29,7 @@ use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
 pub struct RecentDoc {
-    #[allow(dead_code)] // используется в Phase-3 Step-2 (отрисовка)
     pub name: String, // имя файла, напр. "Счет.xlsx"
-    #[allow(dead_code)] // используется в Phase-3 Step-2 (открытие по клику)
     pub lnk: PathBuf, // путь к ярлыку в Recent
     pub app: usize,   // индекс в Config.apps
     pub mtime: u64,   // время последнего открытия (mtime ярлыка)
@@ -124,7 +122,6 @@ pub fn list_recent(exts_by_app: &[Vec<String>], open: &HashSet<String>) -> Vec<R
 //   OUTPUTS: { () }
 //   SIDE_EFFECTS: ShellExecuteW (запуск ассоциированного приложения)
 // END_CONTRACT: open_doc
-#[allow(dead_code)] // используется в Phase-3 Step-2 (клик по недавнему)
 pub fn open_doc(lnk: &Path) {
     let wide: Vec<u16> = lnk.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
     unsafe {

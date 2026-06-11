@@ -62,7 +62,7 @@ fn refresh_items(app: &mut App) {
         .collect();
     let exts: Vec<Vec<String>> = app.config.apps.iter().map(|a| a.exts.clone()).collect();
     app.recent = recent::list_recent(&exts, &open);
-    app.rows = render::build_rows(&app.items, &app.config.apps, &app.config);
+    app.rows = render::build_rows(&app.items, &app.recent, &app.config.apps, &app.config);
 }
 
 // ---------- ввод метки (модальный prompt) ----------
@@ -271,6 +271,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 enum Act {
                     Activate(HWND),
                     Toggle(usize),
+                    ToggleRecent(usize),
+                    Open(usize),
                 }
                 let act = APP.with(|c| {
                     let a = c.borrow();
@@ -282,21 +284,37 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     match a.rows[i as usize] {
                         render::Row::Window { idx } => Some(Act::Activate(a.items[idx].hwnd)),
                         render::Row::Section { app } => Some(Act::Toggle(app)),
+                        render::Row::RecentHeader { app } => Some(Act::ToggleRecent(app)),
+                        render::Row::Recent { ridx } => Some(Act::Open(ridx)),
                     }
                 });
+                let toggle_section = |sec: usize, recent_cut: bool| {
+                    APP.with(|c| {
+                        if let Some(a) = c.borrow_mut().as_mut() {
+                            let block = a.config.apps[sec].block.clone();
+                            if recent_cut {
+                                a.config.toggle_recent(&block);
+                            } else {
+                                a.config.toggle_collapsed(&block);
+                            }
+                            a.config.save(hwnd);
+                            a.rows = render::build_rows(&a.items, &a.recent, &a.config.apps, &a.config);
+                            render::resize(hwnd, a);
+                        }
+                    });
+                    let _ = InvalidateRect(hwnd, None, BOOL(0));
+                };
                 match act {
                     Some(Act::Activate(t)) => activate::activate(t),
-                    Some(Act::Toggle(sec)) => {
-                        APP.with(|c| {
-                            if let Some(a) = c.borrow_mut().as_mut() {
-                                let block = a.config.apps[sec].block.clone();
-                                a.config.toggle_collapsed(&block);
-                                a.config.save(hwnd);
-                                a.rows = render::build_rows(&a.items, &a.config.apps, &a.config);
-                                render::resize(hwnd, a);
-                            }
+                    Some(Act::Toggle(sec)) => toggle_section(sec, false),
+                    Some(Act::ToggleRecent(sec)) => toggle_section(sec, true),
+                    Some(Act::Open(ridx)) => {
+                        let lnk = APP.with(|c| {
+                            c.borrow().as_ref().and_then(|a| a.recent.get(ridx).map(|d| d.lnk.clone()))
                         });
-                        let _ = InvalidateRect(hwnd, None, BOOL(0));
+                        if let Some(l) = lnk {
+                            recent::open_doc(&l);
+                        }
                     }
                     None => {}
                 }

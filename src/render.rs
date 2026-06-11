@@ -27,6 +27,7 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::config::{AppDef, Config, PALETTE};
+use crate::recent::RecentDoc;
 use crate::win_enum::WinItem;
 use crate::App;
 
@@ -41,6 +42,8 @@ const SWATCH: i32 = 14;
 pub enum Row {
     Section { app: usize },
     Window { idx: usize }, // индекс в App.items
+    RecentHeader { app: usize }, // под-заголовок «Недавние»
+    Recent { ridx: usize }, // индекс в App.recent
 }
 
 fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
@@ -54,6 +57,7 @@ const C_DIM: (u8, u8, u8) = (150, 165, 200);
 const C_ACTIVE: (u8, u8, u8) = (34, 52, 96);
 const C_HOVER: (u8, u8, u8) = (24, 32, 60);
 const C_BORDER: (u8, u8, u8) = (40, 54, 90);
+const C_REC: (u8, u8, u8) = (170, 182, 206);
 
 unsafe fn dt(hdc: HDC, s: &str, mut r: RECT, fmt: DRAW_TEXT_FORMAT) {
     if s.is_empty() {
@@ -75,23 +79,38 @@ unsafe fn fill(hdc: HDC, r: RECT, c: (u8, u8, u8)) {
 //   OUTPUTS: { Vec<Row> - заголовки секций и (если развёрнуто) строки окон }
 //   SIDE_EFFECTS: none
 // END_CONTRACT: build_rows
-pub fn build_rows(items: &[WinItem], apps: &[AppDef], cfg: &Config) -> Vec<Row> {
-    let mut by_app: Vec<Vec<usize>> = vec![Vec::new(); apps.len()];
+pub fn build_rows(items: &[WinItem], recent: &[RecentDoc], apps: &[AppDef], cfg: &Config) -> Vec<Row> {
+    let mut win_by_app: Vec<Vec<usize>> = vec![Vec::new(); apps.len()];
     for (i, it) in items.iter().enumerate() {
         if it.app < apps.len() {
-            by_app[it.app].push(i);
+            win_by_app[it.app].push(i);
+        }
+    }
+    let mut rec_by_app: Vec<Vec<usize>> = vec![Vec::new(); apps.len()];
+    for (i, d) in recent.iter().enumerate() {
+        if d.app < apps.len() {
+            rec_by_app[d.app].push(i);
         }
     }
     let mut rows = Vec::new();
     // START_BLOCK_GROUP_SECTIONS
     for a in 0..apps.len() {
-        if by_app[a].is_empty() {
+        if win_by_app[a].is_empty() && rec_by_app[a].is_empty() {
             continue;
         }
         rows.push(Row::Section { app: a });
-        if !cfg.is_collapsed(&apps[a].block) {
-            for &idx in &by_app[a] {
-                rows.push(Row::Window { idx });
+        if cfg.is_collapsed(&apps[a].block) {
+            continue;
+        }
+        for &idx in &win_by_app[a] {
+            rows.push(Row::Window { idx });
+        }
+        if !rec_by_app[a].is_empty() {
+            rows.push(Row::RecentHeader { app: a });
+            if cfg.is_recent_open(&apps[a].block) {
+                for &ridx in &rec_by_app[a] {
+                    rows.push(Row::Recent { ridx });
+                }
             }
         }
     }
@@ -179,6 +198,28 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                     dt(mem, &label, RECT { left: w - 92, top, right: w - 10, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_END_ELLIPSIS);
                 }
             }
+            Row::RecentHeader { app: a } => {
+                if app.hover == i as i32 {
+                    fill(mem, full, C_HOVER);
+                }
+                let def: &AppDef = &app.config.apps[*a];
+                let open = app.config.is_recent_open(&def.block);
+                let cnt = app.recent.iter().filter(|d| d.app == *a).count();
+                SelectObject(mem, app.font_small);
+                SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
+                dt(mem, if open { "▾" } else { "▸" }, RECT { left: 24, top, right: 38, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+                dt(mem, &format!("Недавние ({})", cnt), RECT { left: 40, top, right: w - 10, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+            }
+            Row::Recent { ridx } => {
+                if app.hover == i as i32 {
+                    fill(mem, full, C_HOVER);
+                }
+                let d: &RecentDoc = &app.recent[*ridx];
+                SelectObject(mem, app.font_main);
+                SetTextColor(mem, rgb(C_REC.0, C_REC.1, C_REC.2));
+                dt(mem, "◌", RECT { left: 42, top, right: 56, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+                dt(mem, &d.name, RECT { left: 58, top, right: w - 10, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+            }
         }
         // разделитель
         fill(mem, RECT { left: 0, top: top + ROW - 1, right: w, bottom: top + ROW }, C_BORDER);
@@ -259,12 +300,13 @@ mod tests {
             apps: default_apps(),
             projects: Default::default(),
             collapsed: Default::default(),
+            recent_expanded: Default::default(),
             pos: None,
             cfg_path: std::path::PathBuf::new(),
         };
         // 2 окна VS Code (app 0) + 1 окно Word (app 2)
         let items = vec![item(0, "A"), item(0, "B"), item(2, "Doc")];
-        let rows = build_rows(&items, &apps, &cfg);
+        let rows = build_rows(&items, &[], &apps, &cfg);
         // section VS Code + 2 окна + section Word + 1 окно = 5 строк
         assert_eq!(rows.len(), 5);
         assert!(matches!(rows[0], Row::Section { app: 0 }));
@@ -279,12 +321,13 @@ mod tests {
             apps: default_apps(),
             projects: Default::default(),
             collapsed: Default::default(),
+            recent_expanded: Default::default(),
             pos: None,
             cfg_path: std::path::PathBuf::new(),
         };
         cfg.toggle_collapsed("VS Code");
         let items = vec![item(0, "A"), item(0, "B")];
-        let rows = build_rows(&items, &apps, &cfg);
+        let rows = build_rows(&items, &[], &apps, &cfg);
         // только заголовок, тело скрыто
         assert_eq!(rows.len(), 1);
         assert!(matches!(rows[0], Row::Section { app: 0 }));
