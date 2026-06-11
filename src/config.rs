@@ -1,8 +1,8 @@
 // FILE: src/config.rs
-// VERSION: 1.1.0
+// VERSION: 1.2.0
 // START_MODULE_CONTRACT
-//   PURPOSE: Конфигурация: определения приложений (по процессу), настройки проектов (цвет, метка), позиция.
-//   SCOPE: палитра, авто-цвет, AppDef/NameMode, дефолтный набор приложений, парсинг/сериализация ini.
+//   PURPOSE: Конфигурация: приложения (по процессу), настройки проектов (цвет, метка), свёрнутость секций, позиция.
+//   SCOPE: палитра, авто-цвет, AppDef/NameMode, дефолтный набор приложений, свёрнутость секций, парсинг/сериализация ini.
 //   DEPENDS: none (Win32 только для чтения позиции окна при сохранении)
 //   LINKS: M-CONFIG
 //   ROLE: RUNTIME
@@ -10,21 +10,22 @@
 // END_MODULE_CONTRACT
 //
 // START_MODULE_MAP
-//   Config        - корень конфигурации: apps, projects, pos, cfg_path
-//   AppDef        - приложение: имя процесса, имя блока, правило имени, расширения
-//   NameMode      - как извлекать имя из заголовка: Project{suffix} | Document
+//   Config        - корень конфигурации: apps, projects, collapsed, pos, cfg_path
+//   AppDef        - приложение: процесс, имя блока, правило имени, расширения
+//   NameMode      - извлечение имени: Project{suffix} | Document
 //   ProjConf      - настройки проекта: индекс цвета (-1 = авто), метка
 //   PALETTE       - палитра из 8 цветов
 //   auto_color    - детерминированный цвет по имени
-//   default_apps  - встроенный набор приложений (VS Code, Cursor, Word, Excel, MS Project)
+//   default_apps  - встроенный набор приложений
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.1.0 - Phase-2 Step 1: AppDef/NameMode и определение приложений по процессу; patterns заменены на apps.
-//   v1.0.0 - Выделено из монолита main.rs (Phase-1, Step 1).
+//   LAST_CHANGE: v1.2.0 - Phase-2 Step 2: свёрнутость секций (collapsed) с персистом в ini.
+//   v1.1.0 - Phase-2 Step 1: AppDef/NameMode, приложения по процессу.
+//   v1.0.0 - Выделено из монолита (Phase-1, Step 1).
 // END_CHANGE_SUMMARY
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use windows::Win32::Foundation::{HWND, RECT};
@@ -47,7 +48,6 @@ pub struct ProjConf {
     pub label: String,
 }
 
-// Как извлекать имя элемента из заголовка окна.
 #[derive(Clone)]
 pub enum NameMode {
     // Проект редактора: отбросить суффикс приложения, взять последний сегмент по " - ".
@@ -59,8 +59,7 @@ pub enum NameMode {
 #[derive(Clone)]
 pub struct AppDef {
     pub proc: String, // имя exe в нижнем регистре, напр. "code.exe"
-    #[allow(dead_code)] // используется в Phase-2 Step-2 (заголовок секции)
-    pub block: String,
+    pub block: String, // отображаемое имя секции
     pub mode: NameMode, // правило извлечения имени
     #[allow(dead_code)] // используется в Phase-3 (недавние документы)
     pub exts: Vec<String>,
@@ -69,6 +68,7 @@ pub struct AppDef {
 pub struct Config {
     pub apps: Vec<AppDef>,
     pub projects: HashMap<String, ProjConf>,
+    pub collapsed: HashSet<String>, // имена свёрнутых секций (block)
     pub pos: Option<(i32, i32)>,
     pub cfg_path: PathBuf,
 }
@@ -104,8 +104,9 @@ pub fn default_apps() -> Vec<AppDef> {
     ]
 }
 
-fn parse_ini(text: &str) -> (HashMap<String, ProjConf>, Option<(i32, i32)>) {
+fn parse_ini(text: &str) -> (HashMap<String, ProjConf>, HashSet<String>, Option<(i32, i32)>) {
     let mut projects: HashMap<String, ProjConf> = HashMap::new();
+    let mut collapsed: HashSet<String> = HashSet::new();
     let mut pos: Option<(i32, i32)> = None;
     // START_BLOCK_PARSE_LINES
     for line in text.lines() {
@@ -115,6 +116,10 @@ fn parse_ini(text: &str) -> (HashMap<String, ProjConf>, Option<(i32, i32)>) {
                 if let (Ok(x), Ok(y)) = (x.trim().parse(), y.trim().parse()) {
                     pos = Some((x, y));
                 }
+            }
+        } else if let Some(v) = line.strip_prefix("c=") {
+            if !v.is_empty() {
+                collapsed.insert(v.to_string());
             }
         } else if let Some(v) = line.strip_prefix("p=") {
             let parts: Vec<&str> = v.splitn(3, '\t').collect();
@@ -127,20 +132,23 @@ fn parse_ini(text: &str) -> (HashMap<String, ProjConf>, Option<(i32, i32)>) {
         }
     }
     // END_BLOCK_PARSE_LINES
-    (projects, pos)
+    (projects, collapsed, pos)
 }
 
 impl Config {
     pub fn load(cfg_path: PathBuf) -> Config {
         let text = std::fs::read_to_string(&cfg_path).unwrap_or_default();
-        let (projects, pos) = parse_ini(&text);
-        Config { apps: default_apps(), projects, pos, cfg_path }
+        let (projects, collapsed, pos) = parse_ini(&text);
+        Config { apps: default_apps(), projects, collapsed, pos, cfg_path }
     }
 
     pub fn serialize(&self, pos: Option<(i32, i32)>) -> String {
         let mut out = String::from("# claudebar config\n");
         if let Some((x, y)) = pos {
             out += &format!("pos={},{}\n", x, y);
+        }
+        for block in &self.collapsed {
+            out += &format!("c={}\n", block);
         }
         for (project, c) in &self.projects {
             if c.color < 0 && c.label.is_empty() {
@@ -158,6 +166,16 @@ impl Config {
             pos = Some((rc.left, rc.top));
         }
         let _ = std::fs::write(&self.cfg_path, self.serialize(pos));
+    }
+
+    pub fn is_collapsed(&self, block: &str) -> bool {
+        self.collapsed.contains(block)
+    }
+
+    pub fn toggle_collapsed(&mut self, block: &str) {
+        if !self.collapsed.remove(block) {
+            self.collapsed.insert(block.to_string());
+        }
     }
 
     pub fn color_idx(&self, project: &str) -> usize {
@@ -189,7 +207,13 @@ mod tests {
         for (p, c, l) in projects {
             map.insert(p.to_string(), ProjConf { color: c, label: l.to_string() });
         }
-        Config { apps: default_apps(), projects: map, pos: None, cfg_path: PathBuf::new() }
+        Config {
+            apps: default_apps(),
+            projects: map,
+            collapsed: HashSet::new(),
+            pos: None,
+            cfg_path: PathBuf::new(),
+        }
     }
 
     #[test]
@@ -221,15 +245,29 @@ mod tests {
     }
 
     #[test]
+    fn collapse_toggles_and_persists() {
+        let mut c = cfg(vec![]);
+        assert!(!c.is_collapsed("Excel"));
+        c.toggle_collapsed("Excel");
+        assert!(c.is_collapsed("Excel"));
+        // round-trip через сериализацию
+        let text = c.serialize(Some((1, 2)));
+        let (_proj, collapsed, _pos) = parse_ini(&text);
+        assert!(collapsed.contains("Excel"));
+        // повторный toggle снимает
+        c.toggle_collapsed("Excel");
+        assert!(!c.is_collapsed("Excel"));
+    }
+
+    #[test]
     fn serialize_parse_roundtrip() {
         let c = cfg(vec![("Proj A", 3, "opus"), ("Empty", -1, "")]);
         let text = c.serialize(Some((10, 20)));
-        let (proj, pos) = parse_ini(&text);
+        let (proj, _collapsed, pos) = parse_ini(&text);
         assert_eq!(pos, Some((10, 20)));
         let a = proj.get("Proj A").unwrap();
         assert_eq!(a.color, 3);
         assert_eq!(a.label, "opus");
-        // проект без цвета и метки в файл не пишется
         assert!(proj.get("Empty").is_none());
     }
 

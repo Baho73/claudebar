@@ -31,6 +31,7 @@ const ID_LABEL_CLEAR: usize = 21;
 pub(crate) struct App {
     pub(crate) hinst: HINSTANCE,
     pub(crate) items: Vec<win_enum::WinItem>,
+    pub(crate) rows: Vec<render::Row>,
     pub(crate) config: Config,
     pub(crate) font_main: HFONT,
     pub(crate) font_small: HFONT,
@@ -47,6 +48,7 @@ thread_local! {
 fn refresh_items(app: &mut App) {
     let raw = win_enum::list_windows();
     app.items = win_enum::match_windows(&raw, &app.config.apps);
+    app.rows = render::build_rows(&app.items, &app.config.apps, &app.config);
 }
 
 // ---------- ввод метки (модальный prompt) ----------
@@ -222,7 +224,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 let new = APP.with(|c| {
                     c.borrow()
                         .as_ref()
-                        .map(|a| render::row_at(y, a.items.len()))
+                        .map(|a| render::row_at(y, a.rows.len()))
                         .unwrap_or(-1)
                 });
                 let changed = APP.with(|c| {
@@ -252,33 +254,58 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     }
                     return LRESULT(0);
                 }
-                let target = APP.with(|c| {
+                enum Act {
+                    Activate(HWND),
+                    Toggle(usize),
+                }
+                let act = APP.with(|c| {
                     let a = c.borrow();
                     let a = a.as_ref()?;
-                    let i = render::row_at(y, a.items.len());
-                    if i >= 0 {
-                        Some(a.items[i as usize].hwnd)
-                    } else {
-                        None
+                    let i = render::row_at(y, a.rows.len());
+                    if i < 0 {
+                        return None;
+                    }
+                    match a.rows[i as usize] {
+                        render::Row::Window { idx } => Some(Act::Activate(a.items[idx].hwnd)),
+                        render::Row::Section { app } => Some(Act::Toggle(app)),
                     }
                 });
-                if let Some(t) = target {
-                    activate::activate(t);
+                match act {
+                    Some(Act::Activate(t)) => activate::activate(t),
+                    Some(Act::Toggle(sec)) => {
+                        APP.with(|c| {
+                            if let Some(a) = c.borrow_mut().as_mut() {
+                                let block = a.config.apps[sec].block.clone();
+                                a.config.toggle_collapsed(&block);
+                                a.config.save(hwnd);
+                                a.rows = render::build_rows(&a.items, &a.config.apps, &a.config);
+                                render::resize(hwnd, a);
+                            }
+                        });
+                        let _ = InvalidateRect(hwnd, None, BOOL(0));
+                    }
+                    None => {}
                 }
                 LRESULT(0)
             }
             WM_RBUTTONUP => {
                 let (_, y) = xy(lp);
-                let idx = APP.with(|c| {
-                    c.borrow()
-                        .as_ref()
-                        .map(|a| render::row_at(y, a.items.len()))
-                        .unwrap_or(-1)
+                let witem = APP.with(|c| {
+                    let a = c.borrow();
+                    let a = a.as_ref()?;
+                    let i = render::row_at(y, a.rows.len());
+                    if i < 0 {
+                        return None;
+                    }
+                    match a.rows[i as usize] {
+                        render::Row::Window { idx } => Some(idx),
+                        _ => None,
+                    }
                 });
-                if idx >= 0 {
+                if let Some(wi) = witem {
                     APP.with(|c| {
                         if let Some(a) = c.borrow_mut().as_mut() {
-                            a.menu_target = idx as usize;
+                            a.menu_target = wi;
                         }
                     });
                     show_menu(hwnd);
@@ -423,6 +450,7 @@ fn main() -> Result<()> {
         let mut app = App {
             hinst,
             items: Vec::new(),
+            rows: Vec::new(),
             config,
             font_main: make_font(-16, 600),
             font_small: make_font(-13, 400),
@@ -445,7 +473,7 @@ fn main() -> Result<()> {
 
         // позиция: из конфига или правый верхний угол
         let sw = GetSystemMetrics(SM_CXSCREEN);
-        let n = app.items.len().max(1) as i32;
+        let n = app.rows.len().max(1) as i32;
         let h = render::HEAD + render::ROW * n;
         let (x, y) = app.config.pos.unwrap_or((sw - render::W - 20, 40));
 
