@@ -1,9 +1,9 @@
 // FILE: src/render.rs
-// VERSION: 1.3.0
+// VERSION: 1.4.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Построение строк-секций и отрисовка панели (GDI, двойной буфер) с группировкой по приложению.
-//   SCOPE: геометрия/цвета, Row, build_rows, paint (секции+окна+недавние+подсветка звоночка), resize, row_at.
-//   DEPENDS: M-CONFIG (палитра, цвета/метки, свёрнутость), M-WINENUM (WinItem), M-RECENT (RecentDoc), App.bell (набор звенящих имён проектов)
+//   SCOPE: геометрия/цвета, Row, build_rows, paint (секции+иконки+окна+недавние+подсветка звоночка), resize, row_at.
+//   DEPENDS: M-CONFIG (палитра, цвета/метки, свёрнутость), M-WINENUM (WinItem), M-RECENT (RecentDoc), M-ICON (иконки секций), App.bell (набор звенящих имён проектов)
 //   LINKS: M-RENDER
 //   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS
@@ -18,7 +18,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.3.0 - Phase-4 Step 2: подсветка «звенящих» строк по набору App.bell (имя проекта из сигнала).
+//   LAST_CHANGE: v1.4.0 - Phase-5 Step 2: иконка приложения в заголовке секции (M-ICON), сдвиг названия.
+//   v1.3.0 - Phase-4 Step 2: подсветка «звенящих» строк по набору App.bell (имя проекта из сигнала).
 //   v1.2.0 - Phase-2 Step 2: секции по приложению, крыжик сворачивания, build_rows.
 //   v1.0.0 - Выделено из монолита (Phase-1, Step 4).
 // END_CHANGE_SUMMARY
@@ -28,6 +29,7 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::config::{AppDef, Config, PALETTE};
+use crate::icon;
 use crate::recent::RecentDoc;
 use crate::win_enum::WinItem;
 use crate::App;
@@ -169,9 +171,19 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 SelectObject(mem, app.font_small);
                 SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
                 dt(mem, tri, RECT { left: 8, top, right: 24, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+                // START_BLOCK_SECTION_ICON
+                let mut text_left = 26;
+                if let Some(sample) = app.items.iter().find(|it| it.app == *a).map(|it| it.hwnd) {
+                    if let Some(hicon) = icon::section_icon(*a, sample) {
+                        let iy = top + (ROW - 16) / 2;
+                        let _ = DrawIconEx(mem, 26, iy, hicon, 16, 16, 0, HBRUSH(std::ptr::null_mut()), DI_NORMAL);
+                        text_left = 48;
+                    }
+                }
+                // END_BLOCK_SECTION_ICON
                 SelectObject(mem, app.font_main);
                 SetTextColor(mem, rgb(C_TXT.0, C_TXT.1, C_TXT.2));
-                dt(mem, &def.block, RECT { left: 26, top, right: w - 36, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+                dt(mem, &def.block, RECT { left: text_left, top, right: w - 36, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
                 let cnt = app.items.iter().filter(|it| it.app == *a).count();
                 SelectObject(mem, app.font_small);
                 SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));

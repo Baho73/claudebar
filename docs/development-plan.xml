@@ -135,7 +135,7 @@
       <verification-ref>V-M-SIGNAL</verification-ref>
     </M-SIGNAL>
 
-    <M-ICON NAME="Icon" TYPE="UTILITY" LAYER="2" ORDER="3" STATUS="planned">
+    <M-ICON NAME="Icon" TYPE="UTILITY" LAYER="2" ORDER="3" STATUS="implemented">
       <contract>
         <purpose>Иконка приложения для заголовка секции: взять у окна (GCLP_HICONSM / WM_GETICON), кэшировать по приложению</purpose>
         <inputs><param name="app_idx" type="usize" /><param name="sample_hwnd" type="HWND" /></inputs>
@@ -278,10 +278,10 @@
       </checkpoint>
     </Phase-4>
 
-    <Phase-5 name="Иконки приложений в секциях" status="pending">
+    <Phase-5 name="Иконки приложений в секциях" status="done">
       <goal>Маленькая иконка приложения в заголовке секции для быстрого поиска глазами</goal>
-      <step-1 module="M-ICON" status="pending" verification="V-M-ICON">section_icon: HICON по окну секции (GCLP_HICONSM/WM_GETICON), кэш по app_idx</step-1>
-      <step-2 module="M-RENDER" status="pending" verification="V-M-RENDER">DrawIconEx в заголовке секции, сдвиг текста названия</step-2>
+      <step-1 module="M-ICON" status="done" verification="V-M-ICON">section_icon: HICON по окну секции (WM_GETICON / GCLP_HICONSM / GCLP_HICON), кэш по app_idx</step-1>
+      <step-2 module="M-RENDER" status="done" verification="V-M-RENDER">DrawIconEx в заголовке секции (16x16), сдвиг текста названия на 48px</step-2>
       <checkpoint>
         <tests>cargo build --release</tests>
         <smoke>В заголовках секций видны иконки Word/Excel/MS Project/VS Code/Cursor</smoke>

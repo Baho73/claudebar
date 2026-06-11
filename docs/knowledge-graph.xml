@@ -102,7 +102,7 @@
       </annotations>
     </M-SIGNAL>
 
-    <M-ICON NAME="Icon" TYPE="UTILITY" STATUS="planned">
+    <M-ICON NAME="Icon" TYPE="UTILITY" STATUS="implemented">
       <purpose>Иконка приложения для заголовка секции: взять у окна (GCLP_HICONSM / WM_GETICON), кэшировать по приложению; рисуется через DrawIconEx в M-RENDER</purpose>
       <path>src/icon.rs</path>
       <depends>none</depends>

@@ -5,6 +5,7 @@
 
 mod activate;
 mod config;
+mod icon;
 mod recent;
 mod render;
 mod signal;
