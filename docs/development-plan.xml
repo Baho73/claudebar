@@ -163,10 +163,10 @@
         <on-fail>grace-fix; откат последним коммитом</on-fail>
       </checkpoint>
     </Phase-1>
-    <Phase-2 name="Мультиприложения + секции (A+B)" status="pending">
+    <Phase-2 name="Мультиприложения + секции (A+B)" status="done">
       <goal>Определение приложения по процессу, секции по приложению, сворачивание</goal>
-      <step-1 module="M-WINENUM" status="pending" verification="V-M-WINENUM">Процесс по окну + AppDef-дефолты (Code/Cursor/Word/Excel/Project)</step-1>
-      <step-2 module="M-RENDER" status="pending" verification="V-M-RENDER">Секции с заголовками, счётчики, крыжик сворачивания, состояние в конфиг</step-2>
+      <step-1 module="M-WINENUM" status="done" verification="V-M-WINENUM">Процесс по окну + AppDef-дефолты (Code/Cursor/Word/Excel/Project)</step-1>
+      <step-2 module="M-RENDER" status="done" verification="V-M-RENDER">Секции с заголовками, счётчики, крыжик сворачивания, состояние в конфиг</step-2>
       <checkpoint>
         <tests>cargo test (extract_name для Code/Cursor/Word/Excel/Project); cargo build --release</tests>
         <smoke>Word/Excel/MS Project — отдельные секции с верными счётчиками; сворачивание переживает перезапуск</smoke>
