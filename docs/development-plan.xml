@@ -302,12 +302,12 @@
       </checkpoint>
     </Phase-6>
 
-    <Phase-7 name="«Показать все» недавние сверх 6" status="pending">
+    <Phase-7 name="«Показать все» недавние сверх 6" status="done">
       <goal>Под 6 недавними крыжик «показать все (N)», раскрывающий полный список</goal>
-      <step-1 module="M-RECENT" status="pending" verification="V-M-RECENT">Снять жёсткий LIMIT=6: хранить до STORE_LIMIT (~50) на app, сорт. по mtime</step-1>
-      <step-2 module="M-CONFIG" status="pending" verification="V-M-CONFIG">recent_showall (is/toggle, ключ ra=) с персистом</step-2>
-      <step-3 module="M-RENDER" status="pending" verification="V-M-RENDER">Row::RecentMore; build_rows: 6 + «показать все» либо полный список; клик-зона</step-3>
-      <step-4 module="M-MAIN" status="pending" verification="V-M-MAIN">Клик RecentMore -> toggle showall + save</step-4>
+      <step-1 module="M-RECENT" status="done" verification="V-M-RECENT">Снять жёсткий LIMIT=6: хранить до STORE_LIMIT (50) на app, сорт. по mtime</step-1>
+      <step-2 module="M-CONFIG" status="done" verification="V-M-CONFIG">recent_showall (is/toggle, ключ ra=) с персистом</step-2>
+      <step-3 module="M-RENDER" status="done" verification="V-M-RENDER">Row::RecentMore; build_rows: VISIBLE_RECENT=6 + «показать все» либо полный список</step-3>
+      <step-4 module="M-MAIN" status="done" verification="V-M-MAIN">Клик RecentMore -> toggle_showall + save (SecToggle::Showall)</step-4>
       <checkpoint>
         <tests>cargo test (list_recent &gt;6; build_rows RecentMore/showall; ra= round-trip); cargo build --release</tests>
         <smoke>«Показать все» раскрывает полный список и сворачивает; состояние переживает перезапуск</smoke>

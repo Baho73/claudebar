@@ -12,3 +12,9 @@
 - rationale: Чистый UI: новый модуль M-ICON + DrawIconEx в секции; Win32 API скомпилировались, обратимо.
 - outcome: src/icon.rs (section_icon, кэш) + иконка 16x16 в заголовке; 20 тестов, lint 0; коммит.
 
+## 2026-06-11T22:57:42.310Z — Phase-6 зоны + кнопка закрытия
+- class: `reversible-act`
+- context: -
+- rationale: Введён зональный hit_test и close через PostMessage WM_CLOSE; поправил сигнатуру PostMessageW (HWND, не Option). Обратимо.
+- outcome: Zone/hit_test + ✕ на hover + activate::close; 21 тест, lint 0; коммит.
+

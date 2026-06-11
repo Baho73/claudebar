@@ -1,5 +1,5 @@
 // FILE: src/recent.rs
-// VERSION: 1.1.0
+// VERSION: 1.2.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Недавние элементы: документы Office (Windows Recent) и проекты редакторов (workspaceStorage); открытие через ShellExecute.
 //   SCOPE: чтение Recent (.lnk) по расширению, чтение workspaceStorage редакторов, исключение открытых, открытие.
@@ -20,7 +20,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.1.0 - недавние проекты редакторов (VS Code/Cursor) из workspaceStorage; OpenCmd для разных способов открытия.
+//   LAST_CHANGE: v1.2.0 - Phase-7 Step 1: жёсткий лимит 6 снят (STORE_LIMIT=50 на app); обрезку до 6 решает M-RENDER через «показать все».
+//   v1.1.0 - недавние проекты редакторов (VS Code/Cursor) из workspaceStorage; OpenCmd для разных способов открытия.
 //   v1.0.0 - Phase-3 Step 1: недавние документы из Windows Recent (без COM).
 // END_CHANGE_SUMMARY
 
@@ -195,11 +196,11 @@ fn collect_office(apps: &[AppDef], open: &HashSet<String>, out: &mut Vec<RecentD
 // START_CONTRACT: list_recent
 //   PURPOSE: Недавние элементы всех приложений (Office-файлы + проекты редакторов), кроме открытых.
 //   INPUTS: { apps: &[AppDef]; open: &HashSet<String> - basename(lower) открытых }
-//   OUTPUTS: { Vec<RecentDoc> - по app, mtime убыв., дедуп по имени, не более LIMIT на приложение }
+//   OUTPUTS: { Vec<RecentDoc> - по app, mtime убыв., дедуп по имени, не более STORE_LIMIT на приложение }
 //   SIDE_EFFECTS: чтение каталогов Recent и workspaceStorage
 // END_CONTRACT: list_recent
 pub fn list_recent(apps: &[AppDef], open: &HashSet<String>) -> Vec<RecentDoc> {
-    const LIMIT: usize = 6;
+    const STORE_LIMIT: usize = 50;
     let mut docs: Vec<RecentDoc> = Vec::new();
     for (i, app) in apps.iter().enumerate() {
         if let Some(storage) = &app.editor_storage {
@@ -219,7 +220,7 @@ pub fn list_recent(apps: &[AppDef], open: &HashSet<String>) -> Vec<RecentDoc> {
                 return false;
             }
             let c = &mut count[d.app.min(n_apps.saturating_sub(1))];
-            if *c < LIMIT {
+            if *c < STORE_LIMIT {
                 *c += 1;
                 true
             } else {

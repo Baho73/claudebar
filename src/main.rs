@@ -279,6 +279,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     Close(HWND),
                     Toggle(usize),
                     ToggleRecent(usize),
+                    ToggleShowall(usize),
                     Open(usize),
                 }
                 let w = client_w(hwnd);
@@ -301,16 +302,23 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                         render::Row::Section { app } => Some(Act::Toggle(app)),
                         render::Row::RecentHeader { app } => Some(Act::ToggleRecent(app)),
                         render::Row::Recent { ridx } => Some(Act::Open(ridx)),
+                        render::Row::RecentMore { app } => Some(Act::ToggleShowall(app)),
                     }
                 });
-                let toggle_section = |sec: usize, recent_cut: bool| {
+                #[derive(Clone, Copy)]
+                enum SecToggle {
+                    Collapse,
+                    Recent,
+                    Showall,
+                }
+                let toggle_section = |sec: usize, kind: SecToggle| {
                     APP.with(|c| {
                         if let Some(a) = c.borrow_mut().as_mut() {
                             let block = a.config.apps[sec].block.clone();
-                            if recent_cut {
-                                a.config.toggle_recent(&block);
-                            } else {
-                                a.config.toggle_collapsed(&block);
+                            match kind {
+                                SecToggle::Collapse => a.config.toggle_collapsed(&block),
+                                SecToggle::Recent => a.config.toggle_recent(&block),
+                                SecToggle::Showall => a.config.toggle_showall(&block),
                             }
                             a.config.save(hwnd);
                             a.rows = render::build_rows(&a.items, &a.recent, &a.config.apps, &a.config);
@@ -322,8 +330,9 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 match act {
                     Some(Act::Activate(t)) => activate::activate(t),
                     Some(Act::Close(t)) => activate::close(t),
-                    Some(Act::Toggle(sec)) => toggle_section(sec, false),
-                    Some(Act::ToggleRecent(sec)) => toggle_section(sec, true),
+                    Some(Act::Toggle(sec)) => toggle_section(sec, SecToggle::Collapse),
+                    Some(Act::ToggleRecent(sec)) => toggle_section(sec, SecToggle::Recent),
+                    Some(Act::ToggleShowall(sec)) => toggle_section(sec, SecToggle::Showall),
                     Some(Act::Open(ridx)) => {
                         let cmd = APP.with(|c| {
                             c.borrow().as_ref().and_then(|a| a.recent.get(ridx).map(|d| d.open.clone()))

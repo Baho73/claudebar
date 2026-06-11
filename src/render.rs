@@ -19,7 +19,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.5.0 - Phase-6 Step 1: Zone {Body, Close}, hit_test, отрисовка ✕ на hover строки окна.
+//   LAST_CHANGE: v1.6.0 - Phase-7 Step 3: Row::RecentMore — «показать все» недавних сверх 6 (VISIBLE_RECENT).
+//   v1.5.0 - Phase-6 Step 1: Zone {Body, Close}, hit_test, отрисовка ✕ на hover строки окна.
 //   v1.4.0 - Phase-5 Step 2: иконка приложения в заголовке секции (M-ICON), сдвиг названия.
 //   v1.3.0 - Phase-4 Step 2: подсветка «звенящих» строк по набору App.bell (имя проекта из сигнала).
 //   v1.2.0 - Phase-2 Step 2: секции по приложению, крыжик сворачивания, build_rows.
@@ -42,6 +43,7 @@ pub const HEAD: i32 = 24;
 pub const ROW: i32 = 30;
 const SWATCH: i32 = 14;
 const CLOSE_W: i32 = 24; // ширина правой зоны кнопки ✕ на строке окна
+const VISIBLE_RECENT: usize = 6; // сколько недавних показывать до «показать все»
 
 // Строка панели: заголовок секции приложения или окно внутри секции.
 #[derive(Clone, Copy)]
@@ -50,6 +52,7 @@ pub enum Row {
     Window { idx: usize }, // индекс в App.items
     RecentHeader { app: usize }, // под-заголовок «Недавние»
     Recent { ridx: usize }, // индекс в App.recent
+    RecentMore { app: usize }, // строка «показать все / свернуть» недавних
 }
 
 // Зона клика внутри строки.
@@ -123,9 +126,17 @@ pub fn build_rows(items: &[WinItem], recent: &[RecentDoc], apps: &[AppDef], cfg:
         if !rec_by_app[a].is_empty() {
             rows.push(Row::RecentHeader { app: a });
             if cfg.is_recent_open(&apps[a].block) {
-                for &ridx in &rec_by_app[a] {
+                // START_BLOCK_RECENT_VISIBLE
+                let recs = &rec_by_app[a];
+                let showall = cfg.is_showall(&apps[a].block);
+                let visible = if showall { recs.len() } else { recs.len().min(VISIBLE_RECENT) };
+                for &ridx in &recs[..visible] {
                     rows.push(Row::Recent { ridx });
                 }
+                if recs.len() > VISIBLE_RECENT {
+                    rows.push(Row::RecentMore { app: a });
+                }
+                // END_BLOCK_RECENT_VISIBLE
             }
         }
     }
@@ -264,6 +275,21 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 dt(mem, "◌", RECT { left: 42, top, right: 56, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
                 dt(mem, &d.name, RECT { left: 58, top, right: w - 10, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
             }
+            Row::RecentMore { app: a } => {
+                if app.hover == i as i32 {
+                    fill(mem, full, C_HOVER);
+                }
+                let def: &AppDef = &app.config.apps[*a];
+                let total = app.recent.iter().filter(|d| d.app == *a).count();
+                let txt = if app.config.is_showall(&def.block) {
+                    "▴ свернуть".to_string()
+                } else {
+                    format!("… показать все ({})", total)
+                };
+                SelectObject(mem, app.font_small);
+                SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
+                dt(mem, &txt, RECT { left: 58, top, right: w - 10, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+            }
         }
         // разделитель
         fill(mem, RECT { left: 0, top: top + ROW - 1, right: w, bottom: top + ROW }, C_BORDER);
@@ -363,6 +389,7 @@ mod tests {
             projects: Default::default(),
             collapsed: Default::default(),
             recent_expanded: Default::default(),
+            recent_showall: Default::default(),
             pos: None,
             cfg_path: std::path::PathBuf::new(),
         };
@@ -398,6 +425,7 @@ mod tests {
             projects: Default::default(),
             collapsed: Default::default(),
             recent_expanded: Default::default(),
+            recent_showall: Default::default(),
             pos: None,
             cfg_path: std::path::PathBuf::new(),
         };

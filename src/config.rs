@@ -1,8 +1,8 @@
 // FILE: src/config.rs
-// VERSION: 1.2.0
+// VERSION: 1.4.0
 // START_MODULE_CONTRACT
-//   PURPOSE: Конфигурация: приложения (по процессу), настройки проектов (цвет, метка), свёрнутость секций, позиция.
-//   SCOPE: палитра, авто-цвет, AppDef/NameMode, дефолтный набор приложений, свёрнутость секций, парсинг/сериализация ini.
+//   PURPOSE: Конфигурация: приложения (по процессу), настройки проектов (цвет, метка), свёрнутость секций, «показать все» недавних, позиция.
+//   SCOPE: палитра, авто-цвет, AppDef/NameMode, дефолтный набор приложений, свёрнутость секций, раскрытие/showall недавних, парсинг/сериализация ini.
 //   DEPENDS: none (Win32 только для чтения позиции окна при сохранении)
 //   LINKS: M-CONFIG
 //   ROLE: RUNTIME
@@ -10,7 +10,7 @@
 // END_MODULE_CONTRACT
 //
 // START_MODULE_MAP
-//   Config        - корень конфигурации: apps, projects, collapsed, pos, cfg_path
+//   Config        - корень конфигурации: apps, projects, collapsed, recent_expanded, recent_showall, pos, cfg_path
 //   AppDef        - приложение: процесс, имя блока, правило имени, расширения
 //   NameMode      - извлечение имени: Project{suffix} | Document
 //   ProjConf      - настройки проекта: индекс цвета (-1 = авто), метка
@@ -20,7 +20,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.3.0 - Phase-3 Step 2: recent_expanded — состояние раскрытия под-блока «недавние» с персистом (re=).
+//   LAST_CHANGE: v1.4.0 - Phase-7 Step 2: recent_showall — «показать все» недавних сверх 6 с персистом (ra=).
+//   v1.3.0 - Phase-3 Step 2: recent_expanded — состояние раскрытия под-блока «недавние» с персистом (re=).
 //   v1.2.1 - fix: NameMode::DocumentLast для MS Project (заголовок "App - Файл"), показываем имя файла.
 //   v1.2.0 - Phase-2 Step 2: свёрнутость секций (collapsed) с персистом в ini.
 //   v1.1.0 - Phase-2 Step 1: AppDef/NameMode, приложения по процессу.
@@ -74,6 +75,7 @@ pub struct Config {
     pub projects: HashMap<String, ProjConf>,
     pub collapsed: HashSet<String>, // имена свёрнутых секций (block)
     pub recent_expanded: HashSet<String>, // секции с раскрытым под-блоком «недавние»
+    pub recent_showall: HashSet<String>, // секции с раскрытым полным списком недавних (сверх 6)
     pub pos: Option<(i32, i32)>,
     pub cfg_path: PathBuf,
 }
@@ -110,12 +112,19 @@ pub fn default_apps() -> Vec<AppDef> {
     ]
 }
 
-fn parse_ini(
-    text: &str,
-) -> (HashMap<String, ProjConf>, HashSet<String>, HashSet<String>, Option<(i32, i32)>) {
+type ParsedIni = (
+    HashMap<String, ProjConf>,
+    HashSet<String>,
+    HashSet<String>,
+    HashSet<String>,
+    Option<(i32, i32)>,
+);
+
+fn parse_ini(text: &str) -> ParsedIni {
     let mut projects: HashMap<String, ProjConf> = HashMap::new();
     let mut collapsed: HashSet<String> = HashSet::new();
     let mut recent_expanded: HashSet<String> = HashSet::new();
+    let mut recent_showall: HashSet<String> = HashSet::new();
     let mut pos: Option<(i32, i32)> = None;
     // START_BLOCK_PARSE_LINES
     for line in text.lines() {
@@ -125,6 +134,10 @@ fn parse_ini(
                 if let (Ok(x), Ok(y)) = (x.trim().parse(), y.trim().parse()) {
                     pos = Some((x, y));
                 }
+            }
+        } else if let Some(v) = line.strip_prefix("ra=") {
+            if !v.is_empty() {
+                recent_showall.insert(v.to_string());
             }
         } else if let Some(v) = line.strip_prefix("re=") {
             if !v.is_empty() {
@@ -145,14 +158,14 @@ fn parse_ini(
         }
     }
     // END_BLOCK_PARSE_LINES
-    (projects, collapsed, recent_expanded, pos)
+    (projects, collapsed, recent_expanded, recent_showall, pos)
 }
 
 impl Config {
     pub fn load(cfg_path: PathBuf) -> Config {
         let text = std::fs::read_to_string(&cfg_path).unwrap_or_default();
-        let (projects, collapsed, recent_expanded, pos) = parse_ini(&text);
-        Config { apps: default_apps(), projects, collapsed, recent_expanded, pos, cfg_path }
+        let (projects, collapsed, recent_expanded, recent_showall, pos) = parse_ini(&text);
+        Config { apps: default_apps(), projects, collapsed, recent_expanded, recent_showall, pos, cfg_path }
     }
 
     pub fn serialize(&self, pos: Option<(i32, i32)>) -> String {
@@ -165,6 +178,9 @@ impl Config {
         }
         for block in &self.recent_expanded {
             out += &format!("re={}\n", block);
+        }
+        for block in &self.recent_showall {
+            out += &format!("ra={}\n", block);
         }
         for (project, c) in &self.projects {
             if c.color < 0 && c.label.is_empty() {
@@ -204,6 +220,16 @@ impl Config {
         }
     }
 
+    pub fn is_showall(&self, block: &str) -> bool {
+        self.recent_showall.contains(block)
+    }
+
+    pub fn toggle_showall(&mut self, block: &str) {
+        if !self.recent_showall.remove(block) {
+            self.recent_showall.insert(block.to_string());
+        }
+    }
+
     pub fn color_idx(&self, project: &str) -> usize {
         match self.projects.get(project) {
             Some(c) if c.color >= 0 => (c.color as usize).min(PALETTE.len() - 1),
@@ -238,6 +264,7 @@ mod tests {
             projects: map,
             collapsed: HashSet::new(),
             recent_expanded: HashSet::new(),
+            recent_showall: HashSet::new(),
             pos: None,
             cfg_path: PathBuf::new(),
         }
@@ -279,7 +306,7 @@ mod tests {
         assert!(c.is_collapsed("Excel"));
         // round-trip через сериализацию
         let text = c.serialize(Some((1, 2)));
-        let (_proj, collapsed, _re, _pos) = parse_ini(&text);
+        let (_proj, collapsed, _re, _ra, _pos) = parse_ini(&text);
         assert!(collapsed.contains("Excel"));
         // повторный toggle снимает
         c.toggle_collapsed("Excel");
@@ -287,10 +314,25 @@ mod tests {
     }
 
     #[test]
+    fn showall_toggles_and_persists() {
+        let mut c = cfg(vec![]);
+        assert!(!c.is_showall("Word"));
+        c.toggle_showall("Word");
+        assert!(c.is_showall("Word"));
+        // round-trip через ra=
+        let text = c.serialize(Some((0, 0)));
+        let (_proj, _collapsed, _re, ra, _pos) = parse_ini(&text);
+        assert!(ra.contains("Word"));
+        // повторный toggle снимает
+        c.toggle_showall("Word");
+        assert!(!c.is_showall("Word"));
+    }
+
+    #[test]
     fn serialize_parse_roundtrip() {
         let c = cfg(vec![("Proj A", 3, "opus"), ("Empty", -1, "")]);
         let text = c.serialize(Some((10, 20)));
-        let (proj, _collapsed, _re, pos) = parse_ini(&text);
+        let (proj, _collapsed, _re, _ra, pos) = parse_ini(&text);
         assert_eq!(pos, Some((10, 20)));
         let a = proj.get("Proj A").unwrap();
         assert_eq!(a.color, 3);
