@@ -65,6 +65,7 @@
       <scenarios>
         <scenario-1 kind="success">Фильтр по расширению относит .docx->Word, .xlsx->Excel, .mpp->Project</scenario-1>
         <scenario-2 kind="success">Документ, открытый сейчас (по basename без расширения), исключается из недавних</scenario-2>
+        <scenario-3 kind="success">Недавние проекты редакторов: decode_file_uri (file:///d%3A/... -> d:\...) и extract_target (folder/workspace) из workspace.json</scenario-3>
       </scenarios>
     </V-M-RECENT>
     <V-M-RENDER MODULE="M-RENDER" PRIORITY="high">
