@@ -46,7 +46,7 @@
       </annotations>
     </M-CONFIG>
 
-    <M-RENDER NAME="Render" TYPE="UI_COMPONENT" STATUS="planned">
+    <M-RENDER NAME="Render" TYPE="UI_COMPONENT" STATUS="implemented">
       <purpose>Построение списка типизированных строк (заголовок секции, окно, под-заголовок недавних, недавний документ), отрисовка через GDI с двойной буферизацией, hit-testing, контекст-меню цвет/метка</purpose>
       <path>src/render.rs</path>
       <depends>M-CONFIG, M-ACTIVATE, M-RECENT</depends>
