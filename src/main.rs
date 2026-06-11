@@ -3,9 +3,12 @@
 //! окнами редакторов (VS Code / Cursor), в которых крутится Claude Code.
 //! ЛКМ по строке — перейти в окно. ПКМ — задать цвет и метку. Привязка по имени проекта.
 
+mod config;
+
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::path::PathBuf;
+
+use config::{Config, PALETTE};
 
 use windows::core::*;
 use windows::Win32::Foundation::*;
@@ -34,18 +37,6 @@ const C_ACTIVE: (u8, u8, u8) = (34, 52, 96);
 const C_HOVER: (u8, u8, u8) = (24, 32, 60);
 const C_BORDER: (u8, u8, u8) = (40, 54, 90);
 
-// палитра цветов проектов: (имя, r, g, b)
-const PALETTE: [(&str, u8, u8, u8); 8] = [
-    ("Синий", 0x5B, 0x8F, 0xF9),
-    ("Зелёный", 0x61, 0xD4, 0xA6),
-    ("Жёлтый", 0xF6, 0xBD, 0x16),
-    ("Красный", 0xE8, 0x68, 0x4A),
-    ("Фиолетовый", 0xB3, 0x7F, 0xEB),
-    ("Голубой", 0x6D, 0xC8, 0xEC),
-    ("Розовый", 0xFF, 0x99, 0xC3),
-    ("Серый", 0x9A, 0xA7, 0xB1),
-];
-
 // id команд меню
 const ID_COLOR_BASE: usize = 1; // 1..=8
 const ID_LABEL: usize = 20;
@@ -56,17 +47,10 @@ struct Item {
     hwnd: HWND,
     project: String,
 }
-#[derive(Clone, Default)]
-struct Conf {
-    color: i32, // -1 = авто по имени
-    label: String,
-}
 struct App {
     hinst: HINSTANCE,
     items: Vec<Item>,
-    conf: HashMap<String, Conf>,
-    patterns: Vec<String>,
-    cfg_path: PathBuf,
+    config: Config,
     font_main: HFONT,
     font_small: HFONT,
     hover: i32,
@@ -76,91 +60,6 @@ struct App {
 
 thread_local! {
     static APP: RefCell<Option<App>> = RefCell::new(None);
-}
-
-fn auto_color(name: &str) -> usize {
-    let h = name
-        .bytes()
-        .fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
-    (h % PALETTE.len() as u32) as usize
-}
-
-impl App {
-    fn color_idx(&self, project: &str) -> usize {
-        match self.conf.get(project) {
-            Some(c) if c.color >= 0 => (c.color as usize).min(PALETTE.len() - 1),
-            _ => auto_color(project),
-        }
-    }
-    fn label(&self, project: &str) -> String {
-        self.conf.get(project).map(|c| c.label.clone()).unwrap_or_default()
-    }
-    fn set_color(&mut self, project: &str, idx: usize) {
-        self.conf.entry(project.to_string()).or_default().color = idx as i32;
-    }
-    fn set_label(&mut self, project: &str, label: String) {
-        self.conf.entry(project.to_string()).or_default().label = label;
-    }
-}
-
-// ---------- конфиг ----------
-fn default_patterns() -> Vec<String> {
-    vec![
-        " - Visual Studio Code".to_string(),
-        " - Cursor".to_string(),
-    ]
-}
-
-fn load_config(path: &PathBuf) -> (Vec<String>, HashMap<String, Conf>, Option<(i32, i32)>) {
-    let mut patterns: Vec<String> = Vec::new();
-    let mut conf: HashMap<String, Conf> = HashMap::new();
-    let mut pos: Option<(i32, i32)> = None;
-    if let Ok(text) = std::fs::read_to_string(path) {
-        for line in text.lines() {
-            if let Some(v) = line.strip_prefix("pos=") {
-                let mut it = v.split(',');
-                if let (Some(x), Some(y)) = (it.next(), it.next()) {
-                    if let (Ok(x), Ok(y)) = (x.trim().parse(), y.trim().parse()) {
-                        pos = Some((x, y));
-                    }
-                }
-            } else if let Some(v) = line.strip_prefix("pattern=") {
-                if !v.is_empty() {
-                    patterns.push(v.to_string());
-                }
-            } else if let Some(v) = line.strip_prefix("p=") {
-                let parts: Vec<&str> = v.splitn(3, '\t').collect();
-                if parts.len() >= 2 {
-                    let project = parts[0].to_string();
-                    let color = parts[1].trim().parse::<i32>().unwrap_or(-1);
-                    let label = parts.get(2).map(|s| s.to_string()).unwrap_or_default();
-                    conf.insert(project, Conf { color, label });
-                }
-            }
-        }
-    }
-    if patterns.is_empty() {
-        patterns = default_patterns();
-    }
-    (patterns, conf, pos)
-}
-
-fn save_config(app: &App, hwnd: HWND) {
-    let mut out = String::from("# claudebar config\n");
-    let mut rc = RECT::default();
-    if unsafe { GetWindowRect(hwnd, &mut rc) }.is_ok() {
-        out += &format!("pos={},{}\n", rc.left, rc.top);
-    }
-    for p in &app.patterns {
-        out += &format!("pattern={}\n", p);
-    }
-    for (project, c) in &app.conf {
-        if c.color < 0 && c.label.is_empty() {
-            continue;
-        }
-        out += &format!("p={}\t{}\t{}\n", project, c.color, c.label);
-    }
-    let _ = std::fs::write(&app.cfg_path, out);
 }
 
 // ---------- перечисление окон ----------
@@ -198,7 +97,7 @@ fn refresh_items(app: &mut App) {
     }
     let mut items: Vec<Item> = Vec::new();
     for (hwnd, title) in raw {
-        for pat in &app.patterns {
+        for pat in &app.config.patterns {
             if title.ends_with(pat.as_str()) {
                 let project = extract_project(&title, pat);
                 if !project.is_empty() {
@@ -448,7 +347,7 @@ unsafe fn paint(hwnd: HWND, app: &App) {
         }
         // цветная плашка
         let cy = top + (ROW - SWATCH) / 2;
-        let (_, r, g, b) = PALETTE[app.color_idx(&it.project)];
+        let (_, r, g, b) = PALETTE[app.config.color_idx(&it.project)];
         fill(
             mem,
             RECT { left: 10, top: cy, right: 10 + SWATCH, bottom: cy + SWATCH },
@@ -457,7 +356,7 @@ unsafe fn paint(hwnd: HWND, app: &App) {
         // имя проекта
         SelectObject(mem, app.font_main);
         SetTextColor(mem, rgb(C_TXT.0, C_TXT.1, C_TXT.2));
-        let label = app.label(&it.project);
+        let label = app.config.label(&it.project);
         let right_pad = if label.is_empty() { 10 } else { 96 };
         dt(
             mem,
@@ -638,7 +537,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             WM_DESTROY => {
                 APP.with(|c| {
                     if let Some(app) = c.borrow().as_ref() {
-                        save_config(app, hwnd);
+                        app.config.save(hwnd);
                         let _ = DeleteObject(app.font_main);
                         let _ = DeleteObject(app.font_small);
                     }
@@ -693,8 +592,8 @@ fn handle_command(hwnd: HWND, id: usize) {
     if (ID_COLOR_BASE..ID_COLOR_BASE + PALETTE.len()).contains(&id) {
         APP.with(|c| {
             if let Some(a) = c.borrow_mut().as_mut() {
-                a.set_color(&project, id - ID_COLOR_BASE);
-                save_config(a, hwnd);
+                a.config.set_color(&project, id - ID_COLOR_BASE);
+                a.config.save(hwnd);
             }
         });
         unsafe {
@@ -704,13 +603,13 @@ fn handle_command(hwnd: HWND, id: usize) {
         let (hinst, cur) = APP.with(|c| {
             let a = c.borrow();
             let a = a.as_ref().unwrap();
-            (a.hinst, a.label(&project))
+            (a.hinst, a.config.label(&project))
         });
         if let Some(s) = prompt_text(hwnd, hinst, &cur) {
             APP.with(|c| {
                 if let Some(a) = c.borrow_mut().as_mut() {
-                    a.set_label(&project, s.trim().to_string());
-                    save_config(a, hwnd);
+                    a.config.set_label(&project, s.trim().to_string());
+                    a.config.save(hwnd);
                 }
             });
             unsafe {
@@ -720,8 +619,8 @@ fn handle_command(hwnd: HWND, id: usize) {
     } else if id == ID_LABEL_CLEAR {
         APP.with(|c| {
             if let Some(a) = c.borrow_mut().as_mut() {
-                a.set_label(&project, String::new());
-                save_config(a, hwnd);
+                a.config.set_label(&project, String::new());
+                a.config.save(hwnd);
             }
         });
         unsafe {
@@ -763,14 +662,12 @@ fn main() -> Result<()> {
             .parent()
             .map(|p| p.join("claudebar.ini"))
             .unwrap_or_else(|| PathBuf::from("claudebar.ini"));
-        let (patterns, conf, pos) = load_config(&cfg_path);
+        let config = Config::load(cfg_path);
 
         let mut app = App {
             hinst,
             items: Vec::new(),
-            conf,
-            patterns,
-            cfg_path,
+            config,
             font_main: make_font(-16, 600),
             font_small: make_font(-13, 400),
             hover: -1,
@@ -794,7 +691,7 @@ fn main() -> Result<()> {
         let sw = GetSystemMetrics(SM_CXSCREEN);
         let n = app.items.len().max(1) as i32;
         let h = HEAD + ROW * n;
-        let (x, y) = pos.unwrap_or((sw - W - 20, 40));
+        let (x, y) = app.config.pos.unwrap_or((sw - W - 20, 40));
 
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
