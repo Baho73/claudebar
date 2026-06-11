@@ -19,7 +19,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.7.0 - Phase-8 Step 2: ручной порядок в build_rows, Zone::DragHandle, ручки и подсветка drag.
+//   LAST_CHANGE: v1.8.0 - fix: перетаскивание необнаружимо. В режиме reorder хватается вся строка (не только ручка), шапка показывает подсказку «↕ Порядок».
+//   v1.7.0 - Phase-8 Step 2: ручной порядок в build_rows, Zone::DragHandle, ручки и подсветка drag.
 //   v1.6.0 - Phase-7 Step 3: Row::RecentMore — «показать все» недавних сверх 6 (VISIBLE_RECENT).
 //   v1.5.0 - Phase-6 Step 1: Zone {Body, Close}, hit_test, отрисовка ✕ на hover строки окна.
 //   v1.4.0 - Phase-5 Step 2: иконка приложения в заголовке секции (M-ICON), сдвиг названия.
@@ -44,7 +45,6 @@ pub const HEAD: i32 = 24;
 pub const ROW: i32 = 30;
 const SWATCH: i32 = 14;
 const CLOSE_W: i32 = 24; // ширина правой зоны кнопки ✕ на строке окна
-const HANDLE_W: i32 = 24; // ширина правой зоны ручки drag в режиме reorder
 const VISIBLE_RECENT: usize = 6; // сколько недавних показывать до «показать все»
 
 // Строка панели: заголовок секции приложения или окно внутри секции.
@@ -190,14 +190,20 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
     let old = SelectObject(mem, bmp);
 
     fill(mem, RECT { left: 0, top: 0, right: w, bottom: h }, C_BG);
-    fill(mem, RECT { left: 0, top: 0, right: w, bottom: HEAD }, C_HEAD);
+    let head_bg = if app.reorder { C_BELL } else { C_HEAD };
+    fill(mem, RECT { left: 0, top: 0, right: w, bottom: HEAD }, head_bg);
     SetBkMode(mem, TRANSPARENT);
 
-    // шапка
+    // шапка: в режиме reorder — подсказка, иначе заголовок + кнопка закрытия панели
     SelectObject(mem, app.font_small);
-    SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
-    dt(mem, "≡ ClaudeBar", RECT { left: 10, top: 0, right: w - 24, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
-    dt(mem, "✕", RECT { left: w - 24, top: 0, right: w, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+    if app.reorder {
+        SetTextColor(mem, rgb(C_BELL_BAR.0, C_BELL_BAR.1, C_BELL_BAR.2));
+        dt(mem, "↕ Порядок — тащите строки, ПКМ — выход", RECT { left: 10, top: 0, right: w - 8, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+    } else {
+        SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
+        dt(mem, "≡ ClaudeBar", RECT { left: 10, top: 0, right: w - 24, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+        dt(mem, "✕", RECT { left: w - 24, top: 0, right: w, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+    }
 
     if app.rows.is_empty() {
         SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
@@ -401,8 +407,8 @@ pub fn hit_test(x: i32, y: i32, rows: &[Row], w: i32, reorder: bool) -> (i32, Zo
     }
     let row = rows[i as usize];
     if reorder {
-        let draggable = matches!(row, Row::Section { .. } | Row::Window { .. });
-        if draggable && x >= w - HANDLE_W {
+        // в режиме reorder вся секция/окно хватается для перетаскивания (ручка — лишь подсказка)
+        if matches!(row, Row::Section { .. } | Row::Window { .. }) {
             return (i, Zone::DragHandle);
         }
         return (i, Zone::Body);
@@ -523,12 +529,13 @@ mod tests {
 
     #[test]
     fn hit_test_reorder_gives_drag_handle() {
-        let rows = vec![Row::Window { idx: 0 }, Row::Section { app: 0 }];
-        // в режиме reorder правая зона — ручка (для окна и секции)
+        let rows = vec![Row::Window { idx: 0 }, Row::Section { app: 0 }, Row::RecentHeader { app: 0 }];
+        // regression: в режиме reorder хватается ВСЯ строка секции/окна (а не только правые 24px)
+        assert_eq!(hit_test(50, HEAD + 2, &rows, W, true), (0, Zone::DragHandle));
         assert_eq!(hit_test(W - 5, HEAD + 2, &rows, W, true), (0, Zone::DragHandle));
-        assert_eq!(hit_test(W - 5, HEAD + ROW + 2, &rows, W, true), (1, Zone::DragHandle));
-        // тело в режиме reorder — Body, без ✕
-        assert_eq!(hit_test(50, HEAD + 2, &rows, W, true), (0, Zone::Body));
+        assert_eq!(hit_test(50, HEAD + ROW + 2, &rows, W, true), (1, Zone::DragHandle));
+        // не-draggable строки (заголовок недавних) — Body даже в reorder
+        assert_eq!(hit_test(50, HEAD + 2 * ROW + 2, &rows, W, true), (2, Zone::Body));
     }
 
     #[test]
