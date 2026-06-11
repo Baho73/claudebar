@@ -18,7 +18,7 @@
       </annotations>
     </M-MAIN>
 
-    <M-WINENUM NAME="WindowEnum" TYPE="CORE_LOGIC" STATUS="planned">
+    <M-WINENUM NAME="WindowEnum" TYPE="CORE_LOGIC" STATUS="implemented">
       <purpose>Перечисление видимых top-level окон, определение приложения по имени процесса, извлечение имени проекта/документа из заголовка по правилам приложения</purpose>
       <path>src/win_enum.rs</path>
       <depends>M-CONFIG</depends>
