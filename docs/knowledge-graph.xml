@@ -1,5 +1,5 @@
 <KnowledgeGraph>
-  <Project NAME="ClaudeBar" VERSION="0.2.0">
+  <Project NAME="ClaudeBar" VERSION="0.3.0">
     <keywords>claudebar, переключатель окон, Win32, EnumWindows, SetForegroundWindow, секции по приложению, недавние документы, Windows Recent, ShellExecute, Rust</keywords>
     <annotation>Всегда-поверх Windows-панель (Rust + Win32) для переключения между окнами редакторов/приложений, с группировкой по приложению, цветными метками по проекту и блоком недавних документов.</annotation>
 
@@ -8,13 +8,13 @@
          часть логики уже существует внутри main.rs и будет вынесена при рефакторе (Phase-1). -->
 
     <M-MAIN NAME="Main" TYPE="ENTRY_POINT" STATUS="partial">
-      <purpose>Точка входа: GetModuleHandle, регистрация класса, создание topmost-окна, таймер опроса, message loop, диспетчеризация в обработчики</purpose>
+      <purpose>Точка входа: GetModuleHandle, регистрация класса, создание topmost-окна, таймер опроса, message loop, диспетчеризация в обработчики. v0.3: опрос M-SIGNAL (bell_keys + reconcile) на тике, проброс bell в paint, зоны клика и режим reorder.</purpose>
       <path>src/main.rs</path>
-      <depends>M-CONFIG, M-WINENUM, M-RENDER</depends>
+      <depends>M-CONFIG, M-WINENUM, M-RENDER, M-SIGNAL</depends>
       <verification-ref>V-M-MAIN</verification-ref>
       <annotations>
         <fn-main PURPOSE="Инициализация приложения и цикл сообщений" />
-        <fn-wndproc PURPOSE="Оконная процедура: WM_PAINT/TIMER/мышь/команды меню" />
+        <fn-wndproc PURPOSE="Оконная процедура: WM_PAINT/TIMER/мышь/команды меню; зоны Close/RecentMore/DragHandle, режим reorder по ПКМ" />
       </annotations>
     </M-MAIN>
 
@@ -32,56 +32,84 @@
     </M-WINENUM>
 
     <M-CONFIG NAME="Config" TYPE="DATA_LAYER" STATUS="implemented">
-      <purpose>Чтение/запись claudebar.ini: определения приложений (процесс-блок-расширения), цвета и метки по проекту, свёрнутость секций, позиция панели</purpose>
+      <purpose>Чтение/запись claudebar.ini: определения приложений (процесс-блок-расширения), цвета и метки по проекту, свёрнутость секций, раскрытие/«показать все» недавних, ручной порядок секций и окон, позиция панели</purpose>
       <path>src/config.rs</path>
       <depends>none</depends>
       <verification-ref>V-M-CONFIG</verification-ref>
       <annotations>
         <fn-load PURPOSE="Распарсить claudebar.ini в структуру конфигурации" />
         <fn-save PURPOSE="Сериализовать конфигурацию обратно в claudebar.ini" />
-        <type-Config PURPOSE="Корень конфигурации: apps, проекты, секции, позиция панели" />
+        <fn-showall PURPOSE="is/toggle «показать все» недавних per секция (ra=) — v0.3" />
+        <fn-order PURPOSE="Ручной порядок секций (os=) и окон (o=): применение и перемещение — v0.3" />
+        <type-Config PURPOSE="Корень конфигурации: apps, проекты, секции, недавние, порядок, позиция панели" />
         <type-AppDef PURPOSE="Определение приложения: процесс, имя блока, расширения" />
         <type-ProjConf PURPOSE="Настройки проекта: индекс цвета, метка" />
-        <type-SectionState PURPOSE="Состояние секции: collapsed, recent_collapsed" />
+        <type-SectionState PURPOSE="Состояние секции: collapsed, recent_expanded, recent_showall" />
       </annotations>
     </M-CONFIG>
 
     <M-RENDER NAME="Render" TYPE="UI_COMPONENT" STATUS="implemented">
-      <purpose>Построение списка типизированных строк (заголовок секции, окно, под-заголовок недавних, недавний документ), отрисовка через GDI с двойной буферизацией, hit-testing, контекст-меню цвет/метка</purpose>
+      <purpose>Построение списка типизированных строк (заголовок секции, окно, под-заголовок недавних, недавний документ, «показать все»), отрисовка через GDI с двойной буферизацией, зональный hit-testing, контекст-меню цвет/метка. v0.3: иконки секций (M-ICON), кнопка ✕ и ручки drag, подсветка «звенящих» строк, ручной порядок.</purpose>
       <path>src/render.rs</path>
-      <depends>M-CONFIG, M-ACTIVATE, M-RECENT</depends>
+      <depends>M-CONFIG, M-ACTIVATE, M-RECENT, M-ICON</depends>
       <verification-ref>V-M-RENDER</verification-ref>
       <annotations>
-        <fn-build_rows PURPOSE="Сгруппировать окна и недавние в строки по секциям" />
-        <fn-paint PURPOSE="Отрисовать строки (GDI, двойной буфер)" />
-        <fn-hit_test PURPOSE="Определить строку и зону по координатам клика" />
-        <type-Row PURPOSE="Типизированная строка: SectionHeader | Window | RecentHeader | Recent" />
-        <type-Zone PURPOSE="Зона клика в строке: Toggle | Body | Close | ColorSwatch" />
+        <fn-build_rows PURPOSE="Сгруппировать окна и недавние в строки по секциям с учётом порядка и showall (Row::RecentMore при &gt;6)" />
+        <fn-paint PURPOSE="Отрисовать строки (GDI, двойной буфер): иконки, ✕, ручки, подсветка bell" />
+        <fn-hit_test PURPOSE="Определить строку и зону (Body|Close|DragHandle|Toggle) по координатам клика" />
+        <type-Row PURPOSE="Типизированная строка: Section | Window | RecentHeader | Recent | RecentMore" />
+        <type-Zone PURPOSE="Зона клика в строке: Toggle | Body | Close | DragHandle" />
       </annotations>
     </M-RENDER>
 
     <M-ACTIVATE NAME="Activate" TYPE="CORE_LOGIC" STATUS="implemented">
-      <purpose>Надёжная активация чужого окна: restore из свёрнутого, AttachThreadInput-трюк, SetForegroundWindow, SetFocus</purpose>
+      <purpose>Управление чужим окном: надёжная активация (restore из свёрнутого, AttachThreadInput-трюк, SetForegroundWindow, SetFocus) и штатное закрытие (PostMessage WM_CLOSE)</purpose>
       <path>src/activate.rs</path>
       <depends>none</depends>
       <verification-ref>V-M-ACTIVATE</verification-ref>
       <annotations>
         <fn-activate PURPOSE="Вывести окно по HWND на передний план" />
+        <fn-close PURPOSE="Закрыть окно штатно: PostMessageW(WM_CLOSE) — приложение само спросит про сохранение (v0.3)" />
       </annotations>
     </M-ACTIVATE>
 
     <M-RECENT NAME="Recent" TYPE="INTEGRATION" STATUS="implemented">
-      <purpose>Чтение Windows Recent (%APPDATA%\Microsoft\Windows\Recent\*.lnk через IShellLinkW), фильтр по расширению на приложение, исключение открытых сейчас, открытие документа через ShellExecuteW</purpose>
+      <purpose>Чтение Windows Recent (%APPDATA%\Microsoft\Windows\Recent\*.lnk через IShellLinkW), фильтр по расширению на приложение, исключение открытых сейчас, открытие документа через ShellExecuteW. v0.3: жёсткий лимит 6 снят (хранить до ~50 на приложение, сорт. по mtime); обрезку до 6 решает M-RENDER через «показать все».</purpose>
       <path>src/recent.rs</path>
       <depends>M-WINENUM</depends>
       <verification-ref>V-M-RECENT</verification-ref>
       <annotations>
-        <fn-list_recent PURPOSE="Распарсить .lnk Recent в пути с временем" />
+        <fn-list_recent PURPOSE="Распарсить .lnk Recent в пути с временем (до STORE_LIMIT на app, по mtime)" />
         <fn-resolve_lnk PURPOSE="IShellLinkW::GetPath -> целевой путь" />
         <fn-open_doc PURPOSE="ShellExecuteW(open, path)" />
         <type-RecentDoc PURPOSE="Недавний документ: путь, ключ приложения, время последнего открытия" />
       </annotations>
     </M-RECENT>
+
+    <M-SIGNAL NAME="Signal" TYPE="INTEGRATION" STATUS="planned">
+      <purpose>«Звоночек»: читать файлы-сигналы завершения ИИ из %APPDATA%\claudebar\signals\, отдавать набор имён проектов для подсветки, сбрасывать сигнал при получении окном проекта фокуса</purpose>
+      <path>src/signal.rs</path>
+      <depends>M-WINENUM</depends>
+      <verification-ref>V-M-SIGNAL</verification-ref>
+      <annotations>
+        <fn-bell_keys PURPOSE="Набор имён проектов (lower) с активным .signal — для подсветки в paint" />
+        <fn-reconcile PURPOSE="Удалить .signal, чьё окно проекта сейчас foreground (сброс по фокусу)" />
+        <fn-signal_dir PURPOSE="Путь к папке сигналов (создать при отсутствии)" />
+        <fn-parse_signal PURPOSE="Извлечь cwd проекта из содержимого .signal" />
+        <fn-project_key PURPOSE="basename(cwd) в нижнем регистре — ключ сопоставления со строкой окна" />
+        <type-Signal PURPOSE="Активный сигнал: ключ проекта, время" />
+      </annotations>
+    </M-SIGNAL>
+
+    <M-ICON NAME="Icon" TYPE="UTILITY" STATUS="planned">
+      <purpose>Иконка приложения для заголовка секции: взять у окна (GCLP_HICONSM / WM_GETICON), кэшировать по приложению; рисуется через DrawIconEx в M-RENDER</purpose>
+      <path>src/icon.rs</path>
+      <depends>none</depends>
+      <verification-ref>V-M-ICON</verification-ref>
+      <annotations>
+        <fn-section_icon PURPOSE="HICON приложения по образцовому окну секции, с кэшем по app_idx" />
+      </annotations>
+    </M-ICON>
 
     <CrossLink from="M-MAIN" to="M-WINENUM" relation="опрашивает окна по таймеру" />
     <CrossLink from="M-MAIN" to="M-RENDER" relation="делегирует отрисовку и обработку кликов" />
@@ -91,5 +119,8 @@
     <CrossLink from="M-RENDER" to="M-RECENT" relation="показывает и открывает недавние документы" />
     <CrossLink from="M-RECENT" to="M-WINENUM" relation="сопоставляет недавние с открытыми по basename" />
     <CrossLink from="M-WINENUM" to="M-CONFIG" relation="использует AppDef для распознавания приложения" />
+    <CrossLink from="M-MAIN" to="M-SIGNAL" relation="опрашивает сигналы по таймеру и сбрасывает по фокусу" />
+    <CrossLink from="M-RENDER" to="M-ICON" relation="берёт иконку приложения для заголовка секции" />
+    <CrossLink from="M-SIGNAL" to="M-WINENUM" relation="сопоставляет сигналы с открытыми окнами по имени проекта" />
   </Project>
 </KnowledgeGraph>

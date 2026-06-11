@@ -1,10 +1,16 @@
-<DevelopmentPlan VERSION="0.2.0">
+<DevelopmentPlan VERSION="0.3.0">
   <ArchitectureNotes>
     <objective>Превратить монолитный src/main.rs (v0.1) в модульную структуру и реализовать этап A+B+C: мультиприложения, сворачиваемые секции, недавние документы.</objective>
+    <objective-v03>Этап v0.3: «звоночек» завершения ИИ (подсветка строки проекта по сигналу из Claude Code), иконки приложений в заголовках секций, кнопка ✕ для штатного закрытия окна, под-кат «показать все» недавних сверх 6, drag-reorder секций и окон.</objective-v03>
     <non-goal>Вкладки внутри одного окна; кроссплатформенность; цветные эмодзи (нужен DirectWrite).</non-goal>
     <risk-1>Сопоставление окно-файл по basename (заголовки Office без пути) — держать терпимым к коллизиям.</risk-1>
     <risk-2>Поведенческий антивирус на SetForegroundWindow — функция активации изолирована в M-ACTIVATE.</risk-2>
     <risk-3>Рефактор не должен сломать паритет v0.1 — Phase-1 закрывается smoke-проверкой текущего поведения.</risk-3>
+    <risk-4>Звоночек вне отслеживаемого окна: если Claude запущен во внешнем терминале и проект не открыт в редакторе/Office, подсвечивать нечего — сигнал ждёт появления окна или сбрасывается по таймауту. Ограничение документируется; типовой кейс — Claude в интегрированном терминале VS Code/Cursor.</risk-4>
+    <risk-5>Сигнал звоночка сопоставляется по имени проекта (basename cwd), а не по HWND: HWND корневого окна терминала непостоянен и не всегда совпадает с окном редактора.</risk-5>
+    <risk-6>Теснота строки (W=252): swatch + имя + метка + ✕ + ручка drag не помещаются разом — ✕ и ручки показываются только на hover/в режиме reorder.</risk-6>
+    <risk-7>Drag-reorder с захватом мыши конфликтует с hover/click — фаза последняя, режим включается ПКМ, обязательный ручной smoke.</risk-7>
+    <risk-8>Внешний хук-скрипт и правка settings.json живут вне репозитория claudebar — подключение документируется и подтверждается пользователем, не автоматизируется молча.</risk-8>
   </ArchitectureNotes>
 
   <DependencyRationale>
@@ -17,6 +23,7 @@
       <blast-radius>Импортируется во всех модулях — ожидаемо для нативной Win32-утилиты, в отдельный модуль не изолируется</blast-radius>
     </dep-windows>
     <new-features-this-stage>Этап A+B+C новых крейтов НЕ добавляет. Для M-RECENT добавляются только features к уже используемому windows 0.58: Win32_UI_Shell (IShellLinkW, ShellExecuteW), Win32_System_Com (CoCreateInstance). COM-инициализация (CoInitializeEx) — в M-MAIN при старте.</new-features-this-stage>
+    <new-features-v03>Этап v0.3 новых внешних крейтов НЕ добавляет. Используются функции уже подключённого windows 0.58: DrawIconEx / GetClassLongPtrW / SendMessageW(WM_GETICON) / PostMessageW(WM_CLOSE) (Win32_UI_WindowsAndMessaging), SetCapture/ReleaseCapture (Win32_UI_Input_KeyboardAndMouse, ReleaseCapture уже импортирован), опц. SHGetFileInfo (Win32_UI_Shell, уже подключён). M-SIGNAL — чистый std::fs (чтение/удаление файлов в %APPDATA%\claudebar\signals\), без новых Win32-вызовов. Внешний крейт для парсинга JSON не добавляется: формат сигнал-файла простой (строка cwd + время), парсится вручную.</new-features-v03>
   </DependencyRationale>
 
   <Walkthroughs>
@@ -35,12 +42,22 @@
       <break-points>ключ свёрнутости = имя процесса, стабилен между перезапусками</break-points>
       <evidence>после перезапуска секция остаётся свёрнутой (из ini)</evidence>
     </WT-3>
+    <WT-4 name="Звоночек завершения ИИ" flow="DF-BELL">
+      <steps>ИИ закончила -> Stop-хук claudebar-bell.ps1 пишет signals\&lt;session&gt;.signal (cwd) -> тик ClaudeBar: M-SIGNAL.bell_keys читает папку -> project_key=basename(cwd) -> M-RENDER.paint подсвечивает строки окон с этим именем -> пользователь даёт окну фокус -> M-SIGNAL.reconcile видит fg==окно проекта -> удаляет .signal -> подсветка гаснет</steps>
+      <break-points>проект не открыт в отслеживаемом окне (нечего подсвечивать); одноимённые проекты в разных путях; устаревший .signal без живого окна (таймаут/очистка)</break-points>
+      <evidence>строка проекта подсвечена сразу после Stop; после фокуса окна .signal удалён и подсветка снята на следующем тике</evidence>
+    </WT-4>
+    <WT-5 name="Закрыть окно кнопкой ✕" flow="DF-CLOSE">
+      <steps>клик в правой зоне строки окна -> hit_test(Close) -> M-ACTIVATE.close(hwnd)=PostMessageW(WM_CLOSE) -> приложение показывает свой диалог сохранения -> окно закрыто -> следующий опрос не находит окно -> строка исчезает</steps>
+      <break-points>приложение игнорирует/откладывает WM_CLOSE (модальный диалог) — приемлемо, это и есть штатное поведение</break-points>
+      <evidence>после клика появляется диалог сохранения приложения; при закрытии строка уходит на следующем опросе</evidence>
+    </WT-5>
   </Walkthroughs>
 
   <Modules>
-    <M-CONFIG NAME="Config" TYPE="DATA_LAYER" LAYER="0" ORDER="1" STATUS="planned">
+    <M-CONFIG NAME="Config" TYPE="DATA_LAYER" LAYER="0" ORDER="1" STATUS="implemented">
       <contract>
-        <purpose>Загрузка/сохранение claudebar.ini: AppDef-ы, цвета/метки по проекту, свёрнутость секций, позиция панели</purpose>
+        <purpose>Загрузка/сохранение claudebar.ini: AppDef-ы, цвета/метки по проекту, свёрнутость секций, раскрытие/«показать все» недавних, ручной порядок секций и окон, позиция панели</purpose>
         <inputs><param name="path" type="PathBuf" /></inputs>
         <outputs><param name="Config" type="struct" /></outputs>
         <errors><error code="IO_ERROR_FALLBACK_DEFAULTS" /></errors>
@@ -48,13 +65,15 @@
       <interface>
         <export-load PURPOSE="Прочитать конфиг (или дефолты)" />
         <export-save PURPOSE="Записать конфиг" />
+        <export-showall PURPOSE="is/toggle «показать все» недавних per секция (ключ ra=) — v0.3 Phase-7" />
+        <export-order PURPOSE="Ручной порядок секций (ключ os=) и окон в секции (ключ o=): чтение, применение, перемещение — v0.3 Phase-8" />
       </interface>
       <depends>none</depends>
       <target><source>src/config.rs</source><tests>src/config.rs (#[cfg(test)])</tests></target>
       <verification-ref>V-M-CONFIG</verification-ref>
     </M-CONFIG>
 
-    <M-WINENUM NAME="WindowEnum" TYPE="CORE_LOGIC" LAYER="1" ORDER="1" STATUS="planned">
+    <M-WINENUM NAME="WindowEnum" TYPE="CORE_LOGIC" LAYER="1" ORDER="1" STATUS="implemented">
       <contract>
         <purpose>Перечислить окна, определить приложение по процессу, извлечь имя проекта/документа из заголовка</purpose>
         <inputs><param name="config" type="&amp;Config" /></inputs>
@@ -69,26 +88,29 @@
       <verification-ref>V-M-WINENUM</verification-ref>
     </M-WINENUM>
 
-    <M-ACTIVATE NAME="Activate" TYPE="CORE_LOGIC" LAYER="1" ORDER="2" STATUS="planned">
+    <M-ACTIVATE NAME="Activate" TYPE="CORE_LOGIC" LAYER="1" ORDER="2" STATUS="implemented">
       <contract>
-        <purpose>Вывести окно на передний план надёжно (restore + AttachThreadInput + SetForegroundWindow)</purpose>
+        <purpose>Управление чужим окном: надёжная активация (restore + AttachThreadInput + SetForegroundWindow) и штатное закрытие (PostMessage WM_CLOSE)</purpose>
         <inputs><param name="hwnd" type="HWND" /></inputs>
         <outputs><param name="()" type="void" /></outputs>
       </contract>
-      <interface><export-activate PURPOSE="Активировать окно" /></interface>
+      <interface>
+        <export-activate PURPOSE="Активировать окно" />
+        <export-close PURPOSE="Закрыть окно штатно: PostMessageW(WM_CLOSE) — приложение само спросит про сохранение (v0.3 Phase-6)" />
+      </interface>
       <depends>none</depends>
       <target><source>src/activate.rs</source><tests>—</tests></target>
       <verification-ref>V-M-ACTIVATE</verification-ref>
     </M-ACTIVATE>
 
-    <M-RECENT NAME="Recent" TYPE="INTEGRATION" LAYER="2" ORDER="1" STATUS="planned">
+    <M-RECENT NAME="Recent" TYPE="INTEGRATION" LAYER="2" ORDER="1" STATUS="implemented">
       <contract>
-        <purpose>Недавние документы из Windows Recent по расширению, исключая открытые сейчас; открытие через ShellExecute</purpose>
+        <purpose>Недавние документы из Windows Recent по расширению, исключая открытые сейчас; открытие через ShellExecute. v0.3: жёсткий лимит 6 снимается (хранить ~50 на приложение, сорт. по mtime) — обрезку до 6 решает M-RENDER через «показать все».</purpose>
         <inputs><param name="apps" type="&amp;[AppDef]" /><param name="open_basenames" type="&amp;HashSet" /></inputs>
         <outputs><param name="Vec&lt;RecentDoc&gt;" type="path+app+mtime" /></outputs>
       </contract>
       <interface>
-        <export-list_recent PURPOSE="Собрать и отфильтровать недавние" />
+        <export-list_recent PURPOSE="Собрать и отфильтровать недавние (до STORE_LIMIT~50 на app, по mtime)" />
         <export-open_doc PURPOSE="ShellExecute открыть документ" />
       </interface>
       <depends>M-WINENUM</depends>
@@ -96,30 +118,61 @@
       <verification-ref>V-M-RECENT</verification-ref>
     </M-RECENT>
 
-    <M-RENDER NAME="Render" TYPE="UI_COMPONENT" LAYER="3" ORDER="1" STATUS="planned">
+    <M-SIGNAL NAME="Signal" TYPE="INTEGRATION" LAYER="2" ORDER="2" STATUS="planned">
       <contract>
-        <purpose>Список типизированных строк, отрисовка GDI, hit-testing, контекст-меню</purpose>
-        <inputs><param name="windows" type="&amp;[WinItem]" /><param name="recent" type="&amp;[RecentDoc]" /><param name="config" type="&amp;Config" /></inputs>
+        <purpose>«Звоночек»: читать файлы-сигналы завершения ИИ из %APPDATA%\claudebar\signals\, отдавать набор имён проектов для подсветки, сбрасывать сигнал при получении окном проекта фокуса</purpose>
+        <inputs><param name="open" type="&amp;[WinItem]" /><param name="fg" type="HWND" /></inputs>
+        <outputs><param name="HashSet&lt;String&gt;" type="имена звенящих проектов (lower)" /></outputs>
+        <errors><error code="DIR_MISSING_EMPTY_SET" /></errors>
+      </contract>
+      <interface>
+        <export-bell_keys PURPOSE="Набор имён проектов (lower) с активным сигналом — для подсветки в paint" />
+        <export-reconcile PURPOSE="Удалить .signal, чьё окно проекта сейчас foreground (сброс по фокусу)" />
+        <export-signal_dir PURPOSE="Путь к папке сигналов (создать при отсутствии)" />
+      </interface>
+      <depends>M-WINENUM</depends>
+      <target><source>src/signal.rs</source><tests>src/signal.rs (#[cfg(test)] на parse_signal/project_key/сопоставление)</tests></target>
+      <verification-ref>V-M-SIGNAL</verification-ref>
+    </M-SIGNAL>
+
+    <M-ICON NAME="Icon" TYPE="UTILITY" LAYER="2" ORDER="3" STATUS="planned">
+      <contract>
+        <purpose>Иконка приложения для заголовка секции: взять у окна (GCLP_HICONSM / WM_GETICON), кэшировать по приложению</purpose>
+        <inputs><param name="app_idx" type="usize" /><param name="sample_hwnd" type="HWND" /></inputs>
+        <outputs><param name="Option&lt;HICON&gt;" type="иконка 16x16 или None" /></outputs>
+      </contract>
+      <interface>
+        <export-section_icon PURPOSE="HICON приложения по образцовому окну секции, с кэшем по app_idx" />
+      </interface>
+      <depends>none</depends>
+      <target><source>src/icon.rs</source><tests>— (Win32, ручной smoke)</tests></target>
+      <verification-ref>V-M-ICON</verification-ref>
+    </M-ICON>
+
+    <M-RENDER NAME="Render" TYPE="UI_COMPONENT" LAYER="3" ORDER="1" STATUS="implemented">
+      <contract>
+        <purpose>Список типизированных строк, отрисовка GDI, hit-testing по зонам, контекст-меню. v0.3: иконки секций (M-ICON), кнопка ✕ и ручки drag (на hover/в режиме reorder), строка «показать все» недавних, подсветка «звенящих» строк по набору имён проектов, ручной порядок секций/окон.</purpose>
+        <inputs><param name="windows" type="&amp;[WinItem]" /><param name="recent" type="&amp;[RecentDoc]" /><param name="config" type="&amp;Config" /><param name="bell" type="&amp;HashSet&lt;String&gt;" /></inputs>
         <outputs><param name="rows" type="Vec&lt;Row&gt;" /></outputs>
       </contract>
       <interface>
-        <export-build_rows PURPOSE="Сгруппировать в строки по секциям" />
-        <export-paint PURPOSE="Отрисовать" />
-        <export-hit_test PURPOSE="Строка+зона по координате" />
+        <export-build_rows PURPOSE="Сгруппировать в строки по секциям с учётом порядка/showall; Row::RecentMore при &gt;6" />
+        <export-paint PURPOSE="Отрисовать (иконки, ✕, ручки, подсветка bell)" />
+        <export-hit_test PURPOSE="(строка, Zone) по координате (x,y): Body | Close | DragHandle | Toggle" />
       </interface>
-      <depends>M-CONFIG, M-ACTIVATE, M-RECENT</depends>
-      <target><source>src/render.rs</source><tests>src/render.rs (#[cfg(test)] на build_rows/hit_test)</tests></target>
+      <depends>M-CONFIG, M-ACTIVATE, M-RECENT, M-ICON</depends>
+      <target><source>src/render.rs</source><tests>src/render.rs (#[cfg(test)] на build_rows/hit_test зон/порядок)</tests></target>
       <verification-ref>V-M-RENDER</verification-ref>
     </M-RENDER>
 
     <M-MAIN NAME="Main" TYPE="ENTRY_POINT" LAYER="4" ORDER="1" STATUS="partial">
       <contract>
-        <purpose>Окно, таймер, message loop, склейка модулей</purpose>
+        <purpose>Окно, таймер, message loop, склейка модулей. v0.3: на тике опрашивает M-SIGNAL (bell_keys + reconcile по фокусу), передаёт набор «звенящих» в paint; диспетчеризует зоны клика (Close/RecentMore/DragHandle) и режим reorder по ПКМ; захват мыши при drag.</purpose>
         <inputs><param name="—" type="—" /></inputs>
         <outputs><param name="exit code" type="i32" /></outputs>
       </contract>
       <interface><export-main PURPOSE="Точка входа" /></interface>
-      <depends>M-CONFIG, M-WINENUM, M-RENDER</depends>
+      <depends>M-CONFIG, M-WINENUM, M-RENDER, M-SIGNAL</depends>
       <target><source>src/main.rs</source><tests>smoke-запуск exe</tests></target>
       <verification-ref>V-M-MAIN</verification-ref>
     </M-MAIN>
@@ -147,6 +200,31 @@
       <step-3>Клик -> ShellExecuteW открывает документ</step-3>
       <evidence>Закрытый документ виден в недавних; после открытия появляется окно и уходит из недавних</evidence>
     </DF-RECENT>
+    <DF-BELL NAME="Звоночек завершения ИИ" TRIGGER="Stop-хук Claude + таймер опроса">
+      <step-1>Stop-хук claudebar-bell.ps1 пишет signals\&lt;session&gt;.signal с cwd проекта</step-1>
+      <step-2>M-SIGNAL.bell_keys на тике читает папку -> множество project_key=basename(cwd)</step-2>
+      <step-3>M-RENDER.paint подсвечивает строки окон, чьё имя проекта в множестве</step-3>
+      <step-4>Окно проекта получает фокус -> M-SIGNAL.reconcile удаляет .signal -> подсветка снята</step-4>
+      <evidence>Строка проекта подсвечена после Stop; .signal удалён после фокуса; подсветка исчезла</evidence>
+    </DF-BELL>
+    <DF-CLOSE NAME="Закрыть окно" TRIGGER="ЛКМ по зоне ✕ строки окна">
+      <step-1>hit_test возвращает (строка окна, Zone::Close)</step-1>
+      <step-2>M-ACTIVATE.close = PostMessageW(hwnd, WM_CLOSE)</step-2>
+      <step-3>Приложение показывает диалог сохранения; при закрытии окно исчезает</step-3>
+      <evidence>Диалог сохранения приложения; строка уходит на следующем опросе</evidence>
+    </DF-CLOSE>
+    <DF-MORE NAME="Показать все недавние" TRIGGER="ЛКМ по строке «показать все (N)»">
+      <step-1>hit_test возвращает Row::RecentMore секции</step-1>
+      <step-2>M-CONFIG.toggle showall[block], save</step-2>
+      <step-3>build_rows показывает полный список (или снова 6); repaint</step-3>
+      <evidence>Полный список раскрыт; состояние переживает перезапуск (ra= в ini)</evidence>
+    </DF-MORE>
+    <DF-REORDER NAME="Ручной порядок" TRIGGER="ПКМ -> режим reorder -> drag ЛКМ за ручку">
+      <step-1>ПКМ включает режим reorder: M-RENDER рисует ручки drag на секциях и окнах</step-1>
+      <step-2>ЛКМ по ручке -> SetCapture; WM_MOUSEMOVE -> индикатор позиции; WM_LBUTTONUP -> целевой индекс</step-2>
+      <step-3>M-CONFIG.order переставляет ключ (секция по block / окно по имени), save -> build_rows применяет порядок</step-3>
+      <evidence>Новый порядок виден сразу и переживает перезапуск (os=/o= в ini)</evidence>
+    </DF-REORDER>
   </DataFlow>
 
   <ImplementationOrder>
@@ -184,6 +262,72 @@
         <on-fail>grace-fix; откат коммитом</on-fail>
       </checkpoint>
     </Phase-3>
+
+    <Phase-4 name="Звоночек завершения ИИ (главная)" status="pending">
+      <goal>Подсветка строки проекта по сигналу из Claude Code; сброс по фокусу окна</goal>
+      <step-1 module="M-SIGNAL" status="pending" verification="V-M-SIGNAL">Модуль сигналов: signal_dir, bell_keys (чтение папки, project_key=basename(cwd)), reconcile (удалить .signal при fg==окно проекта)</step-1>
+      <step-2 module="M-RENDER" status="pending" verification="V-M-RENDER">paint принимает набор bell и подсвечивает строки окон с совпадающим именем проекта</step-2>
+      <step-3 module="M-MAIN" status="pending" verification="V-M-MAIN">На тике: bell_keys + reconcile, проброс bell в paint</step-3>
+      <step-4 module="M-SIGNAL" status="pending" verification="V-M-SIGNAL">Пишущая сторона интеграции: hooks/claudebar-bell.ps1 в репозитории + документация подключения в settings.json (Stop). Правка внешнего settings.json — с показом и подтверждением пользователя</step-4>
+      <checkpoint>
+        <tests>cargo test (parse_signal, project_key, сопоставление/reconcile); cargo build --release</tests>
+        <smoke>После завершения ИИ строка проекта подсвечивается; фокус окна гасит подсветку и удаляет .signal</smoke>
+        <flows>DF-BELL end-to-end; VF-003</flows>
+        <artifacts>graph/plan/verification синхронны; grace lint = 0</artifacts>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-4>
+
+    <Phase-5 name="Иконки приложений в секциях" status="pending">
+      <goal>Маленькая иконка приложения в заголовке секции для быстрого поиска глазами</goal>
+      <step-1 module="M-ICON" status="pending" verification="V-M-ICON">section_icon: HICON по окну секции (GCLP_HICONSM/WM_GETICON), кэш по app_idx</step-1>
+      <step-2 module="M-RENDER" status="pending" verification="V-M-RENDER">DrawIconEx в заголовке секции, сдвиг текста названия</step-2>
+      <checkpoint>
+        <tests>cargo build --release</tests>
+        <smoke>В заголовках секций видны иконки Word/Excel/MS Project/VS Code/Cursor</smoke>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-5>
+
+    <Phase-6 name="Зоны hit-test + кнопка закрытия ✕" status="pending">
+      <goal>Зональный hit-test строки; ✕ закрывает окно штатно</goal>
+      <step-1 module="M-RENDER" status="pending" verification="V-M-RENDER">Zone {Body, Close, DragHandle, Toggle}; hit_test(x,y) -> (row, Zone); отрисовка ✕ на hover строки окна</step-1>
+      <step-2 module="M-ACTIVATE" status="pending" verification="V-M-ACTIVATE">close(hwnd) = PostMessageW(WM_CLOSE)</step-2>
+      <step-3 module="M-MAIN" status="pending" verification="V-M-MAIN">Клик Window: Zone::Close -> close, иначе activate</step-3>
+      <checkpoint>
+        <tests>cargo test (hit_test зон: Close vs Body по x); cargo build --release</tests>
+        <smoke>Клик ✕ вызывает диалог сохранения приложения; при закрытии строка уходит</smoke>
+        <flows>DF-CLOSE end-to-end; VF-004</flows>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-6>
+
+    <Phase-7 name="«Показать все» недавние сверх 6" status="pending">
+      <goal>Под 6 недавними крыжик «показать все (N)», раскрывающий полный список</goal>
+      <step-1 module="M-RECENT" status="pending" verification="V-M-RECENT">Снять жёсткий LIMIT=6: хранить до STORE_LIMIT (~50) на app, сорт. по mtime</step-1>
+      <step-2 module="M-CONFIG" status="pending" verification="V-M-CONFIG">recent_showall (is/toggle, ключ ra=) с персистом</step-2>
+      <step-3 module="M-RENDER" status="pending" verification="V-M-RENDER">Row::RecentMore; build_rows: 6 + «показать все» либо полный список; клик-зона</step-3>
+      <step-4 module="M-MAIN" status="pending" verification="V-M-MAIN">Клик RecentMore -> toggle showall + save</step-4>
+      <checkpoint>
+        <tests>cargo test (list_recent &gt;6; build_rows RecentMore/showall; ra= round-trip); cargo build --release</tests>
+        <smoke>«Показать все» раскрывает полный список и сворачивает; состояние переживает перезапуск</smoke>
+        <flows>DF-MORE end-to-end</flows>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-7>
+
+    <Phase-8 name="Drag-reorder секций и окон" status="pending">
+      <goal>Ручной порядок секций и окон; режим перетаскивания включается ПКМ, ручки видны только в нём</goal>
+      <step-1 module="M-CONFIG" status="pending" verification="V-M-CONFIG">order: порядок секций (os=) и окон в секции (o=); применение и перемещение; персист</step-1>
+      <step-2 module="M-RENDER" status="pending" verification="V-M-RENDER">build_rows применяет order; отрисовка ручек в режиме reorder; индикатор позиции при drag</step-2>
+      <step-3 module="M-MAIN" status="pending" verification="V-M-MAIN">ПКМ -> режим reorder; SetCapture/мышь/ReleaseCapture; вычисление целевого индекса -> order.move + save</step-3>
+      <checkpoint>
+        <tests>cargo test (order применяется к секциям и окнам; os=/o= round-trip); cargo build --release</tests>
+        <smoke>ПКМ показывает ручки; перетаскивание меняет порядок секции и окна; порядок переживает перезапуск; в боевом режиме ручек нет</smoke>
+        <flows>DF-REORDER end-to-end</flows>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-8>
   </ImplementationOrder>
 
   <ExecutionPolicy>

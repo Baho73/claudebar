@@ -1,4 +1,4 @@
-<TechnologyStack VERSION="0.2.0">
+<TechnologyStack VERSION="0.3.0">
   <Runtime>Native Windows (x86_64-pc-windows-gnu) — Windows 10/11</Runtime>
   <Language>Rust 1.96 (edition 2021)</Language>
   <Framework>Win32 API via `windows` crate 0.58</Framework>
@@ -6,6 +6,14 @@
   <Dependencies>
     <dep name="windows" version="0.58" purpose="Win32 bindings: окна (WindowsAndMessaging), GDI, Shell (IShellLinkW), процессы, COM, KeyboardAndMouse" />
   </Dependencies>
+
+  <StageNotes VERSION="0.3.0">
+    <new-crates>Этап v0.3 (звоночек, иконки, кнопка ✕, «показать все», drag-reorder) новых внешних крейтов НЕ добавляет — только функции уже подключённого windows 0.58.</new-crates>
+    <icons>M-ICON: иконка приложения берётся у окна секции через GetClassLongPtrW(GCLP_HICONSM)/WM_GETICON и рисуется DrawIconEx (GDI). Иконки класса/окна не требуют DestroyIcon. Fallback по полному пути exe (SHGetFileInfo, Win32_UI_Shell) — опционально.</icons>
+    <close>M-ACTIVATE.close: PostMessageW(hwnd, WM_CLOSE) — приложение само показывает диалог сохранения; не блокирует панель.</close>
+    <signals>M-SIGNAL: межпроцессный сигнал «ИИ закончила» — файлы в %APPDATA%\claudebar\signals\ (имя = session_id, содержимое = cwd проекта + время). Пишет Stop-хук Claude Code (hooks/claudebar-bell.ps1, читает cwd из stdin-JSON). ClaudeBar опрашивает папку на таймере ~1с, сопоставляет по имени проекта, сбрасывает по фокусу окна. Файловый IPC выбран как простейший без сети и зависимостей.</signals>
+    <drag>M-RENDER drag-reorder: захват мыши SetCapture/ReleaseCapture (KeyboardAndMouse). Режим перетаскивания включается ПКМ — в боевом режиме ручки скрыты.</drag>
+  </StageNotes>
 
   <VersionConstraints>
     <constraint lib="windows" min="0.58" max="0.58.x" reason="Сигнатуры 0.58 (HWND как *mut c_void, enum-параметры шрифтов как u32, Result у user/gdi вызовов) вшиты в код; апгрейд требует ревизии вызовов" />
