@@ -5,10 +5,12 @@
 
 mod activate;
 mod config;
+mod recent;
 mod render;
 mod win_enum;
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use config::{Config, PALETTE};
@@ -31,6 +33,7 @@ const ID_LABEL_CLEAR: usize = 21;
 pub(crate) struct App {
     pub(crate) hinst: HINSTANCE,
     pub(crate) items: Vec<win_enum::WinItem>,
+    pub(crate) recent: Vec<recent::RecentDoc>,
     pub(crate) rows: Vec<render::Row>,
     pub(crate) config: Config,
     pub(crate) font_main: HFONT,
@@ -48,6 +51,17 @@ thread_local! {
 fn refresh_items(app: &mut App) {
     let raw = win_enum::list_windows();
     app.items = win_enum::match_windows(&raw, &app.config.apps);
+    // открытые сейчас документы (basename без расширения, lower) — исключаем из недавних
+    let open: HashSet<String> = app
+        .items
+        .iter()
+        .map(|it| {
+            let n = &it.name;
+            n.rsplit_once('.').map(|(b, _)| b).unwrap_or(n).to_lowercase()
+        })
+        .collect();
+    let exts: Vec<Vec<String>> = app.config.apps.iter().map(|a| a.exts.clone()).collect();
+    app.recent = recent::list_recent(&exts, &open);
     app.rows = render::build_rows(&app.items, &app.config.apps, &app.config);
 }
 
@@ -450,6 +464,7 @@ fn main() -> Result<()> {
         let mut app = App {
             hinst,
             items: Vec::new(),
+            recent: Vec::new(),
             rows: Vec::new(),
             config,
             font_main: make_font(-16, 600),
