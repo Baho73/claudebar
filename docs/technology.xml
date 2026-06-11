@@ -1,0 +1,49 @@
+<TechnologyStack VERSION="0.2.0">
+  <Runtime>Native Windows (x86_64-pc-windows-gnu) — Windows 10/11</Runtime>
+  <Language>Rust 1.96 (edition 2021)</Language>
+  <Framework>Win32 API via `windows` crate 0.58</Framework>
+
+  <Dependencies>
+    <dep name="windows" version="0.58" purpose="Win32 bindings: окна (WindowsAndMessaging), GDI, Shell (IShellLinkW), процессы, COM, KeyboardAndMouse" />
+  </Dependencies>
+
+  <VersionConstraints>
+    <constraint lib="windows" min="0.58" max="0.58.x" reason="Сигнатуры 0.58 (HWND как *mut c_void, enum-параметры шрифтов как u32, Result у user/gdi вызовов) вшиты в код; апгрейд требует ревизии вызовов" />
+    <constraint lib="rustc" min="1.96.0" max="1.x" reason="GNU-тулчейн stable-x86_64-pc-windows-gnu, MSVC недоступен на машине" />
+  </VersionConstraints>
+
+  <Tooling>
+    <tool name="toolchain" value="rustup stable-x86_64-pc-windows-gnu" version="1.96" />
+    <tool name="build" value="cargo build --release" version="1.96" />
+    <tool name="test-runner" value="cargo test" version="1.96" />
+    <tool name="linker" value="GNU ld (mingw-w64, в составе rust-mingw)" version="—" />
+  </Tooling>
+
+  <Testing>
+    <module-level>
+      <command>cargo test</command>
+      <focus>Чистые функции: извлечение имени проекта/документа из заголовка, round-trip claudebar.ini, парсинг пути из .lnk, сопоставление окно-файл по basename</focus>
+    </module-level>
+    <wave-level>
+      <command>cargo build --release</command>
+      <focus>Полная сборка после слияния модулей; smoke-запуск exe (окно создаётся, краха на старте нет)</focus>
+    </wave-level>
+    <phase-level>
+      <command>cargo test &amp;&amp; cargo build --release</command>
+      <focus>Все юнит-тесты + релизная сборка + ручная визуальная проверка панели</focus>
+    </phase-level>
+    <mocking-policy>Win32-вызовы не мокаем. Логику выносим в чистые функции (строки, структуры) и тестируем их детерминированно. GUI проверяется ручным smoke-запуском (антивирус Kaspersky приходится держать в исключениях/паузе).</mocking-policy>
+  </Testing>
+
+  <Observability>
+    <logger>Опциональный файловый лог рядом с exe (claudebar.log). GUI собран с #![windows_subsystem = "windows"], консоли и stdout нет.</logger>
+    <log-format>[Module][function][BLOCK_NAME] message</log-format>
+    <required-fields>—</required-fields>
+    <redaction>Логировать только заголовки окон и пути файлов; содержимое документов не логировать</redaction>
+  </Observability>
+
+  <DeliveryShape>
+    <shape>Один самодостаточный нативный exe (~280 КБ, статически слинкован), конфиг claudebar.ini рядом. Без рантайма, .NET, Python и установки.</shape>
+    <note>Неподписанный exe может блокироваться поведенческим антивирусом (Kaspersky System Watcher реагирует на SetForegroundWindow). Образец отправлен в Kaspersky OpenTIP — вердикт Clean. Обход: исключение по пути.</note>
+  </DeliveryShape>
+</TechnologyStack>

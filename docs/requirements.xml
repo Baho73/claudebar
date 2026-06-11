@@ -1,0 +1,94 @@
+<RequirementsAnalysis VERSION="0.2.0">
+  <Project>
+    <name>ClaudeBar</name>
+    <annotation>Всегда-поверх нативная Windows-панель (Rust + Win32) со списком открытых окон редакторов и приложений (VS Code, Cursor, Word, Excel, MS Project), сгруппированных в сворачиваемые секции по приложению. Клик переключает на окно; можно задавать цвет и метку по проекту; под каждой секцией показываются недавние/закрытые документы (из Windows Recent) для повторного открытия одним кликом.</annotation>
+    <keywords>claudebar, переключатель окон, window switcher, always-on-top, Win32, EnumWindows, SetForegroundWindow, VS Code, Cursor, Word, Excel, MS Project, недавние документы, Windows Recent, ShellExecute, Rust, native exe</keywords>
+  </Project>
+
+  <Actors>
+    <actor-User>Пользователь с десятками открытых окон редакторов/Office без вкладок; переключается между ними и помечает их.</actor-User>
+    <actor-System>Фоновый опрос: по таймеру (~1с) перечисляет окна и читает Windows Recent, обновляет панель.</actor-System>
+  </Actors>
+
+  <UseCases>
+    <UC-001>
+      <Actor>User</Actor>
+      <Action>Кликает ЛКМ по строке окна в панели</Action>
+      <Goal>Мгновенно переключиться на нужное окно</Goal>
+      <Preconditions>Окно открыто и распознано панелью</Preconditions>
+      <AcceptanceCriteria>Целевое окно выходит на передний план (восстанавливается из свёрнутого), фокус на нём</AcceptanceCriteria>
+      <Priority>high</Priority>
+      <RelatedFlows>DF-SWITCH</RelatedFlows>
+    </UC-001>
+    <UC-002>
+      <Actor>User</Actor>
+      <Action>ПКМ по строке, выбирает цвет и/или вводит метку</Action>
+      <Goal>Визуально отличать проекты друг от друга</Goal>
+      <Preconditions>Строка соответствует проекту/документу</Preconditions>
+      <AcceptanceCriteria>Цвет и метка сохраняются по имени проекта в claudebar.ini и переживают смену файла и перезапуск окна</AcceptanceCriteria>
+      <Priority>high</Priority>
+      <RelatedFlows>DF-TAG</RelatedFlows>
+    </UC-002>
+    <UC-003>
+      <Actor>User</Actor>
+      <Action>Смотрит на панель</Action>
+      <Goal>Видеть окна сгруппированными по приложению (Claude/VS Code, Cursor, Word, Excel, MS Project)</Goal>
+      <Preconditions>Открыты окна поддерживаемых приложений</Preconditions>
+      <AcceptanceCriteria>Каждое приложение — отдельная секция с заголовком и счётчиком окон; определение по имени процесса</AcceptanceCriteria>
+      <Priority>high</Priority>
+      <RelatedFlows>DF-GROUP</RelatedFlows>
+    </UC-003>
+    <UC-004>
+      <Actor>User</Actor>
+      <Action>Кликает по заголовку секции (крыжик)</Action>
+      <Goal>Свернуть/развернуть секцию приложения</Goal>
+      <Preconditions>Секция существует</Preconditions>
+      <AcceptanceCriteria>Состояние свёрнутости сохраняется в claudebar.ini per приложение</AcceptanceCriteria>
+      <Priority>medium</Priority>
+      <RelatedFlows>DF-GROUP</RelatedFlows>
+    </UC-004>
+    <UC-005>
+      <Actor>User</Actor>
+      <Action>Раскрывает под-кат «Недавние» и кликает по документу</Action>
+      <Goal>Открыть недавно закрытый документ из панели</Goal>
+      <Preconditions>Документ есть в Windows Recent и сейчас не открыт</Preconditions>
+      <AcceptanceCriteria>ShellExecute открывает файл в ассоциированном приложении; после открытия документ уходит из «недавних» в активные окна</AcceptanceCriteria>
+      <Priority>high</Priority>
+      <RelatedFlows>DF-RECENT</RelatedFlows>
+    </UC-005>
+    <UC-006>
+      <Actor>User</Actor>
+      <Action>Тащит панель за шапку</Action>
+      <Goal>Разместить панель в удобном углу; всегда поверх</Goal>
+      <Preconditions>—</Preconditions>
+      <AcceptanceCriteria>Окно topmost; позиция запоминается в claudebar.ini</AcceptanceCriteria>
+      <Priority>medium</Priority>
+      <RelatedFlows>—</RelatedFlows>
+    </UC-006>
+  </UseCases>
+
+  <NonGoals>
+    <item-1>Не различать несколько Claude/документов во вкладках ОДНОГО окна (поддержка — одно окно на сессию/документ).</item-1>
+    <item-2>Не управлять содержимым документов, не редактировать.</item-2>
+    <item-3>Не кроссплатформа: только Windows/Win32.</item-3>
+    <item-4>Не цветные эмодзи в метках (нужен переход на DirectWrite; отложено).</item-4>
+  </NonGoals>
+
+  <Constraints>
+    <constraint-1>Только Windows; нативный exe без внешних зависимостей и установки.</constraint-1>
+    <constraint-2>Конфиг локальный (claudebar.ini рядом с exe), без сети.</constraint-2>
+    <constraint-3>Размер и «лёгкость» важны: панель не должна нагружать систему (опрос ~1с).</constraint-3>
+  </Constraints>
+
+  <Risks>
+    <risk-1>Заголовки Word/Excel/Project не содержат полного пути — сопоставление окно-файл по basename без расширения, возможны коллизии одноимённых файлов.</risk-1>
+    <risk-2>Поведенческий антивирус (Kaspersky System Watcher) блокирует SetForegroundWindow/AttachThreadInput у неподписанного exe.</risk-2>
+    <risk-3>Парсинг .lnk и определение процесса требуют корректной работы с COM и правами доступа к чужим процессам.</risk-3>
+    <risk-4>Рассинхрон «недавних»: файл открыт во внешнем приложении, но окно ещё не появилось — кратковременно мог бы дублироваться в активных и недавних.</risk-4>
+  </Risks>
+
+  <OpenQuestions>
+    <question-1>Нужен ли Office MRU (реестр) как резервный/дополнительный источник недавних, если Windows Recent неполон?</question-1>
+    <question-2>Как различать несколько одноимённых документов одного приложения в списке недавних?</question-2>
+  </OpenQuestions>
+</RequirementsAnalysis>

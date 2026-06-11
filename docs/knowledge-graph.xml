@@ -1,0 +1,88 @@
+<KnowledgeGraph>
+  <Project NAME="ClaudeBar" VERSION="0.2.0">
+    <keywords>claudebar, переключатель окон, Win32, EnumWindows, SetForegroundWindow, секции по приложению, недавние документы, Windows Recent, ShellExecute, Rust</keywords>
+    <annotation>Всегда-поверх Windows-панель (Rust + Win32) для переключения между окнами редакторов/приложений, с группировкой по приложению, цветными метками по проекту и блоком недавних документов.</annotation>
+
+    <!-- v0.1 реализован монолитно в src/main.rs. Планируемые модули ниже — целевая разбивка
+         под этап A+B+C. STATUS=planned для модулей, которых пока нет как отдельных файлов;
+         часть логики уже существует внутри main.rs и будет вынесена при рефакторе (Phase-1). -->
+
+    <M-MAIN NAME="Main" TYPE="ENTRY_POINT" STATUS="partial">
+      <purpose>Точка входа: GetModuleHandle, регистрация класса, создание topmost-окна, таймер опроса, message loop, диспетчеризация в обработчики</purpose>
+      <path>src/main.rs</path>
+      <depends>M-CONFIG, M-WINENUM, M-RENDER</depends>
+      <verification-ref>V-M-MAIN</verification-ref>
+      <annotations>
+        <fn-main PURPOSE="Инициализация приложения и цикл сообщений" />
+        <fn-wndproc PURPOSE="Оконная процедура: WM_PAINT/TIMER/мышь/команды меню" />
+      </annotations>
+    </M-MAIN>
+
+    <M-WINENUM NAME="WindowEnum" TYPE="CORE_LOGIC" STATUS="planned">
+      <purpose>Перечисление видимых top-level окон, определение приложения по имени процесса, извлечение имени проекта/документа из заголовка по правилам приложения</purpose>
+      <path>src/win_enum.rs</path>
+      <depends>M-CONFIG</depends>
+      <verification-ref>V-M-WINENUM</verification-ref>
+      <annotations>
+        <fn-enum_windows PURPOSE="EnumWindows -> список (hwnd, process, title)" />
+        <fn-process_name PURPOSE="GetWindowThreadProcessId + QueryFullProcessImageNameW -> имя exe" />
+        <fn-extract_name PURPOSE="Имя проекта/документа из заголовка по AppDef" />
+      </annotations>
+    </M-WINENUM>
+
+    <M-CONFIG NAME="Config" TYPE="DATA_LAYER" STATUS="planned">
+      <purpose>Чтение/запись claudebar.ini: определения приложений (процесс-блок-расширения), цвета и метки по проекту, свёрнутость секций, позиция панели</purpose>
+      <path>src/config.rs</path>
+      <depends>none</depends>
+      <verification-ref>V-M-CONFIG</verification-ref>
+      <annotations>
+        <fn-load PURPOSE="Распарсить claudebar.ini в структуру конфигурации" />
+        <fn-save PURPOSE="Сериализовать конфигурацию обратно в claudebar.ini" />
+        <type-AppDef PURPOSE="Определение приложения: процесс, имя блока, расширения" />
+      </annotations>
+    </M-CONFIG>
+
+    <M-RENDER NAME="Render" TYPE="UI_COMPONENT" STATUS="planned">
+      <purpose>Построение списка типизированных строк (заголовок секции, окно, под-заголовок недавних, недавний документ), отрисовка через GDI с двойной буферизацией, hit-testing, контекст-меню цвет/метка</purpose>
+      <path>src/render.rs</path>
+      <depends>M-CONFIG, M-ACTIVATE, M-RECENT</depends>
+      <verification-ref>V-M-RENDER</verification-ref>
+      <annotations>
+        <fn-build_rows PURPOSE="Сгруппировать окна и недавние в строки по секциям" />
+        <fn-paint PURPOSE="Отрисовать строки (GDI, двойной буфер)" />
+        <fn-hit_test PURPOSE="Определить строку и зону по координатам клика" />
+      </annotations>
+    </M-RENDER>
+
+    <M-ACTIVATE NAME="Activate" TYPE="CORE_LOGIC" STATUS="planned">
+      <purpose>Надёжная активация чужого окна: restore из свёрнутого, AttachThreadInput-трюк, SetForegroundWindow, SetFocus</purpose>
+      <path>src/activate.rs</path>
+      <depends>none</depends>
+      <verification-ref>V-M-ACTIVATE</verification-ref>
+      <annotations>
+        <fn-activate PURPOSE="Вывести окно по HWND на передний план" />
+      </annotations>
+    </M-ACTIVATE>
+
+    <M-RECENT NAME="Recent" TYPE="INTEGRATION" STATUS="planned">
+      <purpose>Чтение Windows Recent (%APPDATA%\Microsoft\Windows\Recent\*.lnk через IShellLinkW), фильтр по расширению на приложение, исключение открытых сейчас, открытие документа через ShellExecuteW</purpose>
+      <path>src/recent.rs</path>
+      <depends>M-WINENUM</depends>
+      <verification-ref>V-M-RECENT</verification-ref>
+      <annotations>
+        <fn-list_recent PURPOSE="Распарсить .lnk Recent в пути с временем" />
+        <fn-resolve_lnk PURPOSE="IShellLinkW::GetPath -> целевой путь" />
+        <fn-open_doc PURPOSE="ShellExecuteW(open, path)" />
+      </annotations>
+    </M-RECENT>
+
+    <CrossLink from="M-MAIN" to="M-WINENUM" relation="опрашивает окна по таймеру" />
+    <CrossLink from="M-MAIN" to="M-RENDER" relation="делегирует отрисовку и обработку кликов" />
+    <CrossLink from="M-MAIN" to="M-CONFIG" relation="загружает/сохраняет конфигурацию" />
+    <CrossLink from="M-RENDER" to="M-CONFIG" relation="читает цвета/метки/свёрнутость" />
+    <CrossLink from="M-RENDER" to="M-ACTIVATE" relation="вызывает активацию по клику окна" />
+    <CrossLink from="M-RENDER" to="M-RECENT" relation="показывает и открывает недавние документы" />
+    <CrossLink from="M-RECENT" to="M-WINENUM" relation="сопоставляет недавние с открытыми по basename" />
+    <CrossLink from="M-WINENUM" to="M-CONFIG" relation="использует AppDef для распознавания приложения" />
+  </Project>
+</KnowledgeGraph>

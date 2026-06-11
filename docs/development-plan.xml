@@ -1,0 +1,147 @@
+<DevelopmentPlan VERSION="0.2.0">
+  <ArchitectureNotes>
+    <objective>Превратить монолитный src/main.rs (v0.1) в модульную структуру и реализовать этап A+B+C: мультиприложения, сворачиваемые секции, недавние документы.</objective>
+    <non-goal>Вкладки внутри одного окна; кроссплатформенность; цветные эмодзи (нужен DirectWrite).</non-goal>
+    <risk-1>Сопоставление окно-файл по basename (заголовки Office без пути) — держать терпимым к коллизиям.</risk-1>
+    <risk-2>Поведенческий антивирус на SetForegroundWindow — функция активации изолирована в M-ACTIVATE.</risk-2>
+    <risk-3>Рефактор не должен сломать паритет v0.1 — Phase-1 закрывается smoke-проверкой текущего поведения.</risk-3>
+  </ArchitectureNotes>
+
+  <Modules>
+    <M-CONFIG NAME="Config" TYPE="DATA_LAYER" LAYER="0" ORDER="1" STATUS="planned">
+      <contract>
+        <purpose>Загрузка/сохранение claudebar.ini: AppDef-ы, цвета/метки по проекту, свёрнутость секций, позиция панели</purpose>
+        <inputs><param name="path" type="PathBuf" /></inputs>
+        <outputs><param name="Config" type="struct" /></outputs>
+        <errors><error code="IO_ERROR_FALLBACK_DEFAULTS" /></errors>
+      </contract>
+      <interface>
+        <export-load PURPOSE="Прочитать конфиг (или дефолты)" />
+        <export-save PURPOSE="Записать конфиг" />
+      </interface>
+      <depends>none</depends>
+      <target><source>src/config.rs</source><tests>src/config.rs (#[cfg(test)])</tests></target>
+      <verification-ref>V-M-CONFIG</verification-ref>
+    </M-CONFIG>
+
+    <M-WINENUM NAME="WindowEnum" TYPE="CORE_LOGIC" LAYER="1" ORDER="1" STATUS="planned">
+      <contract>
+        <purpose>Перечислить окна, определить приложение по процессу, извлечь имя проекта/документа из заголовка</purpose>
+        <inputs><param name="config" type="&amp;Config" /></inputs>
+        <outputs><param name="Vec&lt;WinItem&gt;" type="hwnd+app+name" /></outputs>
+      </contract>
+      <interface>
+        <export-enum_windows PURPOSE="Список окон с процессом и заголовком" />
+        <export-extract_name PURPOSE="Имя проекта/документа по AppDef" />
+      </interface>
+      <depends>M-CONFIG</depends>
+      <target><source>src/win_enum.rs</source><tests>src/win_enum.rs (#[cfg(test)] на extract_name)</tests></target>
+      <verification-ref>V-M-WINENUM</verification-ref>
+    </M-WINENUM>
+
+    <M-ACTIVATE NAME="Activate" TYPE="CORE_LOGIC" LAYER="1" ORDER="2" STATUS="planned">
+      <contract>
+        <purpose>Вывести окно на передний план надёжно (restore + AttachThreadInput + SetForegroundWindow)</purpose>
+        <inputs><param name="hwnd" type="HWND" /></inputs>
+        <outputs><param name="()" type="void" /></outputs>
+      </contract>
+      <interface><export-activate PURPOSE="Активировать окно" /></interface>
+      <depends>none</depends>
+      <target><source>src/activate.rs</source><tests>—</tests></target>
+      <verification-ref>V-M-ACTIVATE</verification-ref>
+    </M-ACTIVATE>
+
+    <M-RECENT NAME="Recent" TYPE="INTEGRATION" LAYER="2" ORDER="1" STATUS="planned">
+      <contract>
+        <purpose>Недавние документы из Windows Recent по расширению, исключая открытые сейчас; открытие через ShellExecute</purpose>
+        <inputs><param name="apps" type="&amp;[AppDef]" /><param name="open_basenames" type="&amp;HashSet" /></inputs>
+        <outputs><param name="Vec&lt;RecentDoc&gt;" type="path+app+mtime" /></outputs>
+      </contract>
+      <interface>
+        <export-list_recent PURPOSE="Собрать и отфильтровать недавние" />
+        <export-open_doc PURPOSE="ShellExecute открыть документ" />
+      </interface>
+      <depends>M-WINENUM</depends>
+      <target><source>src/recent.rs</source><tests>src/recent.rs (#[cfg(test)] на фильтр/сопоставление)</tests></target>
+      <verification-ref>V-M-RECENT</verification-ref>
+    </M-RECENT>
+
+    <M-RENDER NAME="Render" TYPE="UI_COMPONENT" LAYER="3" ORDER="1" STATUS="planned">
+      <contract>
+        <purpose>Список типизированных строк, отрисовка GDI, hit-testing, контекст-меню</purpose>
+        <inputs><param name="windows" type="&amp;[WinItem]" /><param name="recent" type="&amp;[RecentDoc]" /><param name="config" type="&amp;Config" /></inputs>
+        <outputs><param name="rows" type="Vec&lt;Row&gt;" /></outputs>
+      </contract>
+      <interface>
+        <export-build_rows PURPOSE="Сгруппировать в строки по секциям" />
+        <export-paint PURPOSE="Отрисовать" />
+        <export-hit_test PURPOSE="Строка+зона по координате" />
+      </interface>
+      <depends>M-CONFIG, M-ACTIVATE, M-RECENT</depends>
+      <target><source>src/render.rs</source><tests>src/render.rs (#[cfg(test)] на build_rows/hit_test)</tests></target>
+      <verification-ref>V-M-RENDER</verification-ref>
+    </M-RENDER>
+
+    <M-MAIN NAME="Main" TYPE="ENTRY_POINT" LAYER="4" ORDER="1" STATUS="partial">
+      <contract>
+        <purpose>Окно, таймер, message loop, склейка модулей</purpose>
+        <inputs><param name="—" type="—" /></inputs>
+        <outputs><param name="exit code" type="i32" /></outputs>
+      </contract>
+      <interface><export-main PURPOSE="Точка входа" /></interface>
+      <depends>M-CONFIG, M-WINENUM, M-RENDER</depends>
+      <target><source>src/main.rs</source><tests>smoke-запуск exe</tests></target>
+      <verification-ref>V-M-MAIN</verification-ref>
+    </M-MAIN>
+  </Modules>
+
+  <DataFlow>
+    <DF-SWITCH NAME="Переключение на окно" TRIGGER="ЛКМ по строке окна">
+      <step-1>hit_test определяет строку окна и её HWND</step-1>
+      <step-2>M-ACTIVATE.activate выводит окно на передний план</step-2>
+      <evidence>Окно стало foreground (GetForegroundWindow == целевой HWND)</evidence>
+    </DF-SWITCH>
+    <DF-TAG NAME="Цвет и метка" TRIGGER="ПКМ по строке -> меню">
+      <step-1>Команда меню задаёт цвет или метку для имени проекта</step-1>
+      <step-2>M-CONFIG.save пишет claudebar.ini</step-2>
+      <evidence>После перезапуска цвет/метка восстановлены из ini</evidence>
+    </DF-TAG>
+    <DF-GROUP NAME="Группировка по приложению" TRIGGER="Таймер опроса ~1с">
+      <step-1>M-WINENUM перечисляет окна с процессом</step-1>
+      <step-2>build_rows группирует в секции по AppDef, учитывает свёрнутость</step-2>
+      <evidence>Секции с корректными счётчиками; свёрнутые скрывают содержимое</evidence>
+    </DF-GROUP>
+    <DF-RECENT NAME="Недавние документы" TRIGGER="Таймер + раскрытие под-ката">
+      <step-1>M-RECENT читает Windows Recent, фильтрует по расширению</step-1>
+      <step-2>Исключает документы, открытые сейчас (basename)</step-2>
+      <step-3>Клик -> ShellExecuteW открывает документ</step-3>
+      <evidence>Закрытый документ виден в недавних; после открытия появляется окно и уходит из недавних</evidence>
+    </DF-RECENT>
+  </DataFlow>
+
+  <ImplementationOrder>
+    <Phase-1 name="Рефактор в модули (паритет v0.1)" status="pending">
+      <goal>Вынести логику из монолита в M-CONFIG/M-WINENUM/M-ACTIVATE/M-RENDER без изменения поведения v0.1</goal>
+      <step-1 module="M-CONFIG" status="pending" verification="V-M-CONFIG">Выделить конфиг (ini) в модуль</step-1>
+      <step-2 module="M-WINENUM" status="pending" verification="V-M-WINENUM">Выделить перечисление окон + извлечение имени</step-2>
+      <step-3 module="M-ACTIVATE" status="pending" verification="V-M-ACTIVATE">Выделить активацию окна</step-3>
+      <step-4 module="M-RENDER" status="pending" verification="V-M-RENDER">Выделить отрисовку/hit-test</step-4>
+    </Phase-1>
+    <Phase-2 name="Мультиприложения + секции (A+B)" status="pending">
+      <goal>Определение приложения по процессу, секции по приложению, сворачивание</goal>
+      <step-1 module="M-WINENUM" status="pending" verification="V-M-WINENUM">Процесс по окну + AppDef-дефолты (Code/Cursor/Word/Excel/Project)</step-1>
+      <step-2 module="M-RENDER" status="pending" verification="V-M-RENDER">Секции с заголовками, счётчики, крыжик сворачивания, состояние в конфиг</step-2>
+    </Phase-2>
+    <Phase-3 name="Недавние документы (C)" status="pending">
+      <goal>Под-кат недавних из Windows Recent, открытие, «закрылось — уехало»</goal>
+      <step-1 module="M-RECENT" status="pending" verification="V-M-RECENT">Парсинг Recent (.lnk), фильтр по расширению, исключение открытых</step-1>
+      <step-2 module="M-RENDER" status="pending" verification="V-M-RENDER">Под-блок недавних в секции, клик -> open</step-2>
+    </Phase-3>
+  </ImplementationOrder>
+
+  <ExecutionPolicy>
+    <default-profile>balanced</default-profile>
+    <controller-owns>docs/development-plan.xml, docs/knowledge-graph.xml, docs/verification-plan.xml</controller-owns>
+    <worker-owns>Только файлы модулей src/*.rs и их локальные #[cfg(test)] в пределах одобренного write-scope.</worker-owns>
+  </ExecutionPolicy>
+</DevelopmentPlan>

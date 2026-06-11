@@ -1,0 +1,122 @@
+<VerificationPlan VERSION="0.2.0">
+  <GlobalPolicy>
+    <log-format>[Module][function][BLOCK_NAME] message</log-format>
+    <deterministic-first>true</deterministic-first>
+    <module-level-focus>Быстрые детерминированные проверки чистых функций (строки, структуры), близко к модулю, через cargo test и #[cfg(test)].</module-level-focus>
+    <wave-level-focus>cargo build --release после слияния модулей + smoke-запуск exe.</wave-level-focus>
+    <phase-level-focus>cargo test + релизная сборка + ручная визуальная проверка панели.</phase-level-focus>
+    <redaction>Не логировать содержимое документов; только заголовки и пути.</redaction>
+    <note>GUI на Win32 не покрывается автотестами целиком — критичная логика выносится в чистые функции и тестируется детерминированно; визуальная часть проверяется вручную (антивирус держать в исключениях/паузе).</note>
+  </GlobalPolicy>
+
+  <CriticalFlows>
+    <VF-001 NAME="ПереключениеНаОкно" USE_CASES="UC-001" DATA_FLOW="DF-SWITCH" PRIORITY="high">
+      <scenario>Клик по строке окна выводит целевое окно на передний план</scenario>
+      <expected-outcome>GetForegroundWindow возвращает HWND кликнутой строки; свёрнутое окно восстановлено</expected-outcome>
+      <required-signals>
+        <trace-sequence>HIT_TEST_WINDOW -> ACTIVATE -> FOREGROUND</trace-sequence>
+      </required-signals>
+    </VF-001>
+    <VF-002 NAME="ОткрытьНедавний" USE_CASES="UC-005" DATA_FLOW="DF-RECENT" PRIORITY="high">
+      <scenario>Клик по недавнему документу открывает файл; он уходит из недавних в активные окна</scenario>
+      <expected-outcome>ShellExecute успешен; на следующем опросе документ распознан как открытое окно и исключён из недавних</expected-outcome>
+      <required-signals>
+        <trace-sequence>HIT_TEST_RECENT -> SHELL_EXECUTE -> NEXT_POLL_AS_WINDOW</trace-sequence>
+      </required-signals>
+    </VF-002>
+  </CriticalFlows>
+
+  <ModuleVerification>
+    <V-M-CONFIG MODULE="M-CONFIG" PRIORITY="high">
+      <test-files><file>src/config.rs (#[cfg(test)])</file></test-files>
+      <module-checks>
+        <check-1>cargo test config</check-1>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">Round-trip: load(save(cfg)) == cfg для цветов, меток, свёрнутости, позиции, AppDef</scenario-1>
+        <scenario-2 kind="failure">Битый/отсутствующий ini -> дефолты, без паники</scenario-2>
+      </scenarios>
+    </V-M-CONFIG>
+    <V-M-WINENUM MODULE="M-WINENUM" PRIORITY="high">
+      <test-files><file>src/win_enum.rs (#[cfg(test)])</file></test-files>
+      <module-checks>
+        <check-1>cargo test win_enum</check-1>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">extract_name извлекает проект из "file - Project - Visual Studio Code" и документ из "Doc.docx - Word"</scenario-1>
+        <scenario-2 kind="success">Заголовок без " - " -> весь заголовок как имя; ведущие маркеры (точка несохранённого) обрезаются</scenario-2>
+      </scenarios>
+    </V-M-WINENUM>
+    <V-M-ACTIVATE MODULE="M-ACTIVATE" PRIORITY="medium">
+      <test-files><file>—</file></test-files>
+      <module-checks>
+        <check-1>Ручной smoke: переключение между окнами работает</check-1>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">Свёрнутое окно восстанавливается и выходит на передний план</scenario-1>
+      </scenarios>
+    </V-M-ACTIVATE>
+    <V-M-RECENT MODULE="M-RECENT" PRIORITY="high">
+      <test-files><file>src/recent.rs (#[cfg(test)])</file></test-files>
+      <module-checks>
+        <check-1>cargo test recent</check-1>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">Фильтр по расширению относит .docx->Word, .xlsx->Excel, .mpp->Project</scenario-1>
+        <scenario-2 kind="success">Документ, открытый сейчас (по basename без расширения), исключается из недавних</scenario-2>
+      </scenarios>
+    </V-M-RECENT>
+    <V-M-RENDER MODULE="M-RENDER" PRIORITY="high">
+      <test-files><file>src/render.rs (#[cfg(test)])</file></test-files>
+      <module-checks>
+        <check-1>cargo test render</check-1>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">build_rows группирует окна по приложению; свёрнутая секция не порождает строк содержимого</scenario-1>
+        <scenario-2 kind="success">hit_test по координате Y возвращает правильную строку и зону (заголовок секции / окно / недавний)</scenario-2>
+      </scenarios>
+    </V-M-RENDER>
+    <V-M-MAIN MODULE="M-MAIN" PRIORITY="medium">
+      <test-files><file>smoke</file></test-files>
+      <module-checks>
+        <check-1>cargo build --release затем запуск exe: процесс жив ~3с, окно создано, краха нет</check-1>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">Старт без краха, панель отображает текущие окна</scenario-1>
+      </scenarios>
+    </V-M-MAIN>
+  </ModuleVerification>
+
+  <PhaseGates>
+    <Gate-Phase-1 PHASE="Phase-1">
+      <goal>Рефактор завершён без регресса: поведение совпадает с v0.1</goal>
+      <commands><command-1>cargo test</command-1><command-2>cargo build --release</command-2></commands>
+      <required-evidence>
+        <evidence-1>Юнит-тесты config/win_enum проходят</evidence-1>
+        <evidence-2>Smoke-запуск: переключение окон VS Code/Cursor работает как в v0.1</evidence-2>
+      </required-evidence>
+    </Gate-Phase-1>
+    <Gate-Phase-2 PHASE="Phase-2">
+      <goal>Word/Excel/MS Project появляются отдельными секциями; сворачивание работает и сохраняется</goal>
+      <commands><command-1>cargo test</command-1><command-2>cargo build --release</command-2></commands>
+      <required-evidence>
+        <evidence-1>Секции по процессу с верными счётчиками</evidence-1>
+        <evidence-2>Свёрнутость переживает перезапуск (ini)</evidence-2>
+      </required-evidence>
+    </Gate-Phase-2>
+    <Gate-Phase-3 PHASE="Phase-3">
+      <goal>Недавние документы отображаются и открываются; «закрылось — уехало в недавние»</goal>
+      <commands><command-1>cargo test</command-1><command-2>cargo build --release</command-2></commands>
+      <required-evidence>
+        <evidence-1>Клик по недавнему открывает документ (ShellExecute)</evidence-1>
+        <evidence-2>Закрытое окно появляется в недавних на следующем опросе</evidence-2>
+      </required-evidence>
+    </Gate-Phase-3>
+  </PhaseGates>
+
+  <FailurePackets>
+    <packet-template>
+      <expected-fields>scenario, expected-evidence, observed-evidence, first-divergent-block, next-action</expected-fields>
+    </packet-template>
+  </FailurePackets>
+</VerificationPlan>
