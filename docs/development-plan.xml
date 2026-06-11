@@ -176,7 +176,7 @@
     </Phase-2>
     <Phase-3 name="Недавние документы (C)" status="pending">
       <goal>Под-кат недавних из Windows Recent, открытие, «закрылось — уехало»</goal>
-      <step-1 module="M-RECENT" status="pending" verification="V-M-RECENT">Парсинг Recent (.lnk), фильтр по расширению, исключение открытых</step-1>
+      <step-1 module="M-RECENT" status="done" verification="V-M-RECENT">Парсинг Recent (.lnk), фильтр по расширению, исключение открытых</step-1>
       <step-2 module="M-RENDER" status="pending" verification="V-M-RENDER">Под-блок недавних в секции, клик -> open</step-2>
       <checkpoint>
         <tests>cargo test (фильтр расширений, сопоставление по basename); cargo build --release</tests>

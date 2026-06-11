@@ -70,7 +70,7 @@
       </annotations>
     </M-ACTIVATE>
 
-    <M-RECENT NAME="Recent" TYPE="INTEGRATION" STATUS="planned">
+    <M-RECENT NAME="Recent" TYPE="INTEGRATION" STATUS="implemented">
       <purpose>Чтение Windows Recent (%APPDATA%\Microsoft\Windows\Recent\*.lnk через IShellLinkW), фильтр по расширению на приложение, исключение открытых сейчас, открытие документа через ShellExecuteW</purpose>
       <path>src/recent.rs</path>
       <depends>M-WINENUM</depends>
