@@ -6,6 +6,8 @@ It shows a compact vertical list of your windows, **grouped into collapsible sec
 
 Native Windows `.exe`, ~340 KB, written in Rust. No Python, no .NET, no runtime to install — one file.
 
+<p align="center"><img src="screenshot.png" alt="ClaudeBar panel" width="360"></p>
+
 ```
 ┌────────────────────────┐
 │ ≡ ClaudeBar          ✕ │
