@@ -113,7 +113,7 @@
         <export-list_recent PURPOSE="Собрать и отфильтровать недавние (до STORE_LIMIT~50 на app, по mtime)" />
         <export-open_doc PURPOSE="ShellExecute открыть документ" />
       </interface>
-      <depends>M-WINENUM</depends>
+      <depends>M-WINENUM, M-CONFIG</depends>
       <target><source>src/recent.rs</source><tests>src/recent.rs (#[cfg(test)] на фильтр/сопоставление)</tests></target>
       <verification-ref>V-M-RECENT</verification-ref>
     </M-RECENT>
@@ -160,7 +160,7 @@
         <export-paint PURPOSE="Отрисовать (иконки, ✕, ручки, подсветка bell)" />
         <export-hit_test PURPOSE="(строка, Zone) по координате (x,y): Body | Close | DragHandle | Toggle" />
       </interface>
-      <depends>M-CONFIG, M-ACTIVATE, M-RECENT, M-ICON</depends>
+      <depends>M-CONFIG, M-WINENUM, M-ACTIVATE, M-RECENT, M-ICON</depends>
       <target><source>src/render.rs</source><tests>src/render.rs (#[cfg(test)] на build_rows/hit_test зон/порядок)</tests></target>
       <verification-ref>V-M-RENDER</verification-ref>
     </M-RENDER>

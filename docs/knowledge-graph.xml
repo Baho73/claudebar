@@ -51,7 +51,7 @@
     <M-RENDER NAME="Render" TYPE="UI_COMPONENT" STATUS="implemented">
       <purpose>Построение списка типизированных строк (заголовок секции, окно, под-заголовок недавних, недавний документ, «показать все»), отрисовка через GDI с двойной буферизацией, зональный hit-testing, контекст-меню цвет/метка. v0.3: иконки секций (M-ICON), кнопка ✕ и ручки drag, подсветка «звенящих» строк, ручной порядок.</purpose>
       <path>src/render.rs</path>
-      <depends>M-CONFIG, M-ACTIVATE, M-RECENT, M-ICON</depends>
+      <depends>M-CONFIG, M-WINENUM, M-ACTIVATE, M-RECENT, M-ICON</depends>
       <verification-ref>V-M-RENDER</verification-ref>
       <annotations>
         <fn-build_rows PURPOSE="Сгруппировать окна и недавние в строки по секциям с учётом ручного порядка и showall (Row::RecentMore при &gt;6)" />
@@ -79,7 +79,7 @@
     <M-RECENT NAME="Recent" TYPE="INTEGRATION" STATUS="implemented">
       <purpose>Чтение Windows Recent (%APPDATA%\Microsoft\Windows\Recent\*.lnk через IShellLinkW), фильтр по расширению на приложение, исключение открытых сейчас, открытие документа через ShellExecuteW. v0.3: жёсткий лимит 6 снят (хранить до ~50 на приложение, сорт. по mtime); обрезку до 6 решает M-RENDER через «показать все».</purpose>
       <path>src/recent.rs</path>
-      <depends>M-WINENUM</depends>
+      <depends>M-WINENUM, M-CONFIG</depends>
       <verification-ref>V-M-RECENT</verification-ref>
       <annotations>
         <fn-list_recent PURPOSE="Распарсить .lnk Recent в пути с временем (до STORE_LIMIT на app, по mtime)" />
@@ -126,5 +126,7 @@
     <CrossLink from="M-MAIN" to="M-SIGNAL" relation="опрашивает сигналы по таймеру и сбрасывает по фокусу" />
     <CrossLink from="M-RENDER" to="M-ICON" relation="берёт иконку приложения для заголовка секции" />
     <CrossLink from="M-SIGNAL" to="M-WINENUM" relation="сопоставляет сигналы с открытыми окнами по имени проекта" />
+    <CrossLink from="M-RENDER" to="M-WINENUM" relation="строит строки и порядок из WinItem" />
+    <CrossLink from="M-RECENT" to="M-CONFIG" relation="использует AppDef (расширения, editor_storage) для классификации недавних" />
   </Project>
 </KnowledgeGraph>
