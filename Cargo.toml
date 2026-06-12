@@ -1,6 +1,6 @@
 [package]
 name = "claudebar"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 description = "Tiny always-on-top switcher for your open Claude Code / editor windows"
 license = "MIT"
@@ -16,6 +16,7 @@ features = [
     "Win32_Graphics_Gdi",
     "Win32_System_LibraryLoader",
     "Win32_System_Threading",
+    "Win32_Storage_FileSystem",
     "Win32_UI_Shell",
 ]
 

@@ -98,6 +98,7 @@
         <scenario-4 kind="success">v0.3 Phase-7: build_rows при &gt;6 недавних и !showall даёт 6 строк + Row::RecentMore; при showall — полный список</scenario-4>
         <scenario-5 kind="success">v0.3 Phase-8: build_rows применяет ручной порядок секций и окон; элементы без порядка идут после по прежней сортировке</scenario-5>
         <scenario-6 kind="success">v0.3 Phase-4: paint подсвечивает строку окна, чьё имя проекта присутствует в наборе bell</scenario-6>
+        <scenario-7 kind="regression">Перетаскивание было необнаружимо (хватать только за 24px ручку, режим невидим). Фикс: в reorder hit_test отдаёт DragHandle для всей строки секции/окна; шапка показывает подсказку режима. Тест hit_test_reorder_gives_drag_handle</scenario-7>
       </scenarios>
     </V-M-RENDER>
     <V-M-SIGNAL MODULE="M-SIGNAL" PRIORITY="high">
@@ -114,13 +115,15 @@
       </scenarios>
     </V-M-SIGNAL>
     <V-M-ICON MODULE="M-ICON" PRIORITY="low">
-      <test-files><file>— (Win32, ручной smoke)</file></test-files>
+      <test-files><file>src/icon.rs (#[cfg(test)] на icon_from_path)</file></test-files>
       <module-checks>
-        <check-1>Ручной smoke: иконки приложений видны в заголовках секций</check-1>
+        <check-1>cargo test icon</check-1>
+        <check-2>Ручной smoke: иконки приложений видны в заголовках секций (Code/Cursor/Word/Excel/MS Project)</check-2>
       </module-checks>
       <scenarios>
-        <scenario-1 kind="success">section_icon возвращает HICON для окна; кэш не запрашивает повторно</scenario-1>
+        <scenario-1 kind="success">section_icon возвращает HICON для окна; кэш не запрашивает повторно при успехе</scenario-1>
         <scenario-2 kind="failure">Окно без иконки -> None, заголовок рисуется без иконки (без краха)</scenario-2>
+        <scenario-3 kind="regression">Иконки не отображались у Cursor/Word/Excel/MS Project (источник WM_GETICON/class кросс-процессно ненадёжен). Фикс: иконка из exe-файла (SHGetFileInfo). Guard: icon_from_path("C:\Windows\explorer.exe") -> Some</scenario-3>
       </scenarios>
     </V-M-ICON>
     <V-M-MAIN MODULE="M-MAIN" PRIORITY="medium">

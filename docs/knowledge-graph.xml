@@ -54,11 +54,14 @@
       <depends>M-CONFIG, M-ACTIVATE, M-RECENT, M-ICON</depends>
       <verification-ref>V-M-RENDER</verification-ref>
       <annotations>
-        <fn-build_rows PURPOSE="Сгруппировать окна и недавние в строки по секциям с учётом порядка и showall (Row::RecentMore при &gt;6)" />
-        <fn-paint PURPOSE="Отрисовать строки (GDI, двойной буфер): иконки, ✕, ручки, подсветка bell" />
-        <fn-hit_test PURPOSE="Определить строку и зону (Body|Close|DragHandle|Toggle) по координатам клика" />
+        <fn-build_rows PURPOSE="Сгруппировать окна и недавние в строки по секциям с учётом ручного порядка и showall (Row::RecentMore при &gt;6)" />
+        <fn-paint PURPOSE="Отрисовать строки (GDI, двойной буфер): иконки, ✕, ручки drag, подсветка bell и перетаскивания" />
+        <fn-hit_test PURPOSE="Определить строку и зону (Body|Close|DragHandle) по координатам клика и режиму reorder" />
+        <fn-section_of_row PURPOSE="Индекс приложения секции, к которой относится строка" />
+        <fn-section_blocks PURPOSE="Блоки секций в видимом порядке (drag-reorder секций)" />
+        <fn-window_names PURPOSE="Имена окон секции в видимом порядке (drag-reorder окон)" />
         <type-Row PURPOSE="Типизированная строка: Section | Window | RecentHeader | Recent | RecentMore" />
-        <type-Zone PURPOSE="Зона клика в строке: Toggle | Body | Close | DragHandle" />
+        <type-Zone PURPOSE="Зона клика в строке: Body | Close | DragHandle" />
       </annotations>
     </M-RENDER>
 
@@ -86,8 +89,8 @@
       </annotations>
     </M-RECENT>
 
-    <M-SIGNAL NAME="Signal" TYPE="INTEGRATION" STATUS="planned">
-      <purpose>«Звоночек»: читать файлы-сигналы завершения ИИ из %APPDATA%\claudebar\signals\, отдавать набор имён проектов для подсветки, сбрасывать сигнал при получении окном проекта фокуса</purpose>
+    <M-SIGNAL NAME="Signal" TYPE="INTEGRATION" STATUS="implemented">
+      <purpose>«Звоночек»: читать файлы-сигналы завершения ИИ из %APPDATA%\claudebar\signals\, отдавать набор имён проектов для подсветки, сбрасывать сигнал при получении окном проекта фокуса. Пишущая сторона — hooks/claudebar-bell.ps1.</purpose>
       <path>src/signal.rs</path>
       <depends>M-WINENUM</depends>
       <verification-ref>V-M-SIGNAL</verification-ref>
@@ -97,17 +100,18 @@
         <fn-signal_dir PURPOSE="Путь к папке сигналов (создать при отсутствии)" />
         <fn-parse_signal PURPOSE="Извлечь cwd проекта из содержимого .signal" />
         <fn-project_key PURPOSE="basename(cwd) в нижнем регистре — ключ сопоставления со строкой окна" />
-        <type-Signal PURPOSE="Активный сигнал: ключ проекта, время" />
+        <fn-should_clear PURPOSE="Чистое: сигнал гасится, если его ключ == ключ окна в фокусе" />
+        <type-Signal PURPOSE="Активный сигнал: путь файла, ключ проекта" />
       </annotations>
     </M-SIGNAL>
 
-    <M-ICON NAME="Icon" TYPE="UTILITY" STATUS="planned">
-      <purpose>Иконка приложения для заголовка секции: взять у окна (GCLP_HICONSM / WM_GETICON), кэшировать по приложению; рисуется через DrawIconEx в M-RENDER</purpose>
+    <M-ICON NAME="Icon" TYPE="UTILITY" STATUS="implemented">
+      <purpose>Иконка приложения для заголовка секции: взять у exe-файла приложения (SHGetFileInfo по полному пути процесса окна), кэшировать по приложению; рисуется через DrawIconEx в M-RENDER</purpose>
       <path>src/icon.rs</path>
       <depends>none</depends>
       <verification-ref>V-M-ICON</verification-ref>
       <annotations>
-        <fn-section_icon PURPOSE="HICON приложения по образцовому окну секции, с кэшем по app_idx" />
+        <fn-section_icon PURPOSE="HICON приложения по образцовому окну секции (через exe), с кэшем по app_idx" />
       </annotations>
     </M-ICON>
 

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "id": "2026-06-11T224050-201e",
+  "createdAt": "2026-06-11T22:40:50.320Z",
+  "expiresAt": "2026-06-12T00:40:50.320Z",
+  "hours": 2,
+  "budgetPercent": null,
+  "checkpointMinutes": 30,
+  "status": "completed",
+  "commits": 5,
+  "escalations": 0,
+  "deferred": 2,
+  "lastTickAt": "2026-06-11T23:15:11.970Z",
+  "stopReason": null,
+  "openAsks": [],
+  "answers": {}
+}
