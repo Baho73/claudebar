@@ -1,8 +1,8 @@
 // FILE: src/config.rs
-// VERSION: 1.6.0
+// VERSION: 1.7.0
 // START_MODULE_CONTRACT
-//   PURPOSE: Конфигурация: приложения (по процессу), настройки проектов (цвет, метка), свёрнутость секций, «показать все» недавних, позиция, шрифт панели.
-//   SCOPE: палитра, авто-цвет, AppDef/NameMode, дефолтный набор приложений, свёрнутость секций, раскрытие/showall недавних, шрифт (font_face/font_size), парсинг/сериализация ini.
+//   PURPOSE: Конфигурация: приложения (по процессу и классу окна), настройки проектов (цвет, метка), свёрнутость секций, «показать все» недавних, позиция, шрифт панели.
+//   SCOPE: палитра, авто-цвет, AppDef (proc/proc_alts/class)/NameMode (вкл. Whole), дефолтный набор приложений (редакторы, Office, терминалы, Проводник), свёрнутость секций, раскрытие/showall недавних, шрифт (font_face/font_size), парсинг/сериализация ini.
 //   DEPENDS: none (Win32 только для чтения позиции окна при сохранении)
 //   LINKS: M-CONFIG
 //   ROLE: RUNTIME
@@ -11,8 +11,8 @@
 //
 // START_MODULE_MAP
 //   Config        - корень конфигурации: apps, projects, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, pos, cfg_path
-//   AppDef        - приложение: процесс, имя блока, правило имени, расширения
-//   NameMode      - извлечение имени: Project{suffix} | Document
+//   AppDef        - приложение: proc + proc_alts, class (фильтр окна), имя блока, правило имени, расширения
+//   NameMode      - извлечение имени: Project{suffix} | Document | DocumentLast | Whole
 //   set_font / font_face / font_size   - шрифт панели (ключ font=), дефолт Iosevka Fixed/16
 //   ProjConf      - настройки проекта: индекс цвета (-1 = авто), метка
 //   PALETTE       - палитра из 8 цветов
@@ -23,7 +23,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.6.0 - Phase-9 Step 1: шрифт панели (font_face/font_size, ключ font=, деф. Iosevka Fixed/16); set_font; round-trip.
+//   LAST_CHANGE: v1.7.0 - Phase-10 Step 1: AppDef + proc_alts/class; NameMode::Whole; default_apps += терминалы (Windows Terminal, cmd, PowerShell, Git Bash) и Проводник.
+//   v1.6.0 - Phase-9 Step 1: шрифт панели (font_face/font_size, ключ font=, деф. Iosevka Fixed/16); set_font; round-trip.
 //   v1.5.0 - Phase-8 Step 1: ручной порядок секций (os=) и окон в секции (o=); parse_ini -> struct ParsedIni.
 //   v1.4.0 - Phase-7 Step 2: recent_showall — «показать все» недавних сверх 6 с персистом (ra=).
 //   v1.3.0 - Phase-3 Step 2: recent_expanded — состояние раскрытия под-блока «недавние» с персистом (re=).
@@ -68,11 +69,15 @@ pub enum NameMode {
     Document,
     // Имя документа в последнем сегменте по " - " (MS Project: "App - Файл").
     DocumentLast,
+    // Весь заголовок как имя (терминалы, папки Проводника).
+    Whole,
 }
 
 #[derive(Clone)]
 pub struct AppDef {
-    pub proc: String, // имя exe в нижнем регистре, напр. "code.exe"
+    pub proc: String, // основной процесс (exe, нижний регистр), напр. "code.exe"
+    pub proc_alts: Vec<String>, // дополнительные процессы (напр. "pwsh.exe" для PowerShell)
+    pub class: Option<String>, // требуемый класс окна (None = любой); напр. "CabinetWClass"
     pub block: String, // отображаемое имя секции
     pub mode: NameMode, // правило извлечения имени
     pub exts: Vec<String>, // расширения недавних документов (Office)
@@ -119,10 +124,24 @@ pub fn default_apps() -> Vec<AppDef> {
     fn app(proc: &str, block: &str, mode: NameMode, exts: &[&str], editor: Option<&str>) -> AppDef {
         AppDef {
             proc: proc.to_string(),
+            proc_alts: Vec::new(),
+            class: None,
             block: block.to_string(),
             mode,
             exts: exts.iter().map(|s| s.to_string()).collect(),
             editor_storage: editor.map(|s| s.to_string()),
+        }
+    }
+    // Терминал/Проводник: имя = весь заголовок (Whole), без недавних; class — опциональный фильтр окна.
+    fn shell(proc: &str, alts: &[&str], class: Option<&str>, block: &str) -> AppDef {
+        AppDef {
+            proc: proc.to_string(),
+            proc_alts: alts.iter().map(|s| s.to_string()).collect(),
+            class: class.map(|s| s.to_string()),
+            block: block.to_string(),
+            mode: NameMode::Whole,
+            exts: Vec::new(),
+            editor_storage: None,
         }
     }
     vec![
@@ -131,6 +150,14 @@ pub fn default_apps() -> Vec<AppDef> {
         app("winword.exe", "Word", NameMode::Document, &["docx", "doc", "rtf"], None),
         app("excel.exe", "Excel", NameMode::Document, &["xlsx", "xls", "csv"], None),
         app("winproj.exe", "MS Project", NameMode::DocumentLast, &["mpp"], None),
+        // Терминалы: cmd и PowerShell в классической консоли различаются по дереву процессов
+        // (см. console_client в win_enum); class=ConsoleWindowClass отсекает не-консольные окна.
+        shell("windowsterminal.exe", &[], None, "Windows Terminal"),
+        shell("cmd.exe", &[], Some("ConsoleWindowClass"), "Командная строка"),
+        shell("powershell.exe", &["pwsh.exe"], Some("ConsoleWindowClass"), "PowerShell"),
+        shell("mintty.exe", &["bash.exe", "git-bash.exe"], None, "Git Bash"),
+        // Проводник: только окна папок (class=CabinetWClass), иначе сюда лезут панель задач и рабочий стол.
+        shell("explorer.exe", &[], Some("CabinetWClass"), "Проводник"),
     ]
 }
 
@@ -456,12 +483,16 @@ mod tests {
     #[test]
     fn section_order_known_first_then_rest() {
         let mut c = cfg(vec![]);
-        let apps = default_apps(); // [Code, Cursor, Word, Excel, MS Project] = 0..5
-        // по умолчанию — исходный порядок
-        assert_eq!(c.section_index_order(&apps), vec![0, 1, 2, 3, 4]);
-        // Word (2) и Excel (3) вперёд
+        let apps = default_apps(); // Code, Cursor, Word, Excel, MS Project, затем терминалы/Проводник
+        let n = apps.len();
+        // по умолчанию — исходный порядок (устойчиво к числу приложений)
+        let ident: Vec<usize> = (0..n).collect();
+        assert_eq!(c.section_index_order(&apps), ident);
+        // Word (2) и Excel (3) вперёд, остальные сохраняют исходный порядок
         c.section_order = vec!["Word".into(), "Excel".into()];
-        assert_eq!(c.section_index_order(&apps), vec![2, 3, 0, 1, 4]);
+        let mut expected = vec![2usize, 3];
+        expected.extend((0..n).filter(|i| *i != 2 && *i != 3));
+        assert_eq!(c.section_index_order(&apps), expected);
     }
 
     #[test]
@@ -518,5 +549,24 @@ mod tests {
         for p in ["code.exe", "cursor.exe", "winword.exe", "excel.exe", "winproj.exe"] {
             assert!(procs.contains(&p), "missing {p}");
         }
+    }
+
+    #[test]
+    fn default_apps_include_terminals_and_explorer() {
+        let apps = default_apps();
+        let find = |block: &str| apps.iter().find(|a| a.block == block);
+        let wt = find("Windows Terminal").expect("Windows Terminal");
+        assert_eq!(wt.proc, "windowsterminal.exe");
+        assert!(wt.class.is_none());
+        let cmd = find("Командная строка").expect("cmd");
+        assert_eq!(cmd.class.as_deref(), Some("ConsoleWindowClass"));
+        let ps = find("PowerShell").expect("PowerShell");
+        assert!(ps.proc_alts.iter().any(|p| p == "pwsh.exe"));
+        assert_eq!(ps.class.as_deref(), Some("ConsoleWindowClass"));
+        let expl = find("Проводник").expect("explorer");
+        assert_eq!(expl.proc, "explorer.exe");
+        assert_eq!(expl.class.as_deref(), Some("CabinetWClass"));
+        assert!(matches!(expl.mode, NameMode::Whole));
+        find("Git Bash").expect("Git Bash");
     }
 }

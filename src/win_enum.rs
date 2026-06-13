@@ -54,6 +54,7 @@ pub fn extract_name(title: &str, app: &AppDef) -> String {
         }
         NameMode::Document => title.split(" - ").next().unwrap_or(title),
         NameMode::DocumentLast => title.rsplit(" - ").next().unwrap_or(title),
+        NameMode::Whole => title,
     };
     seg.trim_start_matches(['●', '•', '*', ' ']).trim().to_string()
 }
