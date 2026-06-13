@@ -555,13 +555,13 @@ unsafe fn show_settings_menu(hwnd: HWND) {
 fn handle_command(hwnd: HWND, id: usize) {
     // настройки: выбрать шрифт (не привязано к проекту)
     if id == ID_SET_FONT {
-        let cur = APP.with(|c| c.borrow().as_ref().map(|a| (a.config.font_face.clone(), a.config.font_size)));
-        if let Some((face, size)) = cur {
+        let cur = APP.with(|c| c.borrow().as_ref().map(|a| (a.config.font_face.clone(), a.config.font_size, a.config.font_weight)));
+        if let Some((face, size, weight)) = cur {
             // диалог модальный — borrow APP не держим, пока он открыт
-            if let Some((nf, ns)) = settings::choose_font(hwnd, &face, size) {
+            if let Some((nf, ns, nw)) = settings::choose_font(hwnd, &face, size, weight) {
                 APP.with(|c| {
                     if let Some(a) = c.borrow_mut().as_mut() {
-                        a.config.set_font(&nf, ns);
+                        a.config.set_font(&nf, ns, nw);
                         a.config.save(hwnd);
                         rebuild_fonts(a);
                     }
@@ -652,8 +652,9 @@ fn rebuild_fonts(app: &mut App) {
     }
     let face = app.config.font_face.clone();
     let size = app.config.font_size;
-    app.font_main = make_font(&face, -size, 600);
-    app.font_small = make_font(&face, -((size - 3).max(8)), 400);
+    let weight = app.config.font_weight;
+    app.font_main = make_font(&face, -size, weight);
+    app.font_small = make_font(&face, -((size - 3).max(8)), weight.min(400));
 }
 
 fn main() -> Result<()> {
@@ -669,6 +670,7 @@ fn main() -> Result<()> {
         let config = Config::load(cfg_path);
         let font_face = config.font_face.clone();
         let font_size = config.font_size;
+        let font_weight = config.font_weight;
 
         let mut app = App {
             hinst,
@@ -676,8 +678,8 @@ fn main() -> Result<()> {
             recent: Vec::new(),
             rows: Vec::new(),
             config,
-            font_main: make_font(&font_face, -font_size, 600),
-            font_small: make_font(&font_face, -((font_size - 3).max(8)), 400),
+            font_main: make_font(&font_face, -font_size, font_weight),
+            font_small: make_font(&font_face, -((font_size - 3).max(8)), font_weight.min(400)),
             hover: -1,
             menu_target: 0,
             last_h: 0,

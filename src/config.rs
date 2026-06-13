@@ -1,8 +1,8 @@
 // FILE: src/config.rs
-// VERSION: 1.7.0
+// VERSION: 1.8.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Конфигурация: приложения (по процессу и классу окна), настройки проектов (цвет, метка), свёрнутость секций, «показать все» недавних, позиция, шрифт панели.
-//   SCOPE: палитра, авто-цвет, AppDef (proc/proc_alts/class)/NameMode (вкл. Whole), дефолтный набор приложений (редакторы, Office, терминалы, Проводник), свёрнутость секций, раскрытие/showall недавних, шрифт (font_face/font_size), парсинг/сериализация ini.
+//   SCOPE: палитра, авто-цвет, AppDef (proc/proc_alts/class)/NameMode (вкл. Whole), дефолтный набор приложений (редакторы, Office, терминалы, Проводник), свёрнутость секций, раскрытие/showall недавних, шрифт (font_face/font_size/font_weight), парсинг/сериализация ini.
 //   DEPENDS: none (Win32 только для чтения позиции окна при сохранении)
 //   LINKS: M-CONFIG
 //   ROLE: RUNTIME
@@ -13,7 +13,7 @@
 //   Config        - корень конфигурации: apps, projects, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, pos, cfg_path
 //   AppDef        - приложение: proc + proc_alts, class (фильтр окна), имя блока, правило имени, расширения
 //   NameMode      - извлечение имени: Project{suffix} | Document | DocumentLast | Whole
-//   set_font / font_face / font_size   - шрифт панели (ключ font=), дефолт Iosevka Fixed/16
+//   set_font / font_face / font_size / font_weight - шрифт панели (ключ font=face⇥size⇥weight), дефолт Iosevka Fixed/16/600
 //   ProjConf      - настройки проекта: индекс цвета (-1 = авто), метка
 //   PALETTE       - палитра из 8 цветов
 //   auto_color    - детерминированный цвет по имени
@@ -23,7 +23,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.7.0 - Phase-10 Step 1: AppDef + proc_alts/class; NameMode::Whole; default_apps += терминалы (Windows Terminal, cmd, PowerShell, Git Bash) и Проводник.
+//   LAST_CHANGE: v1.8.0 - fix(grace-fix): вес шрифта (font_weight, 3-е поле font=); set_font(face,size,weight). Без веса панель была всегда 600 (жирная) и диалог не предзаполнял стиль.
+//   v1.7.0 - Phase-10 Step 1: AppDef + proc_alts/class; NameMode::Whole; default_apps += терминалы (Windows Terminal, cmd, PowerShell, Git Bash) и Проводник.
 //   v1.6.0 - Phase-9 Step 1: шрифт панели (font_face/font_size, ключ font=, деф. Iosevka Fixed/16); set_font; round-trip.
 //   v1.5.0 - Phase-8 Step 1: ручной порядок секций (os=) и окон в секции (o=); parse_ini -> struct ParsedIni.
 //   v1.4.0 - Phase-7 Step 2: recent_showall — «показать все» недавних сверх 6 с персистом (ra=).
@@ -43,6 +44,7 @@ use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 // Шрифт панели по умолчанию (моноширинный, хорошо читается в списках/таблицах).
 pub const DEFAULT_FONT: &str = "Iosevka Fixed";
 pub const DEFAULT_FONT_SIZE: i32 = 16;
+pub const DEFAULT_FONT_WEIGHT: i32 = 600; // полужирный — текущий вид заголовков/имён по умолчанию
 
 pub const PALETTE: [(&str, u8, u8, u8); 8] = [
     ("Синий", 0x5B, 0x8F, 0xF9),
@@ -94,6 +96,7 @@ pub struct Config {
     pub window_order: HashMap<String, Vec<String>>, // block -> ручной порядок имён окон
     pub font_face: String, // гарнитура шрифта панели (ключ font=)
     pub font_size: i32, // базовый кегль (px); мелкий шрифт = font_size-3
+    pub font_weight: i32, // насыщенность основного шрифта (100..900); мелкий = min(weight, 400)
     pub pos: Option<(i32, i32)>,
     pub cfg_path: PathBuf,
 }
@@ -170,6 +173,7 @@ struct ParsedIni {
     window_order: HashMap<String, Vec<String>>,
     font_face: String,
     font_size: i32,
+    font_weight: i32,
     pos: Option<(i32, i32)>,
 }
 
@@ -182,6 +186,7 @@ fn parse_ini(text: &str) -> ParsedIni {
     let mut window_order: HashMap<String, Vec<String>> = HashMap::new();
     let mut font_face: String = DEFAULT_FONT.to_string();
     let mut font_size: i32 = DEFAULT_FONT_SIZE;
+    let mut font_weight: i32 = DEFAULT_FONT_WEIGHT;
     let mut pos: Option<(i32, i32)> = None;
     // START_BLOCK_PARSE_LINES
     for line in text.lines() {
@@ -193,8 +198,9 @@ fn parse_ini(text: &str) -> ParsedIni {
                 }
             }
         } else if let Some(v) = line.strip_prefix("font=") {
-            // font=<гарнитура>\t<кегль>; гарнитура может содержать пробелы, но не табы
-            let mut it = v.splitn(2, '\t');
+            // font=<гарнитура>\t<кегль>\t<вес>; гарнитура может содержать пробелы, но не табы.
+            // Вес — необязательное 3-е поле (обратная совместимость со старым 2-польным форматом).
+            let mut it = v.splitn(3, '\t');
             if let Some(face) = it.next() {
                 if !face.trim().is_empty() {
                     font_face = face.to_string();
@@ -204,6 +210,13 @@ fn parse_ini(text: &str) -> ParsedIni {
                 if let Ok(n) = sz.trim().parse::<i32>() {
                     if (6..=72).contains(&n) {
                         font_size = n;
+                    }
+                }
+            }
+            if let Some(wt) = it.next() {
+                if let Ok(n) = wt.trim().parse::<i32>() {
+                    if (100..=900).contains(&n) {
+                        font_weight = n;
                     }
                 }
             }
@@ -240,7 +253,7 @@ fn parse_ini(text: &str) -> ParsedIni {
         }
     }
     // END_BLOCK_PARSE_LINES
-    ParsedIni { projects, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, pos }
+    ParsedIni { projects, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos }
 }
 
 impl Config {
@@ -257,6 +270,7 @@ impl Config {
             window_order: p.window_order,
             font_face: p.font_face,
             font_size: p.font_size,
+            font_weight: p.font_weight,
             pos: p.pos,
             cfg_path,
         }
@@ -267,7 +281,7 @@ impl Config {
         if let Some((x, y)) = pos {
             out += &format!("pos={},{}\n", x, y);
         }
-        out += &format!("font={}\t{}\n", self.font_face, self.font_size);
+        out += &format!("font={}\t{}\t{}\n", self.font_face, self.font_size, self.font_weight);
         for block in &self.collapsed {
             out += &format!("c={}\n", block);
         }
@@ -333,12 +347,13 @@ impl Config {
         }
     }
 
-    // Задать шрифт панели (гарнитура + кегль). Кегль ограничен разумным диапазоном.
-    pub fn set_font(&mut self, face: &str, size: i32) {
+    // Задать шрифт панели (гарнитура + кегль + насыщенность). Значения ограничены разумным диапазоном.
+    pub fn set_font(&mut self, face: &str, size: i32, weight: i32) {
         if !face.trim().is_empty() {
             self.font_face = face.to_string();
         }
         self.font_size = size.clamp(6, 72);
+        self.font_weight = weight.clamp(100, 900);
     }
 
     // Индексы секций в ручном порядке: сперва известные по section_order, затем остальные по исходному.
@@ -417,6 +432,7 @@ mod tests {
             window_order: HashMap::new(),
             font_face: DEFAULT_FONT.to_string(),
             font_size: DEFAULT_FONT_SIZE,
+            font_weight: DEFAULT_FONT_WEIGHT,
             pos: None,
             cfg_path: PathBuf::new(),
         }
@@ -516,7 +532,7 @@ mod tests {
         assert_eq!(c.font_face, DEFAULT_FONT);
         assert_eq!(c.font_size, DEFAULT_FONT_SIZE);
         // set + round-trip через font= (гарнитура с пробелом сохраняется)
-        c.set_font("Cascadia Mono", 18);
+        c.set_font("Cascadia Mono", 18, 500);
         let text = c.serialize(None);
         let p = parse_ini(&text);
         assert_eq!(p.font_face, "Cascadia Mono");
@@ -526,8 +542,25 @@ mod tests {
         assert_eq!(p2.font_face, DEFAULT_FONT);
         assert_eq!(p2.font_size, DEFAULT_FONT_SIZE);
         // кегль за пределами диапазона клампится
-        c.set_font("X", 999);
+        c.set_font("X", 999, 600);
         assert_eq!(c.font_size, 72);
+    }
+
+    #[test]
+    fn font_weight_persisted_and_honored() {
+        // regression: вес шрифта не сохранялся -> панель всегда жирная (600), диалог не предзаполнял стиль
+        let mut c = cfg(vec![]);
+        assert_eq!(c.font_weight, DEFAULT_FONT_WEIGHT); // 600 по умолчанию (текущий вид сохраняется)
+        c.set_font("Iosevka Fixed", 15, 400); // выбрали обычный начертание
+        assert_eq!(c.font_weight, 400);
+        let text = c.serialize(None);
+        let p = parse_ini(&text);
+        assert_eq!(p.font_weight, 400);
+        // обратная совместимость: старый font= из 2 полей -> вес по умолчанию
+        let p2 = parse_ini("font=Iosevka Fixed\t16\n");
+        assert_eq!(p2.font_face, "Iosevka Fixed");
+        assert_eq!(p2.font_size, 16);
+        assert_eq!(p2.font_weight, DEFAULT_FONT_WEIGHT);
     }
 
     #[test]

@@ -505,6 +505,7 @@ mod tests {
             window_order: Default::default(),
             font_face: crate::config::DEFAULT_FONT.to_string(),
             font_size: crate::config::DEFAULT_FONT_SIZE,
+            font_weight: crate::config::DEFAULT_FONT_WEIGHT,
             pos: None,
             cfg_path: std::path::PathBuf::new(),
         };
@@ -566,6 +567,7 @@ mod tests {
             window_order: Default::default(),
             font_face: crate::config::DEFAULT_FONT.to_string(),
             font_size: crate::config::DEFAULT_FONT_SIZE,
+            font_weight: crate::config::DEFAULT_FONT_WEIGHT,
             pos: None,
             cfg_path: std::path::PathBuf::new(),
         };

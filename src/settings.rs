@@ -1,8 +1,8 @@
 // FILE: src/settings.rs
-// VERSION: 1.0.0
+// VERSION: 1.1.0
 // START_MODULE_CONTRACT
-//   PURPOSE: Настройки панели: нативный выбор шрифта (ChooseFontW), предзаполненный текущей гарнитурой/кеглем.
-//   SCOPE: choose_font (модальный диалог -> (face, size) или None), parse_face (чистое: lfFaceName -> String).
+//   PURPOSE: Настройки панели: нативный выбор шрифта (ChooseFontW), предзаполненный текущей гарнитурой/кеглем/начертанием.
+//   SCOPE: choose_font (модальный диалог -> (face, size, weight) или None), parse_face (чистое: lfFaceName -> String).
 //   DEPENDS: none
 //   LINKS: M-SETTINGS
 //   ROLE: RUNTIME
@@ -10,19 +10,20 @@
 // END_MODULE_CONTRACT
 //
 // START_MODULE_MAP
-//   choose_font  - ChooseFontW: модальный выбор шрифта, предзаполнен текущим; -> Option<(String, i32)>
+//   choose_font  - ChooseFontW: модальный выбор шрифта, предзаполнен текущим face/size/weight; -> Option<(String, i32, i32)>
 //   parse_face   - чистое: срез u16 (lfFaceName, null-terminated) -> String
 //   set_face     - записать гарнитуру в lfFaceName (приватный помощник)
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.0.0 - Phase-9 Step 2: новый модуль настроек; выбор шрифта через ChooseFontW.
+//   LAST_CHANGE: v1.1.0 - fix(grace-fix): choose_font принимает/возвращает вес; lf.lfWeight предзаполняется текущим (стиль больше не сбрасывается); флаги канонические (CF_SCREENFONTS|CF_INITTOLOGFONTSTRUCT).
+//   v1.0.0 - Phase-9 Step 2: новый модуль настроек; выбор шрифта через ChooseFontW.
 // END_CHANGE_SUMMARY
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::{DEFAULT_CHARSET, LOGFONTW};
 use windows::Win32::UI::Controls::Dialogs::{
-    ChooseFontW, CHOOSEFONTW, CF_FORCEFONTEXIST, CF_INITTOLOGFONTSTRUCT, CF_NOSCRIPTSEL, CF_SCREENFONTS,
+    ChooseFontW, CHOOSEFONTW, CF_INITTOLOGFONTSTRUCT, CF_SCREENFONTS,
 };
 
 // START_CONTRACT: parse_face
@@ -51,17 +52,17 @@ fn set_face(lf: &mut LOGFONTW, face: &str) {
 }
 
 // START_CONTRACT: choose_font
-//   PURPOSE: Открыть нативный диалог выбора шрифта, предзаполненный текущей гарнитурой/кеглем.
-//   INPUTS: { parent: HWND; cur_face: &str; cur_size: i32 }
-//   OUTPUTS: { Option<(String, i32)> - (гарнитура, кегль px) или None при отмене }
+//   PURPOSE: Открыть нативный диалог выбора шрифта, предзаполненный текущей гарнитурой/кеглем/начертанием.
+//   INPUTS: { parent: HWND; cur_face: &str; cur_size: i32; cur_weight: i32 }
+//   OUTPUTS: { Option<(String, i32, i32)> - (гарнитура, кегль px, вес) или None при отмене }
 //   SIDE_EFFECTS: модальный диалог (кратко блокирует поток), читает выбор пользователя
 // END_CONTRACT: choose_font
-pub fn choose_font(parent: HWND, cur_face: &str, cur_size: i32) -> Option<(String, i32)> {
+pub fn choose_font(parent: HWND, cur_face: &str, cur_size: i32, cur_weight: i32) -> Option<(String, i32, i32)> {
     unsafe {
         // START_BLOCK_INIT_LOGFONT
         let mut lf = LOGFONTW::default();
         lf.lfHeight = -cur_size.abs();
-        lf.lfWeight = 400;
+        lf.lfWeight = cur_weight; // предзаполнить текущим начертанием (иначе стиль сбрасывался)
         lf.lfCharSet = DEFAULT_CHARSET;
         set_face(&mut lf, cur_face);
         // END_BLOCK_INIT_LOGFONT
@@ -69,8 +70,8 @@ pub fn choose_font(parent: HWND, cur_face: &str, cur_size: i32) -> Option<(Strin
             lStructSize: std::mem::size_of::<CHOOSEFONTW>() as u32,
             hwndOwner: parent,
             lpLogFont: &mut lf as *mut LOGFONTW,
-            iPointSize: cur_size.abs() * 10,
-            Flags: CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT | CF_FORCEFONTEXIST | CF_NOSCRIPTSEL,
+            // CF_INITTOLOGFONTSTRUCT: диалог берёт face/size/weight из lf для предвыбора
+            Flags: CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT,
             ..Default::default()
         };
         // START_BLOCK_SHOW_DIALOG
@@ -78,7 +79,8 @@ pub fn choose_font(parent: HWND, cur_face: &str, cur_size: i32) -> Option<(Strin
             let face = parse_face(&lf.lfFaceName);
             // lfHeight отрицательный (высота символа); храним положительный px-кегль
             let size = lf.lfHeight.abs().max(6);
-            Some((face, size))
+            let weight = if lf.lfWeight > 0 { lf.lfWeight } else { cur_weight };
+            Some((face, size, weight))
         } else {
             None
         }
