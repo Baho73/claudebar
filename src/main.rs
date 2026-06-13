@@ -8,6 +8,7 @@ mod config;
 mod icon;
 mod recent;
 mod render;
+mod settings;
 mod signal;
 mod win_enum;
 
