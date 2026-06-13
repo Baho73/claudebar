@@ -31,6 +31,7 @@ const EM_SETSEL: u32 = 0x00B1;
 const ID_COLOR_BASE: usize = 1; // 1..=8
 const ID_LABEL: usize = 20;
 const ID_LABEL_CLEAR: usize = 21;
+const ID_SET_FONT: usize = 30; // меню настроек: выбрать шрифт
 
 // ---------- состояние ----------
 pub(crate) struct App {
@@ -268,8 +269,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 let (x, y) = xy(lp);
                 if y < render::HEAD {
                     let w = client_w(hwnd);
-                    if x > w - 24 {
+                    if x >= w - render::HEAD_BTN_W {
                         let _ = DestroyWindow(hwnd);
+                    } else if x >= w - 2 * render::HEAD_BTN_W {
+                        show_settings_menu(hwnd);
                     } else {
                         // тянем панель за шапку
                         let _ = ReleaseCapture();
@@ -538,7 +541,38 @@ unsafe fn show_menu(hwnd: HWND) {
     let _ = DestroyMenu(menu);
 }
 
+// Меню настроек панели (вызывается кликом «⚙» в шапке). Пока — только выбор шрифта.
+unsafe fn show_settings_menu(hwnd: HWND) {
+    let menu = CreatePopupMenu().unwrap_or_default();
+    let _ = AppendMenuW(menu, MF_STRING, ID_SET_FONT, w!("Шрифт…"));
+    let mut pt = POINT::default();
+    let _ = GetCursorPos(&mut pt);
+    let _ = SetForegroundWindow(hwnd);
+    let _ = TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, None);
+    let _ = DestroyMenu(menu);
+}
+
 fn handle_command(hwnd: HWND, id: usize) {
+    // настройки: выбрать шрифт (не привязано к проекту)
+    if id == ID_SET_FONT {
+        let cur = APP.with(|c| c.borrow().as_ref().map(|a| (a.config.font_face.clone(), a.config.font_size)));
+        if let Some((face, size)) = cur {
+            // диалог модальный — borrow APP не держим, пока он открыт
+            if let Some((nf, ns)) = settings::choose_font(hwnd, &face, size) {
+                APP.with(|c| {
+                    if let Some(a) = c.borrow_mut().as_mut() {
+                        a.config.set_font(&nf, ns);
+                        a.config.save(hwnd);
+                        rebuild_fonts(a);
+                    }
+                });
+                unsafe {
+                    let _ = InvalidateRect(hwnd, None, BOOL(0));
+                }
+            }
+        }
+        return;
+    }
     // имя проекта по menu_target
     let project = APP.with(|c| {
         let a = c.borrow();
@@ -588,8 +622,8 @@ fn handle_command(hwnd: HWND, id: usize) {
 }
 
 // ---------- инициализация ----------
-fn make_font(height: i32, weight: i32) -> HFONT {
-    let face: Vec<u16> = "Segoe UI".encode_utf16().chain(std::iter::once(0)).collect();
+fn make_font(face: &str, height: i32, weight: i32) -> HFONT {
+    let face: Vec<u16> = face.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
         CreateFontW(
             height,
@@ -610,6 +644,18 @@ fn make_font(height: i32, weight: i32) -> HFONT {
     }
 }
 
+// Пересоздать шрифты панели из конфигурации (после смены шрифта в настройках).
+fn rebuild_fonts(app: &mut App) {
+    unsafe {
+        let _ = DeleteObject(app.font_main);
+        let _ = DeleteObject(app.font_small);
+    }
+    let face = app.config.font_face.clone();
+    let size = app.config.font_size;
+    app.font_main = make_font(&face, -size, 600);
+    app.font_small = make_font(&face, -((size - 3).max(8)), 400);
+}
+
 fn main() -> Result<()> {
     unsafe {
         let hmod = GetModuleHandleW(None)?;
@@ -621,6 +667,8 @@ fn main() -> Result<()> {
             .map(|p| p.join("claudebar.ini"))
             .unwrap_or_else(|| PathBuf::from("claudebar.ini"));
         let config = Config::load(cfg_path);
+        let font_face = config.font_face.clone();
+        let font_size = config.font_size;
 
         let mut app = App {
             hinst,
@@ -628,8 +676,8 @@ fn main() -> Result<()> {
             recent: Vec::new(),
             rows: Vec::new(),
             config,
-            font_main: make_font(-16, 600),
-            font_small: make_font(-13, 400),
+            font_main: make_font(&font_face, -font_size, 600),
+            font_small: make_font(&font_face, -((font_size - 3).max(8)), 400),
             hover: -1,
             menu_target: 0,
             last_h: 0,
