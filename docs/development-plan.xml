@@ -375,12 +375,12 @@
       </checkpoint>
     </Phase-8>
 
-    <Phase-9 name="Настройки: шрифт панели" status="pending">
+    <Phase-9 name="Настройки: шрифт панели" status="done">
       <goal>Шрифт панели задаётся из UI и хранится в конфиге; «⚙» в шапке открывает нативный выбор шрифта</goal>
-      <step-1 module="M-CONFIG" status="pending" verification="V-M-CONFIG">font_face/font_size + set_font; персист ключом font=face⇥size; дефолт Iosevka Fixed/16</step-1>
-      <step-2 module="M-SETTINGS" status="pending" verification="V-M-SETTINGS">Новый модуль: choose_font (ChooseFontW, предзаполнен текущим face/size) + чистый parse_face</step-2>
-      <step-3 module="M-RENDER" status="pending" verification="V-M-RENDER">Глиф «⚙» в шапке (зона слева от «✕»)</step-3>
-      <step-4 module="M-MAIN" status="pending" verification="V-M-MAIN">make_font(face,…) из конфига; rebuild_fonts; клик «⚙» -&gt; меню «Шрифт…» -&gt; choose_font -&gt; set_font + save + rebuild_fonts + repaint</step-4>
+      <step-1 module="M-CONFIG" status="done" verification="V-M-CONFIG">font_face/font_size + set_font; персист ключом font=face⇥size; дефолт Iosevka Fixed/16</step-1>
+      <step-2 module="M-SETTINGS" status="done" verification="V-M-SETTINGS">Новый модуль: choose_font (ChooseFontW, предзаполнен текущим face/size) + чистый parse_face</step-2>
+      <step-3 module="M-RENDER" status="done" verification="V-M-RENDER">Глиф «⚙» в шапке (зона слева от «✕»)</step-3>
+      <step-4 module="M-MAIN" status="done" verification="V-M-MAIN">make_font(face,…) из конфига; rebuild_fonts; клик «⚙» -&gt; меню «Шрифт…» -&gt; choose_font -&gt; set_font + save + rebuild_fonts + repaint</step-4>
       <checkpoint>
         <tests>cargo test (font= round-trip, parse_face); cargo build --release</tests>
         <smoke>«⚙» открывает диалог шрифта; выбор гарнитуры меняет панель вживую и переживает перезапуск (font= в ini)</smoke>
