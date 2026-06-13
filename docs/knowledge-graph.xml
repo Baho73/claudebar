@@ -1,38 +1,44 @@
 <KnowledgeGraph>
-  <Project NAME="ClaudeBar" VERSION="0.3.0">
-    <keywords>claudebar, переключатель окон, Win32, EnumWindows, SetForegroundWindow, секции по приложению, недавние документы, Windows Recent, ShellExecute, Rust</keywords>
-    <annotation>Всегда-поверх Windows-панель (Rust + Win32) для переключения между окнами редакторов/приложений, с группировкой по приложению, цветными метками по проекту и блоком недавних документов.</annotation>
+  <Project NAME="ClaudeBar" VERSION="0.4.0">
+    <keywords>claudebar, переключатель окон, Win32, EnumWindows, SetForegroundWindow, секции по приложению, недавние документы, Windows Recent, ShellExecute, Rust, настройки шрифта, ChooseFontW, терминалы, cmd, PowerShell, Git Bash, Windows Terminal, Проводник, CabinetWClass, ConsoleWindowClass</keywords>
+    <annotation>Всегда-поверх Windows-панель (Rust + Win32) для переключения между окнами редакторов/приложений, с группировкой по приложению, цветными метками по проекту и блоком недавних документов. v0.4: настройка шрифта панели (нативный ChooseFontW, персист в ini); поддержка терминалов — Windows Terminal, Командная строка (cmd), PowerShell, Git Bash — и окон Проводника (распознавание по процессу И классу окна; cmd/PowerShell в классической консоли различаются по дереву процессов через conhost).</annotation>
 
     <!-- v0.1 реализован монолитно в src/main.rs. Планируемые модули ниже — целевая разбивка
          под этап A+B+C. STATUS=planned для модулей, которых пока нет как отдельных файлов;
          часть логики уже существует внутри main.rs и будет вынесена при рефакторе (Phase-1). -->
 
     <M-MAIN NAME="Main" TYPE="ENTRY_POINT" STATUS="partial">
-      <purpose>Точка входа: GetModuleHandle, регистрация класса, создание topmost-окна, таймер опроса, message loop, диспетчеризация в обработчики. v0.3: опрос M-SIGNAL (bell_keys + reconcile) на тике, проброс bell в paint, зоны клика и режим reorder.</purpose>
+      <purpose>Точка входа: GetModuleHandle, регистрация класса, создание topmost-окна, таймер опроса, message loop, диспетчеризация в обработчики. v0.3: опрос M-SIGNAL (bell_keys + reconcile) на тике, проброс bell в paint, зоны клика и режим reorder. v0.4: шрифт панели читается из конфига (make_font(face,…)); «⚙» в шапке открывает меню настроек → M-SETTINGS.choose_font → rebuild_fonts + repaint.</purpose>
       <path>src/main.rs</path>
-      <depends>M-CONFIG, M-WINENUM, M-RENDER, M-SIGNAL</depends>
+      <depends>M-CONFIG, M-WINENUM, M-RENDER, M-SIGNAL, M-SETTINGS</depends>
       <verification-ref>V-M-MAIN</verification-ref>
       <annotations>
         <fn-main PURPOSE="Инициализация приложения и цикл сообщений" />
-        <fn-wndproc PURPOSE="Оконная процедура: WM_PAINT/TIMER/мышь/команды меню; зоны Close/RecentMore/DragHandle, режим reorder по ПКМ" />
+        <fn-wndproc PURPOSE="Оконная процедура: WM_PAINT/TIMER/мышь/команды меню; зоны Close/RecentMore/DragHandle, режим reorder по ПКМ, «⚙» в шапке → меню настроек" />
+        <fn-make_font PURPOSE="Создать HFONT из имени гарнитуры (конфиг) + высоты/насыщенности — v0.4" />
+        <fn-rebuild_fonts PURPOSE="Пересоздать font_main/font_small после смены шрифта в настройках (удалить старые HFONT) — v0.4" />
       </annotations>
     </M-MAIN>
 
     <M-WINENUM NAME="WindowEnum" TYPE="CORE_LOGIC" STATUS="implemented">
-      <purpose>Перечисление видимых top-level окон, определение приложения по имени процесса, извлечение имени проекта/документа из заголовка по правилам приложения</purpose>
+      <purpose>Перечисление видимых top-level окон, определение приложения по имени процесса И классу окна, извлечение имени проекта/документа из заголовка по правилам приложения. v0.4: класс окна (GetClassNameW) в кортеже окна; для классической консоли (ConsoleWindowClass) реальный shell (cmd/powershell/pwsh) разрешается по дереву процессов через conhost.</purpose>
       <path>src/win_enum.rs</path>
       <depends>M-CONFIG</depends>
       <verification-ref>V-M-WINENUM</verification-ref>
       <annotations>
-        <fn-enum_windows PURPOSE="EnumWindows -> список (hwnd, process, title)" />
+        <fn-enum_windows PURPOSE="EnumWindows -> список (hwnd, title, process, class)" />
         <fn-process_name PURPOSE="GetWindowThreadProcessId + QueryFullProcessImageNameW -> имя exe" />
-        <fn-extract_name PURPOSE="Имя проекта/документа из заголовка по AppDef" />
+        <fn-window_class PURPOSE="GetClassNameW -> класс окна (для фильтра AppDef.class) — v0.4" />
+        <fn-process_snapshot PURPOSE="CreateToolhelp32Snapshot -> карта pid -> (имя exe, parent pid); строится раз на опрос — v0.4" />
+        <fn-console_client PURPOSE="Разрешить shell-клиента консоли (cmd/powershell/pwsh) по pid окна через conhost (self/parent/child) — v0.4" />
+        <fn-extract_name PURPOSE="Имя проекта/документа из заголовка по AppDef (вкл. NameMode::Whole)" />
+        <fn-match_windows PURPOSE="Сопоставление окно↔AppDef по предикату (процесс ∈ proc∪proc_alts) И (class отсутствует ИЛИ совпал)" />
         <type-WinItem PURPOSE="Окно: hwnd, ключ приложения, имя проекта/документа, заголовок" />
       </annotations>
     </M-WINENUM>
 
     <M-CONFIG NAME="Config" TYPE="DATA_LAYER" STATUS="implemented">
-      <purpose>Чтение/запись claudebar.ini: определения приложений (процесс-блок-расширения), цвета и метки по проекту, свёрнутость секций, раскрытие/«показать все» недавних, ручной порядок секций и окон, позиция панели</purpose>
+      <purpose>Чтение/запись claudebar.ini: определения приложений (процесс+класс-блок-расширения), цвета и метки по проекту, свёрнутость секций, раскрытие/«показать все» недавних, ручной порядок секций и окон, позиция панели, шрифт панели. v0.4: настройки шрифта (font_face/font_size, ключ font=); расширенный AppDef (proc_alts, class) и набор приложений для терминалов и Проводника.</purpose>
       <path>src/config.rs</path>
       <depends>none</depends>
       <verification-ref>V-M-CONFIG</verification-ref>
@@ -41,15 +47,18 @@
         <fn-save PURPOSE="Сериализовать конфигурацию обратно в claudebar.ini" />
         <fn-showall PURPOSE="is/toggle «показать все» недавних per секция (ra=) — v0.3" />
         <fn-order PURPOSE="Ручной порядок секций (os=) и окон (o=): применение и перемещение — v0.3" />
-        <type-Config PURPOSE="Корень конфигурации: apps, проекты, секции, недавние, порядок, позиция панели" />
-        <type-AppDef PURPOSE="Определение приложения: процесс, имя блока, расширения" />
+        <fn-font PURPOSE="font_face/font_size: чтение и set_font; персист ключом font=face⇥size (деф. Iosevka Fixed, 16) — v0.4" />
+        <fn-default_apps PURPOSE="Встроенный набор: редакторы, Office + Windows Terminal, cmd, PowerShell, Git Bash, Проводник — v0.4" />
+        <type-Config PURPOSE="Корень конфигурации: apps, проекты, секции, недавние, порядок, позиция, шрифт" />
+        <type-AppDef PURPOSE="Определение приложения: proc + proc_alts, class (фильтр окна), имя блока, NameMode, расширения" />
+        <type-NameMode PURPOSE="Извлечение имени: Project{suffix} | Document | DocumentLast | Whole — v0.4" />
         <type-ProjConf PURPOSE="Настройки проекта: индекс цвета, метка" />
         <type-SectionState PURPOSE="Состояние секции: collapsed, recent_expanded, recent_showall" />
       </annotations>
     </M-CONFIG>
 
     <M-RENDER NAME="Render" TYPE="UI_COMPONENT" STATUS="implemented">
-      <purpose>Построение списка типизированных строк (заголовок секции, окно, под-заголовок недавних, недавний документ, «показать все»), отрисовка через GDI с двойной буферизацией, зональный hit-testing, контекст-меню цвет/метка. v0.3: иконки секций (M-ICON), кнопка ✕ и ручки drag, подсветка «звенящих» строк, ручной порядок.</purpose>
+      <purpose>Построение списка типизированных строк (заголовок секции, окно, под-заголовок недавних, недавний документ, «показать все»), отрисовка через GDI с двойной буферизацией, зональный hit-testing, контекст-меню цвет/метка. v0.3: иконки секций (M-ICON), кнопка ✕ и ручки drag, подсветка «звенящих» строк, ручной порядок. v0.4: глиф «⚙» (настройки) в шапке рядом с «✕».</purpose>
       <path>src/render.rs</path>
       <depends>M-CONFIG, M-WINENUM, M-ACTIVATE, M-RECENT, M-ICON</depends>
       <verification-ref>V-M-RENDER</verification-ref>
@@ -115,6 +124,17 @@
       </annotations>
     </M-ICON>
 
+    <M-SETTINGS NAME="Settings" TYPE="UTILITY" STATUS="planned">
+      <purpose>Окно настроек панели: нативный выбор шрифта (ChooseFontW) предзаполненный текущей гарнитурой/размером; возвращает (face, size) или None при отмене. Хранение значений — в M-CONFIG; меню вызова — в M-MAIN. Заготовка под будущие настройки (цвета, размер строки, угол).</purpose>
+      <path>src/settings.rs</path>
+      <depends>none</depends>
+      <verification-ref>V-M-SETTINGS</verification-ref>
+      <annotations>
+        <fn-choose_font PURPOSE="ChooseFontW: модальный диалог выбора шрифта, предзаполнен текущим face/size; -> Option&lt;(String, i32)&gt;" />
+        <fn-parse_face PURPOSE="Чистое: lfFaceName (UTF-16, null-terminated) -> String (тестируемо)" />
+      </annotations>
+    </M-SETTINGS>
+
     <CrossLink from="M-MAIN" to="M-WINENUM" relation="опрашивает окна по таймеру" />
     <CrossLink from="M-MAIN" to="M-RENDER" relation="делегирует отрисовку и обработку кликов" />
     <CrossLink from="M-MAIN" to="M-CONFIG" relation="загружает/сохраняет конфигурацию" />
@@ -128,5 +148,7 @@
     <CrossLink from="M-SIGNAL" to="M-WINENUM" relation="сопоставляет сигналы с открытыми окнами по имени проекта" />
     <CrossLink from="M-RENDER" to="M-WINENUM" relation="строит строки и порядок из WinItem" />
     <CrossLink from="M-RECENT" to="M-CONFIG" relation="использует AppDef (расширения, editor_storage) для классификации недавних" />
+    <CrossLink from="M-MAIN" to="M-SETTINGS" relation="открывает диалог настроек (выбор шрифта) из меню «⚙»" />
+    <CrossLink from="M-SETTINGS" to="M-CONFIG" relation="прочитанный/выбранный шрифт сохраняется через set_font" />
   </Project>
 </KnowledgeGraph>

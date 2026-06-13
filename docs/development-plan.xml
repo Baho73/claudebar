@@ -1,7 +1,8 @@
-<DevelopmentPlan VERSION="0.3.0">
+<DevelopmentPlan VERSION="0.4.0">
   <ArchitectureNotes>
     <objective>Превратить монолитный src/main.rs (v0.1) в модульную структуру и реализовать этап A+B+C: мультиприложения, сворачиваемые секции, недавние документы.</objective>
     <objective-v03>Этап v0.3: «звоночек» завершения ИИ (подсветка строки проекта по сигналу из Claude Code), иконки приложений в заголовках секций, кнопка ✕ для штатного закрытия окна, под-кат «показать все» недавних сверх 6, drag-reorder секций и окон.</objective-v03>
+    <objective-v04>Этап v0.4: настройка шрифта панели из UI (нативный ChooseFontW, персист в ini, дефолт Iosevka Fixed); поддержка терминалов (Windows Terminal, Командная строка, PowerShell, Git Bash) и окон Проводника отдельными секциями — распознавание по процессу И классу окна; cmd/PowerShell в классической консоли различаются по дереву процессов через conhost.</objective-v04>
     <non-goal>Вкладки внутри одного окна; кроссплатформенность; цветные эмодзи (нужен DirectWrite).</non-goal>
     <risk-1>Сопоставление окно-файл по basename (заголовки Office без пути) — держать терпимым к коллизиям.</risk-1>
     <risk-2>Поведенческий антивирус на SetForegroundWindow — функция активации изолирована в M-ACTIVATE.</risk-2>
@@ -11,6 +12,9 @@
     <risk-6>Теснота строки (W=252): swatch + имя + метка + ✕ + ручка drag не помещаются разом — ✕ и ручки показываются только на hover/в режиме reorder.</risk-6>
     <risk-7>Drag-reorder с захватом мыши конфликтует с hover/click — фаза последняя, режим включается ПКМ, обязательный ручной smoke.</risk-7>
     <risk-8>Внешний хук-скрипт и правка settings.json живут вне репозитория claudebar — подключение документируется и подтверждается пользователем, не автоматизируется молча.</risk-8>
+    <risk-9>Классическая консоль: окном (ConsoleWindowClass) владеет conhost.exe, cmd от PowerShell по процессу окна не отличить. Разрешаем реального клиента по дереву процессов (snapshot pid-&gt;parent/child). Если клиент недоступен — окно не показывается (документируется), без краха.</risk-9>
+    <risk-10>explorer.exe владеет и панелью задач/рабочим столом/иконками — без фильтра по классу в список лезет мусор. Окна папок строго фильтруются по классу CabinetWClass (проверено эмпирически на этой машине).</risk-10>
+    <risk-11>ChooseFontW — модальный common dialog; кратко блокирует поток панели (опрос на паузе), это приемлемо. Отмена диалога не меняет конфиг.</risk-11>
   </ArchitectureNotes>
 
   <DependencyRationale>
@@ -24,6 +28,7 @@
     </dep-windows>
     <new-features-this-stage>Этап A+B+C новых крейтов НЕ добавляет. Для M-RECENT добавляются только features к уже используемому windows 0.58: Win32_UI_Shell (IShellLinkW, ShellExecuteW), Win32_System_Com (CoCreateInstance). COM-инициализация (CoInitializeEx) — в M-MAIN при старте.</new-features-this-stage>
     <new-features-v03>Этап v0.3 новых внешних крейтов НЕ добавляет. Используются функции уже подключённого windows 0.58: DrawIconEx (Win32_UI_WindowsAndMessaging), PostMessageW(WM_CLOSE), SetCapture/ReleaseCapture (Win32_UI_Input_KeyboardAndMouse). M-ICON: иконка exe через SHGetFileInfo (Win32_UI_Shell) — добавлена feature Win32_Storage_FileSystem (тип FILE_FLAGS_AND_ATTRIBUTES в сигнатуре SHGetFileInfoW). M-SIGNAL — чистый std::fs (чтение/удаление файлов в %APPDATA%\claudebar\signals\), без новых Win32-вызовов. Внешний крейт для парсинга JSON не добавляется: формат сигнал-файла простой (строка cwd + время), парсится вручную.</new-features-v03>
+    <new-features-v04>Этап v0.4 новых внешних крейтов НЕ добавляет. Новые features уже подключённого windows 0.58: Win32_UI_Controls_Dialogs (ChooseFontW для M-SETTINGS) и Win32_System_Diagnostics_ToolHelp (CreateToolhelp32Snapshot / PROCESSENTRY32W / Process32FirstW/NextW для разрешения shell-клиента консоли в M-WINENUM). GetClassNameW — уже в Win32_UI_WindowsAndMessaging. Хранение шрифта — std::fs (ключ font= в ini), без новых вызовов. duplicate-check: snapshot процессов делается раз на опрос (не на окно), дешево; ChooseFontW — стандартный нативный диалог, лицензия/размер/CVE без изменений.</new-features-v04>
   </DependencyRationale>
 
   <Walkthroughs>
@@ -52,6 +57,16 @@
       <break-points>приложение игнорирует/откладывает WM_CLOSE (модальный диалог) — приемлемо, это и есть штатное поведение</break-points>
       <evidence>после клика появляется диалог сохранения приложения; при закрытии строка уходит на следующем опросе</evidence>
     </WT-5>
+    <WT-6 name="Сменить шрифт панели" flow="DF-SETTINGS">
+      <steps>клик «⚙» в шапке -&gt; меню «Шрифт…» -&gt; M-SETTINGS.choose_font (ChooseFontW, предзаполнен текущим) -&gt; M-CONFIG.set_font + save -&gt; M-MAIN.rebuild_fonts (удалить старые HFONT, создать новые) -&gt; repaint</steps>
+      <break-points>отмена диалога (None — конфиг не трогаем); несуществующая гарнитура (CF_FORCEFONTEXIST не пропустит); модальный диалог кратко блокирует поток панели</break-points>
+      <evidence>панель перерисована новым шрифтом; ключ font= в ini; шрифт переживает перезапуск</evidence>
+    </WT-6>
+    <WT-7 name="Папка Проводника и консоль в панели" flow="DF-APPS">
+      <steps>таймер -&gt; M-WINENUM (explorer.exe + класс CabinetWClass -&gt; блок Проводник; ConsoleWindowClass -&gt; console_client разрешает cmd/powershell через conhost) -&gt; build_rows секции Проводник/Командная строка/PowerShell -&gt; ЛКМ -&gt; activate</steps>
+      <break-points>explorer.exe владеет панелью задач/рабочим столом (классы Shell_TrayWnd/Progman/WorkerW) — отсекаются фильтром class=CabinetWClass; консоль без разрешённого клиента (conhost без доступного родителя) -&gt; не показывается</break-points>
+      <evidence>открытая папка появляется секцией Проводник с иконкой; панель задач не появляется; cmd и PowerShell — разные секции</evidence>
+    </WT-7>
   </Walkthroughs>
 
   <Modules>
@@ -67,6 +82,8 @@
         <export-save PURPOSE="Записать конфиг" />
         <export-showall PURPOSE="is/toggle «показать все» недавних per секция (ключ ra=) — v0.3 Phase-7" />
         <export-order PURPOSE="Ручной порядок секций (ключ os=) и окон в секции (ключ o=): чтение, применение, перемещение — v0.3 Phase-8" />
+        <export-font PURPOSE="font_face/font_size + set_font; персист ключом font=face⇥size (деф. Iosevka Fixed, 16) — v0.4 Phase-9" />
+        <export-apps PURPOSE="default_apps: AppDef с proc_alts/class и NameMode::Whole для терминалов и Проводника — v0.4 Phase-10" />
       </interface>
       <depends>none</depends>
       <target><source>src/config.rs</source><tests>src/config.rs (#[cfg(test)])</tests></target>
@@ -81,7 +98,9 @@
       </contract>
       <interface>
         <export-enum_windows PURPOSE="Список окон с процессом и заголовком" />
-        <export-extract_name PURPOSE="Имя проекта/документа по AppDef" />
+        <export-extract_name PURPOSE="Имя проекта/документа по AppDef (вкл. NameMode::Whole — весь заголовок) — v0.4" />
+        <export-window_class PURPOSE="Класс окна (GetClassNameW) для фильтра AppDef.class — v0.4 Phase-10" />
+        <export-console_client PURPOSE="Разрешить shell-клиента консоли (cmd/powershell/pwsh) через conhost по дереву процессов — v0.4 Phase-10" />
       </interface>
       <depends>M-CONFIG</depends>
       <target><source>src/win_enum.rs</source><tests>src/win_enum.rs (#[cfg(test)] на extract_name)</tests></target>
@@ -149,6 +168,21 @@
       <verification-ref>V-M-ICON</verification-ref>
     </M-ICON>
 
+    <M-SETTINGS NAME="Settings" TYPE="UTILITY" LAYER="2" ORDER="4" STATUS="planned">
+      <contract>
+        <purpose>Настройки панели: нативный выбор шрифта (ChooseFontW), предзаполненный текущей гарнитурой/размером; возврат (face, size) или None при отмене. Заготовка под будущие настройки.</purpose>
+        <inputs><param name="parent" type="HWND" /><param name="cur_face" type="&amp;str" /><param name="cur_size" type="i32" /></inputs>
+        <outputs><param name="Option&lt;(String,i32)&gt;" type="face+size или None" /></outputs>
+      </contract>
+      <interface>
+        <export-choose_font PURPOSE="Модальный ChooseFontW; -&gt; Option(face, size)" />
+        <export-parse_face PURPOSE="Чистое: lfFaceName (UTF-16 null-terminated) -&gt; String (тестируемо)" />
+      </interface>
+      <depends>none</depends>
+      <target><source>src/settings.rs</source><tests>src/settings.rs (#[cfg(test)] на parse_face)</tests></target>
+      <verification-ref>V-M-SETTINGS</verification-ref>
+    </M-SETTINGS>
+
     <M-RENDER NAME="Render" TYPE="UI_COMPONENT" LAYER="3" ORDER="1" STATUS="implemented">
       <contract>
         <purpose>Список типизированных строк, отрисовка GDI, hit-testing по зонам, контекст-меню. v0.3: иконки секций (M-ICON), кнопка ✕ и ручки drag (на hover/в режиме reorder), строка «показать все» недавних, подсветка «звенящих» строк по набору имён проектов, ручной порядок секций/окон.</purpose>
@@ -167,12 +201,12 @@
 
     <M-MAIN NAME="Main" TYPE="ENTRY_POINT" LAYER="4" ORDER="1" STATUS="partial">
       <contract>
-        <purpose>Окно, таймер, message loop, склейка модулей. v0.3: на тике опрашивает M-SIGNAL (bell_keys + reconcile по фокусу), передаёт набор «звенящих» в paint; диспетчеризует зоны клика (Close/RecentMore/DragHandle) и режим reorder по ПКМ; захват мыши при drag.</purpose>
+        <purpose>Окно, таймер, message loop, склейка модулей. v0.3: на тике опрашивает M-SIGNAL (bell_keys + reconcile по фокусу), передаёт набор «звенящих» в paint; диспетчеризует зоны клика (Close/RecentMore/DragHandle) и режим reorder по ПКМ; захват мыши при drag. v0.4: шрифт из конфига (make_font(face,…)); «⚙» в шапке -&gt; меню настроек -&gt; M-SETTINGS.choose_font -&gt; rebuild_fonts.</purpose>
         <inputs><param name="—" type="—" /></inputs>
         <outputs><param name="exit code" type="i32" /></outputs>
       </contract>
       <interface><export-main PURPOSE="Точка входа" /></interface>
-      <depends>M-CONFIG, M-WINENUM, M-RENDER, M-SIGNAL</depends>
+      <depends>M-CONFIG, M-WINENUM, M-RENDER, M-SIGNAL, M-SETTINGS</depends>
       <target><source>src/main.rs</source><tests>smoke-запуск exe</tests></target>
       <verification-ref>V-M-MAIN</verification-ref>
     </M-MAIN>
@@ -225,6 +259,18 @@
       <step-3>M-CONFIG.order переставляет ключ (секция по block / окно по имени), save -> build_rows применяет порядок</step-3>
       <evidence>Новый порядок виден сразу и переживает перезапуск (os=/o= в ini)</evidence>
     </DF-REORDER>
+    <DF-SETTINGS NAME="Смена шрифта панели" TRIGGER="ЛКМ по «⚙» в шапке -> меню «Шрифт…»">
+      <step-1>Клик «⚙» открывает меню настроек; пункт «Шрифт…»</step-1>
+      <step-2>M-SETTINGS.choose_font (ChooseFontW, предзаполнен текущим) возвращает (face, size) либо None</step-2>
+      <step-3>M-CONFIG.set_font + save; M-MAIN.rebuild_fonts пересоздаёт HFONT; repaint</step-3>
+      <evidence>Панель сразу перерисована новым шрифтом; после перезапуска шрифт восстановлен из font= в ini</evidence>
+    </DF-SETTINGS>
+    <DF-APPS NAME="Терминалы и папки Проводника" TRIGGER="Таймер опроса ~1с">
+      <step-1>M-WINENUM перечисляет окна с процессом И классом; для ConsoleWindowClass разрешает shell-клиента (cmd/powershell/pwsh) через conhost</step-1>
+      <step-2>match_windows сопоставляет по предикату (процесс ∈ proc∪proc_alts) И (class отсутствует ИЛИ совпал)</step-2>
+      <step-3>build_rows группирует в секции Windows Terminal / Командная строка / PowerShell / Git Bash / Проводник; имя = весь заголовок (Whole)</step-3>
+      <evidence>Папки Проводника и терминалы видны секциями; cmd и PowerShell разделены; панель задач/рабочий стол (explorer.exe без CabinetWClass) отфильтрованы</evidence>
+    </DF-APPS>
   </DataFlow>
 
   <ImplementationOrder>
@@ -328,6 +374,34 @@
         <on-fail>grace-fix; откат коммитом</on-fail>
       </checkpoint>
     </Phase-8>
+
+    <Phase-9 name="Настройки: шрифт панели" status="pending">
+      <goal>Шрифт панели задаётся из UI и хранится в конфиге; «⚙» в шапке открывает нативный выбор шрифта</goal>
+      <step-1 module="M-CONFIG" status="pending" verification="V-M-CONFIG">font_face/font_size + set_font; персист ключом font=face⇥size; дефолт Iosevka Fixed/16</step-1>
+      <step-2 module="M-SETTINGS" status="pending" verification="V-M-SETTINGS">Новый модуль: choose_font (ChooseFontW, предзаполнен текущим face/size) + чистый parse_face</step-2>
+      <step-3 module="M-RENDER" status="pending" verification="V-M-RENDER">Глиф «⚙» в шапке (зона слева от «✕»)</step-3>
+      <step-4 module="M-MAIN" status="pending" verification="V-M-MAIN">make_font(face,…) из конфига; rebuild_fonts; клик «⚙» -&gt; меню «Шрифт…» -&gt; choose_font -&gt; set_font + save + rebuild_fonts + repaint</step-4>
+      <checkpoint>
+        <tests>cargo test (font= round-trip, parse_face); cargo build --release</tests>
+        <smoke>«⚙» открывает диалог шрифта; выбор гарнитуры меняет панель вживую и переживает перезапуск (font= в ini)</smoke>
+        <flows>DF-SETTINGS end-to-end; VF-005</flows>
+        <artifacts>graph/plan/verification синхронны; grace lint = 0</artifacts>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-9>
+
+    <Phase-10 name="Терминалы и Проводник" status="pending">
+      <goal>Показывать Windows Terminal, cmd, PowerShell, Git Bash и окна Проводника отдельными секциями</goal>
+      <step-1 module="M-CONFIG" status="pending" verification="V-M-CONFIG">AppDef + proc_alts/class; NameMode::Whole; default_apps += Windows Terminal, Командная строка (cmd, class ConsoleWindowClass), PowerShell (powershell/pwsh, class console), Git Bash (mintty/bash), Проводник (explorer + CabinetWClass)</step-1>
+      <step-2 module="M-WINENUM" status="pending" verification="V-M-WINENUM">window_class; process_snapshot; console_client (cmd vs powershell через conhost); list_windows -&gt; (hwnd,title,proc,class) с разрешённым shell для консоли; match по предикату процесс+класс</step-2>
+      <checkpoint>
+        <tests>cargo test (match с фильтром class; console_client классифицирует cmd/powershell; Whole = весь заголовок); cargo build --release</tests>
+        <smoke>Открытая папка Проводника и терминалы появляются секциями с иконками; cmd и PowerShell — разные секции; панель задач и рабочий стол НЕ появляются</smoke>
+        <flows>DF-APPS end-to-end; VF-006</flows>
+        <artifacts>graph/plan/verification синхронны; grace lint = 0</artifacts>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-10>
   </ImplementationOrder>
 
   <ExecutionPolicy>

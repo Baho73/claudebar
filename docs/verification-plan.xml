@@ -1,4 +1,4 @@
-<VerificationPlan VERSION="0.3.0">
+<VerificationPlan VERSION="0.4.0">
   <GlobalPolicy>
     <log-format>[Module][function][BLOCK_NAME] message</log-format>
     <deterministic-first>true</deterministic-first>
@@ -38,6 +38,20 @@
         <trace-sequence>HIT_TEST_CLOSE -> POST_WM_CLOSE -> NEXT_POLL_GONE</trace-sequence>
       </required-signals>
     </VF-004>
+    <VF-005 NAME="СменаШрифта" USE_CASES="—" DATA_FLOW="DF-SETTINGS" PRIORITY="medium">
+      <scenario>«⚙» открывает выбор шрифта; выбранная гарнитура применяется к панели и сохраняется</scenario>
+      <expected-outcome>choose_font возвращает (face,size); set_font+save пишет font= в ini; rebuild_fonts перерисовывает панель; после перезапуска шрифт восстановлен</expected-outcome>
+      <required-signals>
+        <trace-sequence>GEAR_CLICK -> CHOOSE_FONT -> SET_FONT_SAVE -> REBUILD_FONTS -> REPAINT</trace-sequence>
+      </required-signals>
+    </VF-005>
+    <VF-006 NAME="ТерминалыИПроводник" USE_CASES="UC-003" DATA_FLOW="DF-APPS" PRIORITY="medium">
+      <scenario>Окна Windows Terminal, cmd, PowerShell, Git Bash и папки Проводника отображаются отдельными секциями; панель задач/рабочий стол не попадают</scenario>
+      <expected-outcome>match по (процесс ∈ proc∪proc_alts) И class; console_client делит cmd/powershell; explorer показан только при классе CabinetWClass</expected-outcome>
+      <required-signals>
+        <trace-sequence>ENUM_WINDOW_CLASS -> CONSOLE_CLIENT_RESOLVE -> MATCH_PROC_AND_CLASS -> SECTION_ROWS</trace-sequence>
+      </required-signals>
+    </VF-006>
   </CriticalFlows>
 
   <ModuleVerification>
@@ -51,6 +65,8 @@
         <scenario-2 kind="failure">Битый/отсутствующий ini -> дефолты, без паники</scenario-2>
         <scenario-3 kind="success">v0.3 Phase-7: recent_showall round-trip через ra= (toggle -> serialize -> parse сохраняет состояние)</scenario-3>
         <scenario-4 kind="success">v0.3 Phase-8: ручной порядок секций (os=) и окон (o=) round-trip; перемещение элемента меняет позицию детерминированно</scenario-4>
+        <scenario-5 kind="success">v0.4 Phase-9: font= round-trip (set_font -> serialize -> parse сохраняет face и size); отсутствие font= -> дефолт Iosevka Fixed/16</scenario-5>
+        <scenario-6 kind="success">v0.4 Phase-10: default_apps содержит Windows Terminal, cmd (class ConsoleWindowClass), PowerShell (powershell/pwsh), Git Bash, Проводник (explorer + CabinetWClass) с верными proc_alts/class/NameMode::Whole</scenario-6>
       </scenarios>
     </V-M-CONFIG>
     <V-M-WINENUM MODULE="M-WINENUM" PRIORITY="high">
@@ -62,6 +78,9 @@
         <scenario-1 kind="success">extract_name извлекает проект из "file - Project - Visual Studio Code" и документ из "Doc.docx - Word"</scenario-1>
         <scenario-2 kind="success">Заголовок без " - " -> весь заголовок как имя; ведущие маркеры (точка несохранённого) обрезаются</scenario-2>
         <scenario-3 kind="regression">MS Project: заголовок "App - Файл" (имя приложения первым) -> DocumentLast берёт имя файла из последнего сегмента</scenario-3>
+        <scenario-4 kind="success">v0.4: match_windows с предикатом класса — explorer.exe+CabinetWClass матчится в Проводник; explorer.exe с иным классом (Shell_TrayWnd) отбрасывается</scenario-4>
+        <scenario-5 kind="success">v0.4: NameMode::Whole возвращает весь заголовок (папка "A - B" не режется по " - ")</scenario-5>
+        <scenario-6 kind="success">v0.4: console_client по snapshot pid->parent классифицирует консоль: conhost с родителем cmd.exe -> cmd; с powershell.exe/pwsh.exe -> PowerShell; нет клиента -> None (окно не показывается)</scenario-6>
       </scenarios>
     </V-M-WINENUM>
     <V-M-ACTIVATE MODULE="M-ACTIVATE" PRIORITY="medium">
@@ -99,6 +118,7 @@
         <scenario-5 kind="success">v0.3 Phase-8: build_rows применяет ручной порядок секций и окон; элементы без порядка идут после по прежней сортировке</scenario-5>
         <scenario-6 kind="success">v0.3 Phase-4: paint подсвечивает строку окна, чьё имя проекта присутствует в наборе bell</scenario-6>
         <scenario-7 kind="regression">Перетаскивание было необнаружимо (хватать только за 24px ручку, режим невидим). Фикс: в reorder hit_test отдаёт DragHandle для всей строки секции/окна; шапка показывает подсказку режима. Тест hit_test_reorder_gives_drag_handle</scenario-7>
+        <scenario-8 kind="success">v0.4 Phase-9: paint рисует глиф «⚙» в шапке слева от «✕» (ручной smoke); зона клика «⚙» открывает меню настроек</scenario-8>
       </scenarios>
     </V-M-RENDER>
     <V-M-SIGNAL MODULE="M-SIGNAL" PRIORITY="high">
@@ -126,6 +146,18 @@
         <scenario-3 kind="regression">Иконки не отображались у Cursor/Word/Excel/MS Project (источник WM_GETICON/class кросс-процессно ненадёжен). Фикс: иконка из exe-файла (SHGetFileInfo). Guard: icon_from_path("C:\Windows\explorer.exe") -> Some</scenario-3>
       </scenarios>
     </V-M-ICON>
+    <V-M-SETTINGS MODULE="M-SETTINGS" PRIORITY="medium">
+      <test-files><file>src/settings.rs (#[cfg(test)] на parse_face)</file></test-files>
+      <module-checks>
+        <check-1>cargo test settings</check-1>
+        <check-2>Ручной smoke: «⚙» открывает ChooseFontW; выбор шрифта применяется к панели</check-2>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">parse_face(UTF-16 буфер lfFaceName с хвостовыми нулями) -> корректная String без \0</scenario-1>
+        <scenario-2 kind="success">choose_font на OK возвращает Some((face, size)) выбранного шрифта (ручной smoke)</scenario-2>
+        <scenario-3 kind="failure">Отмена диалога -> None; конфиг не меняется</scenario-3>
+      </scenarios>
+    </V-M-SETTINGS>
     <V-M-MAIN MODULE="M-MAIN" PRIORITY="medium">
       <test-files><file>smoke</file></test-files>
       <module-checks>
@@ -134,6 +166,7 @@
       <scenarios>
         <scenario-1 kind="success">Старт без краха, панель отображает текущие окна</scenario-1>
         <scenario-2 kind="success">v0.3: на тике опрашивает M-SIGNAL (bell_keys + reconcile) и пробрасывает набор bell в paint; диспетчеризация зон (Close/RecentMore/DragHandle) и режим reorder по ПКМ не ломают активацию/меню</scenario-2>
+        <scenario-3 kind="success">v0.4: шрифт читается из конфига (make_font(face,…)); клик «⚙» открывает меню «Шрифт…»; после choose_font — rebuild_fonts удаляет старые HFONT и перерисовывает без утечки/краха</scenario-3>
       </scenarios>
     </V-M-MAIN>
   </ModuleVerification>
@@ -203,6 +236,22 @@
         <evidence-2>Smoke: ПКМ показывает ручки; перетаскивание меняет порядок секции и окна; в боевом режиме ручек нет; порядок переживает перезапуск</evidence-2>
       </required-evidence>
     </Gate-Phase-8>
+    <Gate-Phase-9 PHASE="Phase-9">
+      <goal>Шрифт панели меняется из UI («⚙» -> ChooseFontW) и сохраняется</goal>
+      <commands><command-1>cargo test</command-1><command-2>cargo build --release</command-2></commands>
+      <required-evidence>
+        <evidence-1>Юнит-тесты: font= round-trip; parse_face очищает хвостовые нули</evidence-1>
+        <evidence-2>Smoke: «⚙» открывает диалог шрифта; выбор гарнитуры меняет панель вживую; шрифт переживает перезапуск (font= в ini)</evidence-2>
+      </required-evidence>
+    </Gate-Phase-9>
+    <Gate-Phase-10 PHASE="Phase-10">
+      <goal>Терминалы (WT/cmd/PowerShell/Git Bash) и папки Проводника — отдельными секциями; мусор отфильтрован</goal>
+      <commands><command-1>cargo test</command-1><command-2>cargo build --release</command-2></commands>
+      <required-evidence>
+        <evidence-1>Юнит-тесты: match с фильтром class; console_client делит cmd/powershell; NameMode::Whole = весь заголовок</evidence-1>
+        <evidence-2>Smoke: открытая папка и терминалы видны секциями с иконками; cmd и PowerShell разделены; панель задач/рабочий стол НЕ появляются</evidence-2>
+      </required-evidence>
+    </Gate-Phase-10>
   </PhaseGates>
 
   <FailurePackets>
