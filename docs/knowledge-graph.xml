@@ -124,7 +124,7 @@
       </annotations>
     </M-ICON>
 
-    <M-SETTINGS NAME="Settings" TYPE="UTILITY" STATUS="planned">
+    <M-SETTINGS NAME="Settings" TYPE="UTILITY" STATUS="implemented">
       <purpose>Окно настроек панели: нативный выбор шрифта (ChooseFontW) предзаполненный текущей гарнитурой/размером; возвращает (face, size) или None при отмене. Хранение значений — в M-CONFIG; меню вызова — в M-MAIN. Заготовка под будущие настройки (цвета, размер строки, угол).</purpose>
       <path>src/settings.rs</path>
       <depends>none</depends>
@@ -148,7 +148,6 @@
     <CrossLink from="M-SIGNAL" to="M-WINENUM" relation="сопоставляет сигналы с открытыми окнами по имени проекта" />
     <CrossLink from="M-RENDER" to="M-WINENUM" relation="строит строки и порядок из WinItem" />
     <CrossLink from="M-RECENT" to="M-CONFIG" relation="использует AppDef (расширения, editor_storage) для классификации недавних" />
-    <CrossLink from="M-MAIN" to="M-SETTINGS" relation="открывает диалог настроек (выбор шрифта) из меню «⚙»" />
-    <CrossLink from="M-SETTINGS" to="M-CONFIG" relation="прочитанный/выбранный шрифт сохраняется через set_font" />
+    <CrossLink from="M-MAIN" to="M-SETTINGS" relation="открывает диалог настроек (выбор шрифта) из меню «⚙»; результат сохраняет через M-CONFIG.set_font" />
   </Project>
 </KnowledgeGraph>

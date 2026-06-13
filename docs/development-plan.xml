@@ -168,7 +168,7 @@
       <verification-ref>V-M-ICON</verification-ref>
     </M-ICON>
 
-    <M-SETTINGS NAME="Settings" TYPE="UTILITY" LAYER="2" ORDER="4" STATUS="planned">
+    <M-SETTINGS NAME="Settings" TYPE="UTILITY" LAYER="2" ORDER="4" STATUS="implemented">
       <contract>
         <purpose>Настройки панели: нативный выбор шрифта (ChooseFontW), предзаполненный текущей гарнитурой/размером; возврат (face, size) или None при отмене. Заготовка под будущие настройки.</purpose>
         <inputs><param name="parent" type="HWND" /><param name="cur_face" type="&amp;str" /><param name="cur_size" type="i32" /></inputs>
