@@ -1,5 +1,5 @@
 // FILE: src/render.rs
-// VERSION: 1.4.0
+// VERSION: 1.9.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Построение строк-секций и отрисовка панели (GDI, двойной буфер) с группировкой по приложению.
 //   SCOPE: геометрия/цвета, Row, build_rows, paint (секции+иконки+окна+недавние+подсветка звоночка), resize, row_at.
@@ -19,7 +19,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.8.0 - fix: перетаскивание необнаружимо. В режиме reorder хватается вся строка (не только ручка), шапка показывает подсказку «↕ Порядок».
+//   LAST_CHANGE: v1.9.0 - Phase-9 Step 3: глиф «⚙» (настройки) в шапке слева от «✕»; pub HEAD_BTN_W — общая ширина кнопок шапки.
+//   v1.8.0 - fix: перетаскивание необнаружимо. В режиме reorder хватается вся строка (не только ручка), шапка показывает подсказку «↕ Порядок».
 //   v1.7.0 - Phase-8 Step 2: ручной порядок в build_rows, Zone::DragHandle, ручки и подсветка drag.
 //   v1.6.0 - Phase-7 Step 3: Row::RecentMore — «показать все» недавних сверх 6 (VISIBLE_RECENT).
 //   v1.5.0 - Phase-6 Step 1: Zone {Body, Close}, hit_test, отрисовка ✕ на hover строки окна.
@@ -46,6 +47,7 @@ pub const ROW: i32 = 30;
 const SWATCH: i32 = 14;
 const CLOSE_W: i32 = 24; // ширина правой зоны кнопки ✕ на строке окна
 const VISIBLE_RECENT: usize = 6; // сколько недавних показывать до «показать все»
+pub const HEAD_BTN_W: i32 = 24; // ширина кнопки в шапке (✕ закрыть панель, ⚙ настройки)
 
 // Строка панели: заголовок секции приложения или окно внутри секции.
 #[derive(Clone, Copy)]
@@ -201,8 +203,9 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
         dt(mem, "↕ Порядок — тащите строки, ПКМ — выход", RECT { left: 10, top: 0, right: w - 8, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
     } else {
         SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
-        dt(mem, "≡ ClaudeBar", RECT { left: 10, top: 0, right: w - 24, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
-        dt(mem, "✕", RECT { left: w - 24, top: 0, right: w, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+        dt(mem, "≡ ClaudeBar", RECT { left: 10, top: 0, right: w - 2 * HEAD_BTN_W, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+        dt(mem, "⚙", RECT { left: w - 2 * HEAD_BTN_W, top: 0, right: w - HEAD_BTN_W, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+        dt(mem, "✕", RECT { left: w - HEAD_BTN_W, top: 0, right: w, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
     }
 
     if app.rows.is_empty() {
