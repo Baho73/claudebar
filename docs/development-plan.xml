@@ -390,10 +390,10 @@
       </checkpoint>
     </Phase-9>
 
-    <Phase-10 name="Терминалы и Проводник" status="pending">
+    <Phase-10 name="Терминалы и Проводник" status="done">
       <goal>Показывать Windows Terminal, cmd, PowerShell, Git Bash и окна Проводника отдельными секциями</goal>
-      <step-1 module="M-CONFIG" status="pending" verification="V-M-CONFIG">AppDef + proc_alts/class; NameMode::Whole; default_apps += Windows Terminal, Командная строка (cmd, class ConsoleWindowClass), PowerShell (powershell/pwsh, class console), Git Bash (mintty/bash), Проводник (explorer + CabinetWClass)</step-1>
-      <step-2 module="M-WINENUM" status="pending" verification="V-M-WINENUM">window_class; process_snapshot; console_client (cmd vs powershell через conhost); list_windows -&gt; (hwnd,title,proc,class) с разрешённым shell для консоли; match по предикату процесс+класс</step-2>
+      <step-1 module="M-CONFIG" status="done" verification="V-M-CONFIG">AppDef + proc_alts/class; NameMode::Whole; default_apps += Windows Terminal, Командная строка (cmd, class ConsoleWindowClass), PowerShell (powershell/pwsh, class console), Git Bash (mintty/bash), Проводник (explorer + CabinetWClass)</step-1>
+      <step-2 module="M-WINENUM" status="done" verification="V-M-WINENUM">window_class; process_snapshot; console_client (cmd vs powershell через conhost); list_windows -&gt; (hwnd,title,proc,class) с разрешённым shell для консоли; match по предикату процесс+класс</step-2>
       <checkpoint>
         <tests>cargo test (match с фильтром class; console_client классифицирует cmd/powershell; Whole = весь заголовок); cargo build --release</tests>
         <smoke>Открытая папка Проводника и терминалы появляются секциями с иконками; cmd и PowerShell — разные секции; панель задач и рабочий стол НЕ появляются</smoke>
