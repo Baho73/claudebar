@@ -1,4 +1,4 @@
-<TechnologyStack VERSION="0.3.0">
+<TechnologyStack VERSION="0.4.0">
   <Runtime>Native Windows (x86_64-pc-windows-gnu) — Windows 10/11</Runtime>
   <Language>Rust 1.96 (edition 2021)</Language>
   <Framework>Win32 API via `windows` crate 0.58</Framework>

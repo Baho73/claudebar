@@ -2,15 +2,15 @@
 
 A tiny always-on-top switcher for your open editor and Office windows — built for the moment you have **a dozen Claude Code sessions** and documents running in different windows and can no longer tell them apart.
 
-It shows a compact vertical list of your windows, **grouped into collapsible sections by app** (VS Code, Cursor, Word, Excel, MS Project). Click one to jump to it. Tag each project with a **color** and a **free-text label**. Under each section, a **recent documents** sub-list lets you reopen closed files in one click. And when an AI finishes in a project, ClaudeBar can **highlight that window's row** so you know where to look.
+It shows a compact vertical list of your windows, **grouped into collapsible sections by app** (VS Code, Cursor, Word, Excel, MS Project, **terminals** and **Explorer folders**). Click one to jump to it. Tag each project with a **color** and a **free-text label**. Under each section, a **recent documents** sub-list lets you reopen closed files in one click. And when an AI finishes in a project, ClaudeBar can **highlight that window's row** so you know where to look. The panel **font** is configurable from a gear menu.
 
-Native Windows `.exe`, ~340 KB, written in Rust. No Python, no .NET, no runtime to install — one file.
+Native Windows `.exe`, ~350 KB, written in Rust. No Python, no .NET, no runtime to install — one file.
 
 <p align="center"><img src="screenshot.png" alt="ClaudeBar panel" width="360"></p>
 
 ```
 ┌────────────────────────┐
-│ ≡ ClaudeBar          ✕ │
+│ ≡ ClaudeBar        ⚙ ✕ │   ← ⚙ opens settings (panel font)
 │ ▼ 🅥 VS Code         2 │   ← app section with icon + window count
 │ ▌ ConstructMan    opus │   ← color swatch · project · label
 │ ▌ Test_2026.05  sonnet▕│   ← gold bar = AI just finished here (bell)
@@ -28,7 +28,7 @@ When you run many Claude Code sessions, each lives in its own editor window. The
 
 ## Features
 
-- Always-on-top vertical bar, lists every window of a known editor/Office process (VS Code, Cursor, Word, Excel, MS Project).
+- Always-on-top vertical bar, lists every window of a known editor/Office process (VS Code, Cursor, Word, Excel, MS Project), plus **terminals** (Windows Terminal, Command Prompt, PowerShell, Git Bash) and **Explorer folders** — each its own section.
 - **Collapsible sections per app**, each with its icon and a window count. Collapse state is remembered.
 - Groups by **project name**, not the active file — the row stays put when you switch files.
 - **Bell:** when an AI finishes in a project (via a Claude Code `Stop` hook), the project's row is highlighted with a warm gold bar; the highlight clears once that window gets focus.
@@ -37,6 +37,7 @@ When you run many Claude Code sessions, each lives in its own editor window. The
 - **Close button (✕)** on hover → closes that window the normal way (the app shows its own save prompt).
 - **Right-click** a window row → pick a color (8 presets) and set a label.
 - **Reorder:** right-click a section header to enter reorder mode, then drag rows to set your own order of sections and windows. Order persists.
+- **Settings (⚙):** click the gear in the header to pick the panel **font** via the native font dialog — face, size and weight. Saved to `claudebar.ini`.
 - Color + label are bound to the **project name**, so they survive switching files and reopening the window. Stored in `claudebar.ini` next to the exe.
 - Drag the panel by its header; position is remembered.
 - Auto-refreshes about once a second — new windows appear, closed ones disappear.
@@ -80,16 +81,21 @@ Highlighting works for projects open in a tracked editor window (the typical cas
 ClaudeBar lists top-level visible windows that belong to a known editor/Office **process**. Built-in set:
 
 ```
-code.exe    → VS Code
-cursor.exe  → Cursor
-winword.exe → Word
-excel.exe   → Excel
-winproj.exe → MS Project
+code.exe              → VS Code
+cursor.exe            → Cursor
+winword.exe           → Word
+excel.exe             → Excel
+winproj.exe           → MS Project
+windowsterminal.exe   → Windows Terminal
+cmd.exe               → Command Prompt    (ConsoleWindowClass)
+powershell/pwsh.exe   → PowerShell        (ConsoleWindowClass)
+mintty.exe / bash.exe → Git Bash
+explorer.exe          → Explorer folders  (CabinetWClass only)
 ```
 
-The **project name** is extracted from the window title per app: for VS Code / Cursor it is the segment just before the ` - Visual Studio Code` / ` - Cursor` suffix; for Office apps it is the document name. Section icons are taken from each app's exe file.
+The **project name** is extracted from the window title per app: for VS Code / Cursor it is the segment just before the ` - Visual Studio Code` / ` - Cursor` suffix; for Office apps it is the document name; for terminals and Explorer folders it is the whole title. Section icons are taken from each app's exe file.
 
-The tracked set is built in (matched by process name); there is no user-editable pattern list yet — see BACKLOG.
+Matching is by process **and**, where needed, **window class**: Explorer folders are taken only from `CabinetWClass` windows (so the taskbar and desktop are excluded), and consoles from `ConsoleWindowClass`. Because a classic console window is owned by `conhost`, cmd vs PowerShell is resolved by walking the console host's process tree to the real shell. The tracked set is built in; there is no user-editable pattern list yet — see BACKLOG.
 
 ## Recent documents
 
@@ -106,6 +112,7 @@ Created automatically next to the exe. Plain text:
 ```
 # claudebar config
 pos=1570,40
+font=Iosevka Fixed	16	600
 c=Excel
 re=Word
 ra=Word
@@ -115,6 +122,7 @@ p=ConstructMan	3	opus
 ```
 
 - `pos=X,Y` — panel position.
+- `font=<face>\t<size>\t<weight>` — panel font: face, pixel size, weight (100–900). Editable from the ⚙ menu; default `Iosevka Fixed` 16 600.
 - `c=<block>` — collapsed section (by app block name).
 - `re=<block>` — section with the "recent" sub-block expanded.
 - `ra=<block>` — section with "show all" recent enabled (beyond the first 6).
@@ -153,13 +161,13 @@ MIT — see [LICENSE](LICENSE).
 
 Крошечная всегда-поверх панель для тех, у кого открыто много окон редакторов и Office и кто тонет в них — особенно когда параллельно крутится **десяток сессий Claude Code**.
 
-Показывает компактный вертикальный список окон, **сгруппированных в сворачиваемые секции по приложению** (VS Code, Cursor, Word, Excel, MS Project). Клик — переключиться на окно. Каждому проекту можно задать **цвет** и **текстовую метку**. Под секцией — список **недавних документов** для повторного открытия одним кликом. А когда ИИ заканчивает работу в проекте, ClaudeBar **подсвечивает строку** этого окна, чтобы сразу было видно, куда смотреть.
+Показывает компактный вертикальный список окон, **сгруппированных в сворачиваемые секции по приложению** (VS Code, Cursor, Word, Excel, MS Project, **терминалы** и **папки Проводника**). Клик — переключиться на окно. Каждому проекту можно задать **цвет** и **текстовую метку**. Под секцией — список **недавних документов** для повторного открытия одним кликом. А когда ИИ заканчивает работу в проекте, ClaudeBar **подсвечивает строку** этого окна, чтобы сразу было видно, куда смотреть. **Шрифт** панели настраивается из меню-шестерёнки.
 
-Нативный `.exe` ~340 КБ на Rust, без зависимостей, без установки.
+Нативный `.exe` ~350 КБ на Rust, без зависимостей, без установки.
 
 ### Что умеет
 
-- Всегда-поверх список окон известных процессов; **секции по приложению** с иконкой и счётчиком, сворачивание сохраняется.
+- Всегда-поверх список окон известных процессов; **секции по приложению** с иконкой и счётчиком, сворачивание сохраняется. Помимо редакторов и Office — **терминалы** (Windows Terminal, командная строка, PowerShell, Git Bash) и **папки Проводника** отдельными секциями.
 - Группировка по **имени проекта**, а не по активному файлу — строка не прыгает при смене файла.
 - **Звоночек:** когда ИИ закончила работу (через `Stop`-хук Claude Code), строка проекта подсвечивается тёплой золотой полосой; подсветка гаснет, когда окно получает фокус.
 - **Недавние документы** в каждой секции (Windows Recent + хранилище проектов редакторов): первые 6 и крыжик **«показать все»**.
@@ -167,6 +175,7 @@ MIT — see [LICENSE](LICENSE).
 - **Кнопка ✕** при наведении — закрыть окно штатно (приложение само спросит про сохранение).
 - **ПКМ** по окну — цвет (8) и метка.
 - **Перетаскивание:** ПКМ по заголовку секции включает режим порядка, тащи строки — меняешь порядок секций и окон. Порядок сохраняется.
+- **Настройки (⚙):** шестерёнка в шапке открывает нативный выбор **шрифта** панели (гарнитура, кегль, насыщенность); сохраняется в `claudebar.ini` (ключ `font=`).
 - Цвет и метка привязаны к имени проекта, переживают смену файла и перезапуск окна. Конфиг `claudebar.ini` рядом с exe.
 
 ### Звоночек — настройка
