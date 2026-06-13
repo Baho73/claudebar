@@ -1,8 +1,8 @@
 // FILE: src/config.rs
-// VERSION: 1.5.0
+// VERSION: 1.6.0
 // START_MODULE_CONTRACT
-//   PURPOSE: Конфигурация: приложения (по процессу), настройки проектов (цвет, метка), свёрнутость секций, «показать все» недавних, позиция.
-//   SCOPE: палитра, авто-цвет, AppDef/NameMode, дефолтный набор приложений, свёрнутость секций, раскрытие/showall недавних, парсинг/сериализация ini.
+//   PURPOSE: Конфигурация: приложения (по процессу), настройки проектов (цвет, метка), свёрнутость секций, «показать все» недавних, позиция, шрифт панели.
+//   SCOPE: палитра, авто-цвет, AppDef/NameMode, дефолтный набор приложений, свёрнутость секций, раскрытие/showall недавних, шрифт (font_face/font_size), парсинг/сериализация ini.
 //   DEPENDS: none (Win32 только для чтения позиции окна при сохранении)
 //   LINKS: M-CONFIG
 //   ROLE: RUNTIME
@@ -10,9 +10,10 @@
 // END_MODULE_CONTRACT
 //
 // START_MODULE_MAP
-//   Config        - корень конфигурации: apps, projects, collapsed, recent_expanded, recent_showall, section_order, window_order, pos, cfg_path
+//   Config        - корень конфигурации: apps, projects, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, pos, cfg_path
 //   AppDef        - приложение: процесс, имя блока, правило имени, расширения
 //   NameMode      - извлечение имени: Project{suffix} | Document
+//   set_font / font_face / font_size   - шрифт панели (ключ font=), дефолт Iosevka Fixed/16
 //   ProjConf      - настройки проекта: индекс цвета (-1 = авто), метка
 //   PALETTE       - палитра из 8 цветов
 //   auto_color    - детерминированный цвет по имени
@@ -22,7 +23,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.5.0 - Phase-8 Step 1: ручной порядок секций (os=) и окон в секции (o=); parse_ini -> struct ParsedIni.
+//   LAST_CHANGE: v1.6.0 - Phase-9 Step 1: шрифт панели (font_face/font_size, ключ font=, деф. Iosevka Fixed/16); set_font; round-trip.
+//   v1.5.0 - Phase-8 Step 1: ручной порядок секций (os=) и окон в секции (o=); parse_ini -> struct ParsedIni.
 //   v1.4.0 - Phase-7 Step 2: recent_showall — «показать все» недавних сверх 6 с персистом (ra=).
 //   v1.3.0 - Phase-3 Step 2: recent_expanded — состояние раскрытия под-блока «недавние» с персистом (re=).
 //   v1.2.1 - fix: NameMode::DocumentLast для MS Project (заголовок "App - Файл"), показываем имя файла.
@@ -36,6 +38,10 @@ use std::path::PathBuf;
 
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+
+// Шрифт панели по умолчанию (моноширинный, хорошо читается в списках/таблицах).
+pub const DEFAULT_FONT: &str = "Iosevka Fixed";
+pub const DEFAULT_FONT_SIZE: i32 = 16;
 
 pub const PALETTE: [(&str, u8, u8, u8); 8] = [
     ("Синий", 0x5B, 0x8F, 0xF9),
@@ -81,6 +87,8 @@ pub struct Config {
     pub recent_showall: HashSet<String>, // секции с раскрытым полным списком недавних (сверх 6)
     pub section_order: Vec<String>, // ручной порядок секций (block); пустой = по умолчанию
     pub window_order: HashMap<String, Vec<String>>, // block -> ручной порядок имён окон
+    pub font_face: String, // гарнитура шрифта панели (ключ font=)
+    pub font_size: i32, // базовый кегль (px); мелкий шрифт = font_size-3
     pub pos: Option<(i32, i32)>,
     pub cfg_path: PathBuf,
 }
@@ -133,6 +141,8 @@ struct ParsedIni {
     recent_showall: HashSet<String>,
     section_order: Vec<String>,
     window_order: HashMap<String, Vec<String>>,
+    font_face: String,
+    font_size: i32,
     pos: Option<(i32, i32)>,
 }
 
@@ -143,6 +153,8 @@ fn parse_ini(text: &str) -> ParsedIni {
     let mut recent_showall: HashSet<String> = HashSet::new();
     let mut section_order: Vec<String> = Vec::new();
     let mut window_order: HashMap<String, Vec<String>> = HashMap::new();
+    let mut font_face: String = DEFAULT_FONT.to_string();
+    let mut font_size: i32 = DEFAULT_FONT_SIZE;
     let mut pos: Option<(i32, i32)> = None;
     // START_BLOCK_PARSE_LINES
     for line in text.lines() {
@@ -151,6 +163,21 @@ fn parse_ini(text: &str) -> ParsedIni {
             if let (Some(x), Some(y)) = (it.next(), it.next()) {
                 if let (Ok(x), Ok(y)) = (x.trim().parse(), y.trim().parse()) {
                     pos = Some((x, y));
+                }
+            }
+        } else if let Some(v) = line.strip_prefix("font=") {
+            // font=<гарнитура>\t<кегль>; гарнитура может содержать пробелы, но не табы
+            let mut it = v.splitn(2, '\t');
+            if let Some(face) = it.next() {
+                if !face.trim().is_empty() {
+                    font_face = face.to_string();
+                }
+            }
+            if let Some(sz) = it.next() {
+                if let Ok(n) = sz.trim().parse::<i32>() {
+                    if (6..=72).contains(&n) {
+                        font_size = n;
+                    }
                 }
             }
         } else if let Some(v) = line.strip_prefix("os=") {
@@ -186,7 +213,7 @@ fn parse_ini(text: &str) -> ParsedIni {
         }
     }
     // END_BLOCK_PARSE_LINES
-    ParsedIni { projects, collapsed, recent_expanded, recent_showall, section_order, window_order, pos }
+    ParsedIni { projects, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, pos }
 }
 
 impl Config {
@@ -201,6 +228,8 @@ impl Config {
             recent_showall: p.recent_showall,
             section_order: p.section_order,
             window_order: p.window_order,
+            font_face: p.font_face,
+            font_size: p.font_size,
             pos: p.pos,
             cfg_path,
         }
@@ -211,6 +240,7 @@ impl Config {
         if let Some((x, y)) = pos {
             out += &format!("pos={},{}\n", x, y);
         }
+        out += &format!("font={}\t{}\n", self.font_face, self.font_size);
         for block in &self.collapsed {
             out += &format!("c={}\n", block);
         }
@@ -274,6 +304,14 @@ impl Config {
         if !self.recent_showall.remove(block) {
             self.recent_showall.insert(block.to_string());
         }
+    }
+
+    // Задать шрифт панели (гарнитура + кегль). Кегль ограничен разумным диапазоном.
+    pub fn set_font(&mut self, face: &str, size: i32) {
+        if !face.trim().is_empty() {
+            self.font_face = face.to_string();
+        }
+        self.font_size = size.clamp(6, 72);
     }
 
     // Индексы секций в ручном порядке: сперва известные по section_order, затем остальные по исходному.
@@ -350,6 +388,8 @@ mod tests {
             recent_showall: HashSet::new(),
             section_order: Vec::new(),
             window_order: HashMap::new(),
+            font_face: DEFAULT_FONT.to_string(),
+            font_size: DEFAULT_FONT_SIZE,
             pos: None,
             cfg_path: PathBuf::new(),
         }
@@ -436,6 +476,27 @@ mod tests {
         let text = c.serialize(None);
         let p = parse_ini(&text);
         assert_eq!(p.window_order.get("VS Code").unwrap(), &vec!["C".to_string(), "A".into(), "B".into()]);
+    }
+
+    #[test]
+    fn font_roundtrip_and_default() {
+        let mut c = cfg(vec![]);
+        // дефолт без font= в ini
+        assert_eq!(c.font_face, DEFAULT_FONT);
+        assert_eq!(c.font_size, DEFAULT_FONT_SIZE);
+        // set + round-trip через font= (гарнитура с пробелом сохраняется)
+        c.set_font("Cascadia Mono", 18);
+        let text = c.serialize(None);
+        let p = parse_ini(&text);
+        assert_eq!(p.font_face, "Cascadia Mono");
+        assert_eq!(p.font_size, 18);
+        // отсутствие font= -> дефолт
+        let p2 = parse_ini("pos=1,2\n");
+        assert_eq!(p2.font_face, DEFAULT_FONT);
+        assert_eq!(p2.font_size, DEFAULT_FONT_SIZE);
+        // кегль за пределами диапазона клампится
+        c.set_font("X", 999);
+        assert_eq!(c.font_size, 72);
     }
 
     #[test]

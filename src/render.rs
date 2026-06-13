@@ -500,6 +500,8 @@ mod tests {
             recent_showall: Default::default(),
             section_order: Default::default(),
             window_order: Default::default(),
+            font_face: crate::config::DEFAULT_FONT.to_string(),
+            font_size: crate::config::DEFAULT_FONT_SIZE,
             pos: None,
             cfg_path: std::path::PathBuf::new(),
         };
@@ -559,6 +561,8 @@ mod tests {
             recent_showall: Default::default(),
             section_order: Default::default(),
             window_order: Default::default(),
+            font_face: crate::config::DEFAULT_FONT.to_string(),
+            font_size: crate::config::DEFAULT_FONT_SIZE,
             pos: None,
             cfg_path: std::path::PathBuf::new(),
         };
