@@ -16,6 +16,7 @@
         <fn-main PURPOSE="Инициализация приложения и цикл сообщений" />
         <fn-wndproc PURPOSE="Оконная процедура: WM_PAINT/TIMER/мышь/команды меню; зоны Close/RecentMore/DragHandle, режим reorder по ПКМ, «⚙» в шапке → меню настроек" />
         <fn-make_font PURPOSE="Создать HFONT из имени гарнитуры (конфиг) + высоты/насыщенности — v0.4" />
+        <fn-create_window PURPOSE="Стартовая позиция через config::visible_start_pos с метриками SM_*VIRTUALSCREEN — не создавать окно за пределами видимых мониторов" />
         <fn-rebuild_fonts PURPOSE="Пересоздать font_main/font_small после смены шрифта в настройках (удалить старые HFONT) — v0.4" />
       </annotations>
     </M-MAIN>
@@ -48,6 +49,7 @@
         <fn-showall PURPOSE="is/toggle «показать все» недавних per секция (ra=) — v0.3" />
         <fn-order PURPOSE="Ручной порядок секций (os=) и окон (o=): применение и перемещение — v0.3" />
         <fn-font PURPOSE="font_face/font_size: чтение и set_font; персист ключом font=face⇥size (деф. Iosevka Fixed, 16) — v0.4" />
+        <fn-visible_start_pos PURPOSE="Чистое: стартовая позиция окна с учётом мониторов — saved, если видно на виртуальном экране, иначе default (фикс «окно за экраном» после смены мониторов)" />
         <fn-default_apps PURPOSE="Встроенный набор: редакторы, Office + Windows Terminal, cmd, PowerShell, Git Bash, Проводник — v0.4" />
         <type-Config PURPOSE="Корень конфигурации: apps, проекты, секции, недавние, порядок, позиция, шрифт" />
         <type-AppDef PURPOSE="Определение приложения: proc + proc_alts, class (фильтр окна), имя блока, NameMode, расширения" />

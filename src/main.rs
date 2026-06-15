@@ -700,11 +700,22 @@ fn main() -> Result<()> {
         };
         RegisterClassW(&wc);
 
-        // позиция: из конфига или правый верхний угол
+        // позиция: из конфига, но только если окно реально видно на текущей конфигурации
+        // мониторов. После отключения/перестановки монитора сохранённая позиция может
+        // оказаться вне виртуального экрана — тогда окно невидимо (висит лишь в панели задач);
+        // visible_start_pos в этом случае возвращает дефолт на первичном экране.
         let sw = GetSystemMetrics(SM_CXSCREEN);
         let n = app.rows.len().max(1) as i32;
         let h = render::HEAD + render::ROW * n;
-        let (x, y) = app.config.pos.unwrap_or((sw - render::W - 20, 40));
+        let default_pos = (sw - render::W - 20, 40);
+        let (vx, vy, vw, vh) = (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        );
+        let (x, y) =
+            config::visible_start_pos(app.config.pos, default_pos, render::W, h, vx, vy, vw, vh);
 
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW,

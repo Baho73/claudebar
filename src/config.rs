@@ -1,5 +1,5 @@
 // FILE: src/config.rs
-// VERSION: 1.8.0
+// VERSION: 1.9.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Конфигурация: приложения (по процессу и классу окна), настройки проектов (цвет, метка), свёрнутость секций, «показать все» недавних, позиция, шрифт панели.
 //   SCOPE: палитра, авто-цвет, AppDef (proc/proc_alts/class)/NameMode (вкл. Whole), дефолтный набор приложений (редакторы, Office, терминалы, Проводник), свёрнутость секций, раскрытие/showall недавних, шрифт (font_face/font_size/font_weight), парсинг/сериализация ini.
@@ -14,6 +14,7 @@
 //   AppDef        - приложение: proc + proc_alts, class (фильтр окна), имя блока, правило имени, расширения
 //   NameMode      - извлечение имени: Project{suffix} | Document | DocumentLast | Whole
 //   set_font / font_face / font_size / font_weight - шрифт панели (ключ font=face⇥size⇥weight), дефолт Iosevka Fixed/16/600
+//   visible_start_pos - стартовая позиция окна с учётом конфигурации мониторов: дефолт, если saved вне виртуального экрана
 //   ProjConf      - настройки проекта: индекс цвета (-1 = авто), метка
 //   PALETTE       - палитра из 8 цветов
 //   auto_color    - детерминированный цвет по имени
@@ -23,7 +24,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.8.0 - fix(grace-fix): вес шрифта (font_weight, 3-е поле font=); set_font(face,size,weight). Без веса панель была всегда 600 (жирная) и диалог не предзаполнял стиль.
+//   LAST_CHANGE: v1.9.0 - fix(grace-fix): visible_start_pos — стартовая позиция с учётом мониторов. После смены конфигурации мониторов сохранённая pos= оказывалась вне виртуального экрана, окно создавалось за экраном (видно лишь в панели задач). M-MAIN теперь клампит через SM_*VIRTUALSCREEN.
+//   v1.8.0 - fix(grace-fix): вес шрифта (font_weight, 3-е поле font=); set_font(face,size,weight). Без веса панель была всегда 600 (жирная) и диалог не предзаполнял стиль.
 //   v1.7.0 - Phase-10 Step 1: AppDef + proc_alts/class; NameMode::Whole; default_apps += терминалы (Windows Terminal, cmd, PowerShell, Git Bash) и Проводник.
 //   v1.6.0 - Phase-9 Step 1: шрифт панели (font_face/font_size, ключ font=, деф. Iosevka Fixed/16); set_font; round-trip.
 //   v1.5.0 - Phase-8 Step 1: ручной порядок секций (os=) и окон в секции (o=); parse_ini -> struct ParsedIni.
@@ -115,6 +117,43 @@ pub fn auto_color(name: &str) -> usize {
         .bytes()
         .fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
     (h % PALETTE.len() as u32) as usize
+}
+
+// Минимальная видимая часть окна (px), при которой панель ещё можно увидеть и схватить.
+const MIN_VISIBLE_W: i32 = 80;
+const MIN_VISIBLE_H: i32 = 24;
+
+// START_CONTRACT: visible_start_pos
+//   PURPOSE: Выбрать стартовую позицию панели с учётом текущей конфигурации мониторов.
+//   INPUTS: { saved: Option<(i32,i32)>, default: (i32,i32), win_w, win_h, virtual screen rect (vx,vy,vw,vh) }
+//   OUTPUTS: { (i32, i32) — saved, если окно достаточно видно на объединённом экране; иначе default }
+//   SIDE_EFFECTS: none (чистая арифметика)
+// END_CONTRACT: visible_start_pos
+/// Если сохранённая позиция оставляет слишком мало видимой площади окна на
+/// объединённом прямоугольнике всех мониторов (virtual screen) — монитор
+/// отключён или переставлен — вернуть `default` (на первичном экране).
+pub fn visible_start_pos(
+    saved: Option<(i32, i32)>,
+    default: (i32, i32),
+    win_w: i32,
+    win_h: i32,
+    vx: i32,
+    vy: i32,
+    vw: i32,
+    vh: i32,
+) -> (i32, i32) {
+    let (x, y) = match saved {
+        Some(p) => p,
+        None => return default,
+    };
+    // пересечение окна с объединённым прямоугольником всех мониторов
+    let vis_w = (x + win_w).min(vx + vw) - x.max(vx);
+    let vis_h = (y + win_h).min(vy + vh) - y.max(vy);
+    if vis_w >= MIN_VISIBLE_W && vis_h >= MIN_VISIBLE_H {
+        (x, y)
+    } else {
+        default
+    }
 }
 
 // START_CONTRACT: default_apps
@@ -561,6 +600,45 @@ mod tests {
         assert_eq!(p2.font_face, "Iosevka Fixed");
         assert_eq!(p2.font_size, 16);
         assert_eq!(p2.font_weight, DEFAULT_FONT_WEIGHT);
+    }
+
+    #[test]
+    fn offscreen_pos_falls_back_to_default() {
+        // regression: после смены конфигурации мониторов сохранённая позиция оказывается
+        // вне видимой области -> окно создаётся за экраном (видно в панели задач, не на экране).
+        let default = (1600, 40);
+        let (w, h) = (300, 600);
+        // один монитор 1920x1080 в начале координат
+        let (vx, vy, vw, vh) = (0, 0, 1920, 1080);
+
+        // позиция на отключённом втором мониторе справа -> сброс на дефолт
+        assert_eq!(
+            visible_start_pos(Some((3000, 100)), default, w, h, vx, vy, vw, vh),
+            default,
+            "позиция правее всех экранов должна сброситься на дефолт"
+        );
+        // позиция слева за пределами всех экранов -> дефолт
+        assert_eq!(
+            visible_start_pos(Some((-2000, 100)), default, w, h, vx, vy, vw, vh),
+            default
+        );
+        // позиция ниже всех экранов -> дефолт
+        assert_eq!(
+            visible_start_pos(Some((100, 5000)), default, w, h, vx, vy, vw, vh),
+            default
+        );
+        // валидная видимая позиция сохраняется как есть
+        assert_eq!(
+            visible_start_pos(Some((100, 100)), default, w, h, vx, vy, vw, vh),
+            (100, 100)
+        );
+        // частично за краем, но видимой полосы хватает (>= MIN_VISIBLE) -> сохраняется
+        assert_eq!(
+            visible_start_pos(Some((1800, 100)), default, w, h, vx, vy, vw, vh),
+            (1800, 100)
+        );
+        // None -> дефолт
+        assert_eq!(visible_start_pos(None, default, w, h, vx, vy, vw, vh), default);
     }
 
     #[test]
