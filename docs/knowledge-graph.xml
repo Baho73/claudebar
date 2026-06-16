@@ -1,5 +1,5 @@
 <KnowledgeGraph>
-  <Project NAME="ClaudeBar" VERSION="0.4.0">
+  <Project NAME="ClaudeBar" VERSION="0.4.1">
     <keywords>claudebar, переключатель окон, Win32, EnumWindows, SetForegroundWindow, секции по приложению, недавние документы, Windows Recent, ShellExecute, Rust, настройки шрифта, ChooseFontW, терминалы, cmd, PowerShell, Git Bash, Windows Terminal, Проводник, CabinetWClass, ConsoleWindowClass</keywords>
     <annotation>Всегда-поверх Windows-панель (Rust + Win32) для переключения между окнами редакторов/приложений, с группировкой по приложению, цветными метками по проекту и блоком недавних документов. v0.4: настройка шрифта панели (нативный ChooseFontW, персист в ini); поддержка терминалов — Windows Terminal, Командная строка (cmd), PowerShell, Git Bash — и окон Проводника (распознавание по процессу И классу окна; cmd/PowerShell в классической консоли различаются по дереву процессов через conhost).</annotation>
 

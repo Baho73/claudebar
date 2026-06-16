@@ -1,4 +1,4 @@
-<RequirementsAnalysis VERSION="0.4.0">
+<RequirementsAnalysis VERSION="0.4.1">
   <Project>
     <name>ClaudeBar</name>
     <annotation>Всегда-поверх нативная Windows-панель (Rust + Win32) со списком открытых окон редакторов и приложений (VS Code, Cursor, Word, Excel, MS Project), сгруппированных в сворачиваемые секции по приложению. Клик переключает на окно; можно задавать цвет и метку по проекту; под каждой секцией показываются недавние/закрытые документы (из Windows Recent) для повторного открытия одним кликом.</annotation>
