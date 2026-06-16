@@ -84,6 +84,7 @@
         <export-order PURPOSE="Ручной порядок секций (ключ os=) и окон в секции (ключ o=): чтение, применение, перемещение — v0.3 Phase-8" />
         <export-font PURPOSE="font_face/font_size + set_font; персист ключом font=face⇥size (деф. Iosevka Fixed, 16) — v0.4 Phase-9" />
         <export-apps PURPOSE="default_apps: AppDef с proc_alts/class и NameMode::Whole для терминалов и Проводника — v0.4 Phase-10" />
+        <export-visible_start_pos PURPOSE="Чистое: стартовая позиция окна с учётом мониторов — saved, если видно на виртуальном экране, иначе default (grace-fix «окно за экраном» после смены мониторов) — v0.4.1" />
       </interface>
       <depends>none</depends>
       <target><source>src/config.rs</source><tests>src/config.rs (#[cfg(test)])</tests></target>
@@ -170,13 +171,15 @@
 
     <M-SETTINGS NAME="Settings" TYPE="UTILITY" LAYER="2" ORDER="4" STATUS="implemented">
       <contract>
-        <purpose>Настройки панели: нативный выбор шрифта (ChooseFontW), предзаполненный текущей гарнитурой/размером; возврат (face, size) или None при отмене. Заготовка под будущие настройки.</purpose>
-        <inputs><param name="parent" type="HWND" /><param name="cur_face" type="&amp;str" /><param name="cur_size" type="i32" /></inputs>
-        <outputs><param name="Option&lt;(String,i32)&gt;" type="face+size или None" /></outputs>
+        <purpose>Настройки и сведения панели: нативный выбор шрифта (ChooseFontW), предзаполненный текущей гарнитурой/кеглем/начертанием; возврат (face, size, weight) или None при отмене. Окно «О программе» (версия + Telegram/GitHub автора). Заготовка под будущие настройки.</purpose>
+        <inputs><param name="parent" type="HWND" /><param name="cur_face" type="&amp;str" /><param name="cur_size" type="i32" /><param name="cur_weight" type="i32" /></inputs>
+        <outputs><param name="Option&lt;(String,i32,i32)&gt;" type="face+size+weight или None" /></outputs>
       </contract>
       <interface>
-        <export-choose_font PURPOSE="Модальный ChooseFontW; -&gt; Option(face, size)" />
+        <export-choose_font PURPOSE="Модальный ChooseFontW; -&gt; Option(face, size, weight)" />
         <export-parse_face PURPOSE="Чистое: lfFaceName (UTF-16 null-terminated) -&gt; String (тестируемо)" />
+        <export-about_text PURPOSE="Чистое: текст окна «О программе» из версии + Telegram/GitHub (тестируемо) — v0.4.1" />
+        <export-show_about PURPOSE="Модальный MessageBox «О программе»: версия (CARGO_PKG_VERSION), Telegram, GitHub — v0.4.1" />
       </interface>
       <depends>none</depends>
       <target><source>src/settings.rs</source><tests>src/settings.rs (#[cfg(test)] на parse_face)</tests></target>
@@ -402,6 +405,18 @@
         <on-fail>grace-fix; откат коммитом</on-fail>
       </checkpoint>
     </Phase-10>
+
+    <Phase-11 name="Сведения: О программе" status="done">
+      <goal>Пункт «О программе» в меню ⚙ с версией и контактами автора (Telegram, GitHub) — v0.4.1</goal>
+      <step-1 module="M-SETTINGS" status="done" verification="V-M-SETTINGS">about_text (чистое: текст из CARGO_PKG_VERSION + TELEGRAM @IvanPonomarev + GITHUB_URL); show_about (модальный MessageBoxW)</step-1>
+      <step-2 module="M-MAIN" status="done" verification="V-M-MAIN">ID_ABOUT; в show_settings_menu пункт «О программе…» (разделитель + строка); handle_command: ID_ABOUT -&gt; settings::show_about</step-2>
+      <checkpoint>
+        <tests>cargo test (about_text содержит версию, Telegram, GitHub); cargo build --release</tests>
+        <smoke>«⚙» -&gt; «О программе…» показывает окно с версией v0.4.1, Telegram и GitHub; ОК закрывает</smoke>
+        <artifacts>graph/plan/verification синхронны; grace lint = 0</artifacts>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-11>
   </ImplementationOrder>
 
   <ExecutionPolicy>
