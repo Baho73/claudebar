@@ -32,6 +32,7 @@ const ID_COLOR_BASE: usize = 1; // 1..=8
 const ID_LABEL: usize = 20;
 const ID_LABEL_CLEAR: usize = 21;
 const ID_SET_FONT: usize = 30; // меню настроек: выбрать шрифт
+const ID_ABOUT: usize = 31; // меню настроек: о программе
 
 // ---------- состояние ----------
 pub(crate) struct App {
@@ -541,10 +542,12 @@ unsafe fn show_menu(hwnd: HWND) {
     let _ = DestroyMenu(menu);
 }
 
-// Меню настроек панели (вызывается кликом «⚙» в шапке). Пока — только выбор шрифта.
+// Меню настроек панели (вызывается кликом «⚙» в шапке): выбор шрифта и «О программе».
 unsafe fn show_settings_menu(hwnd: HWND) {
     let menu = CreatePopupMenu().unwrap_or_default();
     let _ = AppendMenuW(menu, MF_STRING, ID_SET_FONT, w!("Шрифт…"));
+    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+    let _ = AppendMenuW(menu, MF_STRING, ID_ABOUT, w!("О программе…"));
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
     let _ = SetForegroundWindow(hwnd);
@@ -571,6 +574,11 @@ fn handle_command(hwnd: HWND, id: usize) {
                 }
             }
         }
+        return;
+    }
+    // настройки: окно «О программе» (версия + контакты автора)
+    if id == ID_ABOUT {
+        settings::show_about(hwnd);
         return;
     }
     // имя проекта по menu_target

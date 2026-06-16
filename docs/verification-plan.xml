@@ -149,16 +149,18 @@
       </scenarios>
     </V-M-ICON>
     <V-M-SETTINGS MODULE="M-SETTINGS" PRIORITY="medium">
-      <test-files><file>src/settings.rs (#[cfg(test)] на parse_face)</file></test-files>
+      <test-files><file>src/settings.rs (#[cfg(test)] на parse_face, about_text)</file></test-files>
       <module-checks>
         <check-1>cargo test settings</check-1>
         <check-2>Ручной smoke: «⚙» открывает ChooseFontW; выбор шрифта применяется к панели</check-2>
+        <check-3>Ручной smoke: «⚙» -> «О программе…» показывает версию, Telegram и GitHub</check-3>
       </module-checks>
       <scenarios>
         <scenario-1 kind="success">parse_face(UTF-16 буфер lfFaceName с хвостовыми нулями) -> корректная String без \0</scenario-1>
         <scenario-2 kind="success">choose_font на OK возвращает Some((face, size)) выбранного шрифта (ручной smoke)</scenario-2>
         <scenario-3 kind="failure">Отмена диалога -> None; конфиг не меняется</scenario-3>
         <scenario-4 kind="regression">Диалог не предзаполнял текущий шрифт (пустой/жирный по умолчанию): lf.lfWeight хардкодился 400, флаги избыточны. Фикс: choose_font(parent,face,size,weight) предзаполняет lf.lfWeight текущим и возвращает (face,size,weight); флаги CF_SCREENFONTS|CF_INITTOLOGFONTSTRUCT (ручной smoke)</scenario-4>
+        <scenario-5 kind="success">v0.4.1 Phase-11: about_text(version) содержит «ClaudeBar v{version}», TELEGRAM (@IvanPonomarev) и GITHUB_URL (тест about_text_has_version_and_contacts); show_about открывает MessageBox из меню «⚙» -> «О программе…» (ручной smoke)</scenario-5>
       </scenarios>
     </V-M-SETTINGS>
     <V-M-MAIN MODULE="M-MAIN" PRIORITY="medium">

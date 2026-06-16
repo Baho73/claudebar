@@ -127,13 +127,15 @@
     </M-ICON>
 
     <M-SETTINGS NAME="Settings" TYPE="UTILITY" STATUS="implemented">
-      <purpose>Окно настроек панели: нативный выбор шрифта (ChooseFontW) предзаполненный текущей гарнитурой/размером; возвращает (face, size) или None при отмене. Хранение значений — в M-CONFIG; меню вызова — в M-MAIN. Заготовка под будущие настройки (цвета, размер строки, угол).</purpose>
+      <purpose>Окно настроек и сведений панели: нативный выбор шрифта (ChooseFontW) предзаполненный текущей гарнитурой/размером (возвращает (face, size, weight) или None); окно «О программе» (версия + Telegram/GitHub автора). Хранение значений — в M-CONFIG; меню вызова — в M-MAIN. Заготовка под будущие настройки (цвета, размер строки, угол).</purpose>
       <path>src/settings.rs</path>
       <depends>none</depends>
       <verification-ref>V-M-SETTINGS</verification-ref>
       <annotations>
         <fn-choose_font PURPOSE="ChooseFontW: модальный диалог выбора шрифта, предзаполнен текущим face/size; -> Option&lt;(String, i32)&gt;" />
         <fn-parse_face PURPOSE="Чистое: lfFaceName (UTF-16, null-terminated) -> String (тестируемо)" />
+        <fn-about_text PURPOSE="Чистое: текст окна «О программе» из версии + TELEGRAM/GITHUB_URL (тестируемо) — v0.4.1" />
+        <fn-show_about PURPOSE="Модальный MessageBox «О программе»: версия (CARGO_PKG_VERSION), Telegram, GitHub — v0.4.1" />
       </annotations>
     </M-SETTINGS>
 
@@ -150,6 +152,6 @@
     <CrossLink from="M-SIGNAL" to="M-WINENUM" relation="сопоставляет сигналы с открытыми окнами по имени проекта" />
     <CrossLink from="M-RENDER" to="M-WINENUM" relation="строит строки и порядок из WinItem" />
     <CrossLink from="M-RECENT" to="M-CONFIG" relation="использует AppDef (расширения, editor_storage) для классификации недавних" />
-    <CrossLink from="M-MAIN" to="M-SETTINGS" relation="открывает диалог настроек (выбор шрифта) из меню «⚙»; результат сохраняет через M-CONFIG.set_font" />
+    <CrossLink from="M-MAIN" to="M-SETTINGS" relation="из меню «⚙» открывает выбор шрифта (результат сохраняет через M-CONFIG.set_font) и окно «О программе» (settings::show_about)" />
   </Project>
 </KnowledgeGraph>
