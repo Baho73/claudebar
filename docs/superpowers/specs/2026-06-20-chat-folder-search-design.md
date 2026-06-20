@@ -55,7 +55,7 @@ ClaudeBar (Rust) ───────────────▶ clfind (Python
 ### 4.4 Модель эмбеддингов
 - **Qwen3-Embedding-4B** (по умолчанию), `model` — строка в конфиге (sentence-transformers/transformers грузит по имени; переключение на bge-m3 / Qwen3-0.6B бесплатно).
 - Query/document instruction-prefix по требованиям Qwen3; L2-нормализация.
-- **Резидентность (GPU-вежливость):** модель живёт в **CPU RAM**; на GPU поднимается только на время запроса/батча индексации, после простоя (idle-timeout) выгружается обратно. Так одна 3060 не занята под модель 24/7. Первый запрос после простоя +1–2с (перенос на GPU).
+- **Резидентность и устройства:** **GPU трогает только часовой индексатор** (батч-эмбеддинг новых чанков). **Запросы считаются на CPU** — forward pass для 1–2 слов ~1с, GPU не нужен. Модель резидентна в **RAM** (демон грузит один раз, ~8–16ГБ из 64ГБ), чтобы CPU-запрос не ждал загрузки 8ГБ с диска. Та же модель обязательна и для индекса, и для запроса (иначе векторы несравнимы). Опц. **idle-eviction**: выгрузить из RAM после N минут простоя (`idle_evict_sec`, дефолт щедрый; включать при дефиците RAM) — следующий холодный запрос или часовой прогон перезагрузит (~10–30с).
 
 ### 4.5 Индексация (инкрементальная, GPU-вежливая)
 - CLI: `clfind index [--scope chats|all] [--reindex]`.
@@ -73,7 +73,7 @@ ClaudeBar (Rust) ───────────────▶ clfind (Python
   5. Ответ: `{results:[{folder, score, best:{source,path,location}}]}`. `snippet` движок знает, но в ответ для UI не кладём (нужен только для будущего jump).
 
 ### 4.7 Конфиг clfind (TOML)
-`model`, `port`, `roots[]` (для file-scope), `device=cuda`, `batch_size`, `idle_offload_sec`, `index_interval=3600`, `gpu_free_vram_min`.
+`model`, `port`, `roots[]` (для file-scope), `index_device=cuda`, `query_device=cpu`, `batch_size`, `idle_evict_sec`, `index_interval=3600`, `gpu_free_vram_min`.
 
 ## 5. Компонент 2: ClaudeBar (Rust) — модуль M-SEARCH
 
@@ -111,7 +111,7 @@ ClaudeBar (Rust) ───────────────▶ clfind (Python
 - Эмбеддинги: локально на CUDA; модель Qwen3-Embedding-4B (конфиг-переключатель).
 - Поиск: гибрид BM25 (FTS5) + dense (FAISS), слияние RRF.
 - Связь ClaudeBar↔движок: HTTP localhost.
-- Резидентность модели: в RAM, на GPU по требованию (GPU-вежливость).
+- Резидентность: GPU только под часовой индексатор; запросы на CPU; модель в RAM (опц. idle-eviction при дефиците RAM).
 - Единица результата: папка проекта; подсветка, не выдача текста; закрытые — показать и дать открыть.
 - Охват файлов: корни проектов + код/текст + docx/xlsx/pdf (без .mpp).
 - GPU: 2× RTX 3060 12 ГБ.
