@@ -139,6 +139,35 @@
       </annotations>
     </M-SETTINGS>
 
+    <M-SEARCH NAME="Search" TYPE="CORE_LOGIC" STATUS="planned">
+      <purpose>Поиск по чатам с подсветкой папок: нативный BM25 (rusqlite поверх общего clfind.db FTS5, WAL ro) с 3-го символа; если BM25 пусто — fallback на dense через M-SDAEMON. Агрегация чанков по project_folder, цвет: жёлтый=BM25, синий=dense. Phase-12.</purpose>
+      <path>src/search.rs</path>
+      <depends>M-CONFIG, M-SDAEMON</depends>
+      <verification-ref>V-M-SEARCH</verification-ref>
+      <annotations>
+        <fn-fts_query PURPOSE="Чистое: ввод -> FTS5 MATCH (токены \w+, последний как префикс term*); защита от инъекции" />
+        <fn-bm25_search PURPOSE="rusqlite: открыть clfind.db (WAL, read-only), FTS5 MATCH -> чанки (folder, score)" />
+        <fn-aggregate_to_folders PURPOSE="Чистое: чанки -> папки с флагами bm25/dense и лучшим чанком (тестируемо)" />
+        <fn-parse_dense_response PURPOSE="Чистое: JSON ответа демона -> папки с dense-скором (ручной разбор)" />
+        <fn-color_of PURPOSE="Чистое: флаги bm25/dense -> цвет подсветки (жёлтый/синий)" />
+        <fn-search PURPOSE="Оркестрация: live BM25; при пустом результате -> dense-fallback через M-SDAEMON" />
+        <type-FolderHit PURPOSE="Папка-совпадение: folder, bm25, dense, best, цвет" />
+      </annotations>
+    </M-SEARCH>
+
+    <M-SDAEMON NAME="SearchDaemon" TYPE="INTEGRATION" STATUS="planned">
+      <purpose>Клиент Python-демона clfind (только dense): спавн `clfind serve` при молчащем /health (команда из M-CONFIG.search_daemon_cmd, pythonw без консоли), поллинг /health до ready, dense-запрос HTTP POST /search через std::net (без HTTP-крейта). Phase-12.</purpose>
+      <path>src/sdaemon.rs</path>
+      <depends>M-CONFIG</depends>
+      <verification-ref>V-M-SDAEMON</verification-ref>
+      <annotations>
+        <fn-ensure_running PURPOSE="Спавн демона, если /health молчит; поллинг до ready или таймаут" />
+        <fn-dense_search PURPOSE="HTTP POST /search {mode:dense} по localhost (std::net::TcpStream) -> сырой JSON" />
+        <fn-parse_health PURPOSE="Чистое: тело /health -> статус (cold|loading|ready)" />
+        <fn-build_dense_request PURPOSE="Чистое: запрос -> HTTP-текст POST /search (тестируемо)" />
+      </annotations>
+    </M-SDAEMON>
+
     <CrossLink from="M-MAIN" to="M-WINENUM" relation="опрашивает окна по таймеру" />
     <CrossLink from="M-MAIN" to="M-RENDER" relation="делегирует отрисовку и обработку кликов" />
     <CrossLink from="M-MAIN" to="M-CONFIG" relation="загружает/сохраняет конфигурацию" />
@@ -153,5 +182,10 @@
     <CrossLink from="M-RENDER" to="M-WINENUM" relation="строит строки и порядок из WinItem" />
     <CrossLink from="M-RECENT" to="M-CONFIG" relation="использует AppDef (расширения, editor_storage) для классификации недавних" />
     <CrossLink from="M-MAIN" to="M-SETTINGS" relation="из меню «⚙» открывает выбор шрифта (результат сохраняет через M-CONFIG.set_font) и окно «О программе» (settings::show_about)" />
+    <CrossLink from="M-SEARCH" to="M-CONFIG" relation="берёт путь clfind.db и search_daemon_cmd/порт" />
+    <CrossLink from="M-SEARCH" to="M-SDAEMON" relation="при пустом BM25 запрашивает dense-поиск" />
+    <CrossLink from="M-SDAEMON" to="M-CONFIG" relation="берёт команду запуска демона и порт" />
+    <CrossLink from="M-MAIN" to="M-SEARCH" relation="окошко поиска в шапке: ввод/Enter/Esc запускают поиск, debounce live BM25" />
+    <CrossLink from="M-RENDER" to="M-SEARCH" relation="читает результаты поиска для подсветки папок (жёлтый/синий) и блока «Найдено ещё»" />
   </Project>
 </KnowledgeGraph>

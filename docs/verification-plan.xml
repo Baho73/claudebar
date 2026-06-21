@@ -174,6 +174,33 @@
         <scenario-3 kind="success">v0.4: шрифт читается из конфига (make_font(face,…)); клик «⚙» открывает меню «Шрифт…»; после choose_font — rebuild_fonts удаляет старые HFONT и перерисовывает без утечки/краха</scenario-3>
       </scenarios>
     </V-M-MAIN>
+    <V-M-SEARCH MODULE="M-SEARCH" PRIORITY="high">
+      <test-files><file>src/search.rs (#[cfg(test)])</file></test-files>
+      <module-checks>
+        <check-1>cargo test search</check-1>
+        <check-2>Ручной smoke: поиск «telegram» подсвечивает папки жёлтым; на пустом BM25 поднимается демон и появляются синие</check-2>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">fts_query: «telegr» -> «telegr*»; многословный -> точные + префикс последнего; кириллица сохраняется</scenario-1>
+        <scenario-2 kind="failure">fts_query санитизирует спецсимволы FTS5 (инъекция невозможна): ввод с кавычками/операторами -> только \w+ токены</scenario-2>
+        <scenario-3 kind="success">bm25_search против временной clfind.db (создать FTS5 в тесте через rusqlite, вставить чанки) -> верные папки по префиксу</scenario-3>
+        <scenario-4 kind="success">aggregate_to_folders: чанки нескольких папок -> дедуп по папке, флаги bm25/dense, лучший чанк; color_of(bm25-only)=жёлтый, (dense-only)=синий</scenario-4>
+        <scenario-5 kind="success">parse_dense_response: JSON демона -> папки с dense-скором (ручной разбор, как recent.rs)</scenario-5>
+        <scenario-6 kind="success">Оркестрация: непустой BM25 -> demon НЕ поднимается; пустой BM25 -> вызов M-SDAEMON (smoke)</scenario-6>
+      </scenarios>
+    </V-M-SEARCH>
+    <V-M-SDAEMON MODULE="M-SDAEMON" PRIORITY="medium">
+      <test-files><file>src/sdaemon.rs (#[cfg(test)])</file></test-files>
+      <module-checks>
+        <check-1>cargo test sdaemon</check-1>
+        <check-2>Ручной smoke: при молчащем /health спавнит clfind serve, дожидается ready, dense-запрос возвращает папки</check-2>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">parse_health: тело -> cold|loading|ready; мусор -> безопасный дефолт</scenario-1>
+        <scenario-2 kind="success">build_dense_request: запрос -> корректный HTTP POST /search (заголовки, тело JSON mode=dense)</scenario-2>
+        <scenario-3 kind="failure">Демон недоступен/таймаут -> dense пропускается без краха панели (только BM25)</scenario-3>
+      </scenarios>
+    </V-M-SDAEMON>
   </ModuleVerification>
 
   <PhaseGates>
@@ -257,6 +284,16 @@
         <evidence-2>Smoke: открытая папка и терминалы видны секциями с иконками; cmd и PowerShell разделены; панель задач/рабочий стол НЕ появляются</evidence-2>
       </required-evidence>
     </Gate-Phase-10>
+    <Gate-Phase-12 PHASE="Phase-12">
+      <goal>Поиск по чатам: живой нативный BM25 подсвечивает папки; при пустом результате поднимается демон и даёт dense (синие)</goal>
+      <commands><command-1>cargo test</command-1><command-2>cargo build --release</command-2></commands>
+      <required-evidence>
+        <evidence-1>Юнит-тесты M-SEARCH (fts_query/санитизация, bm25 на temp clfind.db, aggregate_to_folders/color, parse_dense_response) и M-SDAEMON (parse_health, build_dense_request) проходят</evidence-1>
+        <evidence-2>Smoke: набор «telegram» с 3-й буквы подсвечивает папки жёлтым вживую; на заведомо пустом запросе ClaudeBar спавнит clfind serve, дожидается ready и подсвечивает синим; Esc сбрасывает</evidence-2>
+        <evidence-3>cargo build --release с rusqlite (bundled FTS5) проходит под GNU-тулчейном; exe запускается</evidence-3>
+        <evidence-4>graph/plan/verification синхронны; grace lint = 0</evidence-4>
+      </required-evidence>
+    </Gate-Phase-12>
   </PhaseGates>
 
   <FailurePackets>

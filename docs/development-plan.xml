@@ -15,6 +15,10 @@
     <risk-9>Классическая консоль: окном (ConsoleWindowClass) владеет conhost.exe, cmd от PowerShell по процессу окна не отличить. Разрешаем реального клиента по дереву процессов (snapshot pid-&gt;parent/child). Если клиент недоступен — окно не показывается (документируется), без краха.</risk-9>
     <risk-10>explorer.exe владеет и панелью задач/рабочим столом/иконками — без фильтра по классу в список лезет мусор. Окна папок строго фильтруются по классу CabinetWClass (проверено эмпирически на этой машине).</risk-10>
     <risk-11>ChooseFontW — модальный common dialog; кратко блокирует поток панели (опрос на паузе), это приемлемо. Отмена диалога не меняет конфиг.</risk-11>
+    <risk-12 phase="Phase-12">rusqlite `bundled` компилирует C-амальгаму SQLite (с FTS5) — под GNU-тулчейном (windows-gnu) нужен mingw-gcc. Сборку проверяем первым делом (step-3); фолбэк — системный sqlite3 или линковка. Первая не-windows зависимость, exe ~350КБ -&gt; ~2-3МБ.</risk-12>
+    <risk-13 phase="Phase-12">Связка схемы: ClaudeBar читает схему clfind.db (chunks + chunks_fts). Изменение схемы в clfind ломает чтение — общая схема фиксируется как контракт в обоих репо.</risk-13>
+    <risk-14 phase="Phase-12">FTS5-инъекция: строка MATCH строится из пользовательского ввода. fts_query пропускает только токены \w+ (последний + префикс *), спецсимволы/операторы FTS5 не попадают.</risk-14>
+    <risk-15 phase="Phase-12">Конкурентный доступ: индексатор (Python) пишет clfind.db, ClaudeBar читает. Митигация — WAL + открытие read-only; чтение устаревших данных между инкрементами допустимо.</risk-15>
   </ArchitectureNotes>
 
   <DependencyRationale>
@@ -28,6 +32,15 @@
     </dep-windows>
     <new-features-this-stage>Этап A+B+C новых крейтов НЕ добавляет. Для M-RECENT добавляются только features к уже используемому windows 0.58: Win32_UI_Shell (IShellLinkW, ShellExecuteW), Win32_System_Com (CoCreateInstance). COM-инициализация (CoInitializeEx) — в M-MAIN при старте.</new-features-this-stage>
     <new-features-v03>Этап v0.3 новых внешних крейтов НЕ добавляет. Используются функции уже подключённого windows 0.58: DrawIconEx (Win32_UI_WindowsAndMessaging), PostMessageW(WM_CLOSE), SetCapture/ReleaseCapture (Win32_UI_Input_KeyboardAndMouse). M-ICON: иконка exe через SHGetFileInfo (Win32_UI_Shell) — добавлена feature Win32_Storage_FileSystem (тип FILE_FLAGS_AND_ATTRIBUTES в сигнатуре SHGetFileInfoW). M-SIGNAL — чистый std::fs (чтение/удаление файлов в %APPDATA%\claudebar\signals\), без новых Win32-вызовов. Внешний крейт для парсинга JSON не добавляется: формат сигнал-файла простой (строка cwd + время), парсится вручную.</new-features-v03>
+    <dep-rusqlite crate="rusqlite" version="0.32+" features="bundled" phase="Phase-12">
+      <duplicate>Нет: ClaudeBar не умеет SQLite/FTS5; индекс строит clfind, ClaudeBar должен его читать для нативного BM25 (grace module find — совпадений нет)</duplicate>
+      <size>bundled = амальгама SQLite в exe (~1.5-2 МБ); используется только в M-SEARCH</size>
+      <maintenance>rusqlite активно поддерживается (rusqlite/rusqlite), регулярные релизы; SQLite зрелый</maintenance>
+      <license>rusqlite MIT; SQLite public domain — совместимо с MIT проекта</license>
+      <security>Открываем clfind.db read-only; SQL-инъекция закрыта санитизацией MATCH (только \w+); известных критичных CVE для локального ro-чтения нет</security>
+      <blast-radius>Импортируется только в M-SEARCH — изолировано</blast-radius>
+      <note>HTTP-клиент демона (M-SDAEMON) НОВОГО крейта не требует: localhost POST через std::net::TcpStream вручную; JSON ответа парсится вручную (как M-RECENT workspace.json)</note>
+    </dep-rusqlite>
     <new-features-v04>Этап v0.4 новых внешних крейтов НЕ добавляет. Новые features уже подключённого windows 0.58: Win32_UI_Controls_Dialogs (ChooseFontW для M-SETTINGS) и Win32_System_Diagnostics_ToolHelp (CreateToolhelp32Snapshot / PROCESSENTRY32W / Process32FirstW/NextW для разрешения shell-клиента консоли в M-WINENUM). GetClassNameW — уже в Win32_UI_WindowsAndMessaging. Хранение шрифта — std::fs (ключ font= в ini), без новых вызовов. duplicate-check: snapshot процессов делается раз на опрос (не на окно), дешево; ChooseFontW — стандартный нативный диалог, лицензия/размер/CVE без изменений.</new-features-v04>
   </DependencyRationale>
 
@@ -213,6 +226,43 @@
       <target><source>src/main.rs</source><tests>smoke-запуск exe</tests></target>
       <verification-ref>V-M-MAIN</verification-ref>
     </M-MAIN>
+
+    <M-SEARCH NAME="Search" TYPE="CORE_LOGIC" LAYER="2" ORDER="5" STATUS="planned">
+      <contract>
+        <purpose>Поиск по чатам с подсветкой папок. Живой BM25 нативно (rusqlite поверх общего clfind.db FTS5, WAL read-only) с 3-го символа; при пустом BM25 — fallback на dense через M-SDAEMON. Агрегация чанков по project_folder, цвет: жёлтый=BM25, синий=dense (зелёного нет). Phase-12.</purpose>
+        <inputs><param name="query" type="&amp;str" /><param name="db_path" type="&amp;Path" /></inputs>
+        <outputs><param name="Vec&lt;FolderHit&gt;" type="folder+bm25/dense+color+best" /></outputs>
+        <errors><error code="DB_OPEN_FALLBACK_EMPTY" /><error code="DAEMON_UNAVAILABLE_BM25_ONLY" /></errors>
+      </contract>
+      <interface>
+        <export-fts_query PURPOSE="Чистое: ввод -&gt; FTS5 MATCH (токены \w+, последний как префикс term*); защита от инъекции" />
+        <export-bm25_search PURPOSE="rusqlite: clfind.db (WAL, ro) FTS5 MATCH -&gt; чанки (folder, score)" />
+        <export-aggregate_to_folders PURPOSE="Чистое: чанки -&gt; папки с флагами bm25/dense, цветом и лучшим чанком" />
+        <export-parse_dense_response PURPOSE="Чистое: JSON демона -&gt; папки с dense-скором (ручной разбор)" />
+        <export-search PURPOSE="Оркестрация: live BM25; пусто -&gt; dense-fallback через M-SDAEMON" />
+      </interface>
+      <depends>M-CONFIG, M-SDAEMON</depends>
+      <target><source>src/search.rs</source><tests>src/search.rs (#[cfg(test)] на fts_query/aggregate/parse + bm25 на temp clfind.db)</tests></target>
+      <verification-ref>V-M-SEARCH</verification-ref>
+    </M-SEARCH>
+
+    <M-SDAEMON NAME="SearchDaemon" TYPE="INTEGRATION" LAYER="2" ORDER="6" STATUS="planned">
+      <contract>
+        <purpose>Клиент Python-демона clfind (только dense): спавн `clfind serve` при молчащем /health (команда из M-CONFIG.search_daemon_cmd, pythonw без консоли), поллинг /health до ready, dense-запрос HTTP POST /search через std::net (без HTTP-крейта). Phase-12.</purpose>
+        <inputs><param name="cmd" type="&amp;str" /><param name="port" type="u16" /><param name="query" type="&amp;str" /></inputs>
+        <outputs><param name="String" type="сырой JSON ответа dense" /></outputs>
+        <errors><error code="SPAWN_FAILED" /><error code="HEALTH_TIMEOUT" /></errors>
+      </contract>
+      <interface>
+        <export-ensure_running PURPOSE="Спавн демона при молчащем /health; поллинг до ready или таймаут" />
+        <export-dense_search PURPOSE="HTTP POST /search {mode:dense} по localhost (std::net) -&gt; сырой JSON" />
+        <export-parse_health PURPOSE="Чистое: тело /health -&gt; статус (cold|loading|ready)" />
+        <export-build_dense_request PURPOSE="Чистое: запрос -&gt; HTTP-текст POST /search (тестируемо)" />
+      </interface>
+      <depends>M-CONFIG</depends>
+      <target><source>src/sdaemon.rs</source><tests>src/sdaemon.rs (#[cfg(test)] на parse_health/build_dense_request)</tests></target>
+      <verification-ref>V-M-SDAEMON</verification-ref>
+    </M-SDAEMON>
   </Modules>
 
   <DataFlow>
@@ -274,6 +324,18 @@
       <step-3>build_rows группирует в секции Windows Terminal / Командная строка / PowerShell / Git Bash / Проводник; имя = весь заголовок (Whole)</step-3>
       <evidence>Папки Проводника и терминалы видны секциями; cmd и PowerShell разделены; панель задач/рабочий стол (explorer.exe без CabinetWClass) отфильтрованы</evidence>
     </DF-APPS>
+    <DF-SEARCH-BM25 NAME="Живой поиск по словам" TRIGGER="Ввод в окошке поиска (≥3 символов, debounce ~120мс)">
+      <step-1>M-MAIN отдаёт строку запроса в M-SEARCH (debounce, отмена предыдущего)</step-1>
+      <step-2>M-SEARCH.fts_query строит MATCH (последний токен -&gt; префикс); bm25_search через rusqlite по clfind.db (FTS5, WAL ro)</step-2>
+      <step-3>aggregate_to_folders -&gt; папки (жёлтый); M-RENDER подсвечивает открытые строки и блок «Найдено ещё» для закрытых</step-3>
+      <evidence>Папки-совпадения подсвечены жёлтым на лету; Python не запускался</evidence>
+    </DF-SEARCH-BM25>
+    <DF-SEARCH-DENSE NAME="Семантический fallback" TRIGGER="BM25 вернул пусто">
+      <step-1>M-SEARCH видит пустой BM25 -&gt; M-SDAEMON.ensure_running (спавн clfind serve при молчащем /health, поллинг до ready)</step-1>
+      <step-2>M-SDAEMON.dense_search HTTP POST /search {mode:dense}; parse_dense_response -&gt; папки</step-2>
+      <step-3>M-RENDER подсвечивает найденное синим (открытые строки + «Найдено ещё»)</step-3>
+      <evidence>На «слов не помню» демон поднялся, модель загрузилась, синие папки появились; UI не подвисал</evidence>
+    </DF-SEARCH-DENSE>
   </DataFlow>
 
   <ImplementationOrder>
@@ -417,6 +479,22 @@
         <on-fail>grace-fix; откат коммитом</on-fail>
       </checkpoint>
     </Phase-11>
+
+    <Phase-12 name="Поиск по чатам (M-SEARCH)" status="pending">
+      <goal>Окошко поиска в шапке: живой нативный BM25 (rusqlite по clfind.db) подсвечивает папки жёлтым; при пустом результате поднимается Python-демон и даёт dense (синие). Дизайн: docs/superpowers/specs/2026-06-20-chat-folder-search-design.md (v2).</goal>
+      <step-1 module="M-CONFIG" status="pending" verification="V-M-CONFIG">Конфиг поиска: search_daemon_cmd, путь clfind.db, порт демона (ключи в claudebar.ini)</step-1>
+      <step-2 module="M-SDAEMON" status="pending" verification="V-M-SDAEMON">Клиент демона: ensure_running (спавн+поллинг /health), dense_search (HTTP POST через std::net), чистые parse_health/build_dense_request. Демон недоступен -&gt; BM25-only без краха</step-2>
+      <step-3 module="M-SEARCH" status="pending" verification="V-M-SEARCH">rusqlite BM25 по clfind.db (WAL ro) + чистые fts_query (санитизация)/aggregate_to_folders/color/parse_dense_response + оркестрация (bm25 -&gt; пусто -&gt; dense). NB: первым делом проверить сборку rusqlite bundled под GNU</step-3>
+      <step-4 module="M-RENDER" status="pending" verification="V-M-RENDER">Окошко поиска в шапке (Win32 EDIT); подсветка search-hit полосой (жёлтый/синий); блок «Найдено ещё» для закрытых совпадений</step-4>
+      <step-5 module="M-MAIN" status="pending" verification="V-M-MAIN">🔍/горячая клавиша открывает поле; ввод -&gt; debounce live BM25; Enter; Esc сброс; спавн-на-пустом через M-SDAEMON</step-5>
+      <checkpoint>
+        <tests>cargo test (M-SEARCH: fts_query/санитизация, bm25 на temp clfind.db, aggregate/color, parse_dense_response; M-SDAEMON: parse_health, build_dense_request) зелёные; cargo build --release с rusqlite под GNU</tests>
+        <smoke>Набор «telegram» с 3-й буквы подсвечивает папки жёлтым вживую; на заведомо пустом запросе демон поднимается, появляются синие; Esc сбрасывает; демон выключен -&gt; BM25 работает</smoke>
+        <flows>DF-SEARCH-BM25 и DF-SEARCH-DENSE end-to-end</flows>
+        <artifacts>graph/plan/verification синхронны; grace lint = 0</artifacts>
+        <on-fail>grace-fix; откат коммитом; если rusqlite не собирается под GNU — фолбэк на системный sqlite/линковку (см. risk)</on-fail>
+      </checkpoint>
+    </Phase-12>
   </ImplementationOrder>
 
   <ExecutionPolicy>

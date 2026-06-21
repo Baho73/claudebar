@@ -101,6 +101,15 @@
       <Priority>low</Priority>
       <RelatedFlows>DF-REORDER</RelatedFlows>
     </UC-010>
+    <UC-011>
+      <Actor>User</Actor>
+      <Action>Открывает окошко поиска в шапке (🔍/горячая клавиша) и набирает запрос</Action>
+      <Goal>Найти проект (папку), где он это обсуждал с ИИ — по точным словам или по смыслу</Goal>
+      <Preconditions>Движок clfind построил индекс по транскриптам Claude Code (clfind.db + clfind.faiss)</Preconditions>
+      <AcceptanceCriteria>С 3-го символа живой BM25 (нативно, rusqlite по clfind.db) подсвечивает папки-совпадения жёлтым; если по словам пусто — поднимается Python-демон и подсвечивает найденное по смыслу синим; открытые проекты подсвечиваются на строке, закрытые — в блоке «Найдено ещё» с открытием; Esc сбрасывает</AcceptanceCriteria>
+      <Priority>high</Priority>
+      <RelatedFlows>DF-SEARCH-BM25, DF-SEARCH-DENSE</RelatedFlows>
+    </UC-011>
   </UseCases>
 
   <NonGoals>
