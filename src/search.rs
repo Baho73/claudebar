@@ -1,9 +1,9 @@
 // FILE: src/search.rs
-// VERSION: 1.1.1
+// VERSION: 1.2.0
 // START_MODULE_CONTRACT
-//   PURPOSE: Поиск по чатам с подсветкой папок. Живой BM25 нативно (rusqlite поверх общего clfind.db FTS5, read-only) с агрегацией по project_folder; при пустом BM25 — fallback на dense через M-SDAEMON. Цвет: Bm25 (жёлтый) / Dense (синий).
-//   SCOPE: fts_query/aggregate_to_folders/parse_dense_response (чистые, тестируемые), bm25_search (rusqlite), search (оркестрация bm25 -> пусто -> dense).
-//   DEPENDS: M-SDAEMON (dense-fallback); параметры поиска (db/cmd/port) приходят из M-CONFIG через M-MAIN
+//   PURPOSE: Поиск по чатам: живой BM25 нативно (rusqlite поверх своей claudebar_chats.db FTS5, read-only) с агрегацией по project_folder; цвет Bm25 (жёлтый). snippet_for даёт фразу-сниппет для тултипа. Dense отложен (M-SDAEMON dormant). Phase-13.
+//   SCOPE: fts_query/aggregate_to_folders/parse_dense_response (чистые), bm25_search/snippet_for (rusqlite), search (BM25-only оркестрация).
+//   DEPENDS: none (параметры db/cmd/port приходят из M-CONFIG через M-MAIN; dense-fallback отложен)
 //   LINKS: M-SEARCH
 //   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS
@@ -15,23 +15,22 @@
 //   fts_query            - чистое: ввод -> FTS5 MATCH (\w+ токены, последний как префикс term*); защита от инъекции
 //   bm25_search          - rusqlite: clfind.db (read-only) FTS5 MATCH -> чанки (folder, score)
 //   aggregate_to_folders - чистое: чанки -> папки (дедуп по folder, max score), с заданным цветом
-//   parse_dense_response - чистое: JSON демона -> папки с dense-скором (наивный разбор)
-//   search               - оркестрация: live BM25; пусто -> dense-fallback через M-SDAEMON
+//   parse_dense_response - чистое: JSON демона -> папки с dense-скором (наивный разбор; для отложенного dense)
+//   snippet_for          - rusqlite: фраза-сниппет (FTS5 snippet) лучшего совпадения в папке (тултип)
+//   search               - BM25-only оркестрация (dense отложен)
 //   json_unescape / parse_number_after_colon - приватные помощники разбора
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.1.1 - fix(grace-fix): токен с пунктуацией (IP «187.124.242.233», url, дата) больше не схлопывается в один — words() дробит как unicode61, atom() ищет соседние под-слова фразой. Тест fts_query_operators (IP).
+//   LAST_CHANGE: v1.2.0 - Phase-13 Ф-A step-3: bm25 по своей claudebar_chats.db; +snippet_for (FTS5 snippet для тултипа); search() = BM25-only (dense отложен, M-SDAEMON dormant, импорт sdaemon/Duration убран).
+//   v1.1.1 - fix(grace-fix): токен с пунктуацией (IP «187.124.242.233», url, дата) больше не схлопывается в один — words() дробит как unicode61, atom() ищет соседние под-слова фразой. Тест fts_query_operators (IP).
 //   v1.1.0 - Phase-12: синтаксис запросов (Google-style) в fts_query — пробел=И, a+b=фраза, a++b=NEAR, -w=исключить, OR=или; sanitize_word против инъекции.
 //   v1.0.0 - Phase-12 Step 3: новый модуль поиска. Нативный BM25 (rusqlite по clfind.db) + чистые fts_query/aggregate/parse_dense + оркестрация с dense-fallback (M-SDAEMON).
 // END_CHANGE_SUMMARY
 
 use std::collections::HashMap;
-use std::time::Duration;
 
 use rusqlite::{params, Connection, OpenFlags};
-
-use crate::sdaemon;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Color {
@@ -235,26 +234,30 @@ pub fn parse_dense_response(json: &str) -> Vec<(String, f64)> {
 }
 
 // START_CONTRACT: search
-//   PURPOSE: Поиск: живой BM25; при пустом результате — dense-fallback через демон.
-//   INPUTS: { db: &str - путь clfind.db; cmd: &str - команда демона; port: u16; query: &str }
-//   OUTPUTS: { Vec<FolderHit> - папки (Bm25 или Dense) }
-//   SIDE_EFFECTS: чтение clfind.db; при fallback — спавн/опрос демона (M-SDAEMON)
+//   PURPOSE: BM25-поиск по своей базе (Phase-13). Dense-fallback отложен (M-SDAEMON dormant); cmd/port игнорируются.
+//   INPUTS: { db: &str - путь chats_db; cmd: &str - dormant; port: u16 - dormant; query: &str }
+//   OUTPUTS: { Vec<FolderHit> - папки (Bm25) }
+//   SIDE_EFFECTS: чтение chats_db (FTS5)
 // END_CONTRACT: search
 pub fn search(db: &str, cmd: &str, port: u16, query: &str) -> Vec<FolderHit> {
-    // START_BLOCK_LIVE_BM25
-    let bm = bm25_search(db, query, "chats", 200);
-    if !bm.is_empty() {
-        return aggregate_to_folders(&bm, Color::Bm25);
-    }
-    // END_BLOCK_LIVE_BM25
-    // START_BLOCK_DENSE_FALLBACK
-    if sdaemon::ensure_running(cmd, port, Duration::from_secs(60)) {
-        if let Some(json) = sdaemon::dense_search(port, query, "chats", 50) {
-            return aggregate_to_folders(&parse_dense_response(&json), Color::Dense);
-        }
-    }
-    // END_BLOCK_DENSE_FALLBACK
-    Vec::new()
+    let _ = (cmd, port); // dormant: dense отложен (Phase-13 Ф-A)
+    aggregate_to_folders(&bm25_search(db, query, "chats", 200), Color::Bm25)
+}
+
+// START_CONTRACT: snippet_for
+//   PURPOSE: Фраза-сниппет лучшего BM25-совпадения в папке (для тултипа чат-результата).
+//   INPUTS: { db: &str; query: &str; folder: &str }
+//   OUTPUTS: { Option<String> - excerpt (FTS5 snippet) или None }
+//   SIDE_EFFECTS: чтение db read-only
+// END_CONTRACT: snippet_for
+pub fn snippet_for(db: &str, query: &str, folder: &str) -> Option<String> {
+    let fts = fts_query(query)?;
+    let conn = Connection::open_with_flags(db, OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+    let sql = "SELECT snippet(chunks_fts, -1, '', '', '…', 12) \
+               FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid \
+               WHERE chunks_fts MATCH ?1 AND c.source='chat' AND c.project_folder = ?2 \
+               ORDER BY bm25(chunks_fts) LIMIT 1";
+    conn.query_row(sql, params![fts, folder], |r| r.get::<_, String>(0)).ok()
 }
 
 #[cfg(test)]
@@ -333,6 +336,27 @@ mod tests {
         assert!(!hits.is_empty());
         assert_eq!(hits[0].0, "D:\\Python\\hh");
         assert_eq!(bm25_search(p, "экран", "chats", 10)[0].0, "D:\\Python\\claudebar");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn snippet_for_returns_excerpt() {
+        let path = std::env::temp_dir().join("clbar_snippet_test.db");
+        let _ = std::fs::remove_file(&path);
+        let p = path.to_str().unwrap();
+        {
+            let conn = Connection::open(p).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE chunks(id INTEGER PRIMARY KEY, project_folder TEXT, source TEXT, ref TEXT, location TEXT, text TEXT);
+                 CREATE VIRTUAL TABLE chunks_fts USING fts5(text, content='chunks', content_rowid='id', tokenize='unicode61');
+                 CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN INSERT INTO chunks_fts(rowid,text) VALUES(new.id,new.text); END;",
+            ).unwrap();
+            conn.execute("INSERT INTO chunks(project_folder,source,ref,location,text) VALUES (?1,'chat','s','0',?2)",
+                params!["D:\\Python\\run-pig", "там был подстроечник и конденсатор в схеме"]).unwrap();
+        }
+        let s = snippet_for(p, "подстроечник", "D:\\Python\\run-pig").unwrap();
+        assert!(s.contains("подстроечник"));
+        assert!(snippet_for(p, "подстроечник", "D:\\Python\\other").is_none()); // другая папка
         let _ = std::fs::remove_file(&path);
     }
 }

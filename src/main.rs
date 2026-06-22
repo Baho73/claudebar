@@ -10,6 +10,7 @@ mod icon;
 mod index;
 mod recent;
 mod render;
+#[allow(dead_code)] // dormant: dense отложен (Phase-13); M-SDAEMON оживёт с Python-модулем смысла
 mod sdaemon;
 mod search;
 mod settings;
