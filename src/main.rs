@@ -6,7 +6,6 @@
 mod activate;
 mod config;
 mod icon;
-#[allow(dead_code)] // ensure_index подключает step-4 (M-MAIN: авто-индекс)
 mod index;
 mod recent;
 mod render;
@@ -18,6 +17,7 @@ mod signal;
 mod win_enum;
 
 use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -260,6 +260,11 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     }
                 });
                 let _ = InvalidateRect(hwnd, None, BOOL(0));
+                // фоновая переиндексация раз в ~3 мин
+                let t = INDEX_TICKS.fetch_add(1, Ordering::Relaxed);
+                if t > 0 && t % INDEX_EVERY_TICKS == 0 {
+                    spawn_index(hwnd);
+                }
                 LRESULT(0)
             }
             WM_PAINT => {
@@ -511,18 +516,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 LRESULT(b)
             }
             m if m == WM_APP_SEARCH => {
-                let boxed = lp.0 as *mut Vec<search::FolderHit>;
-                if !boxed.is_null() {
-                    let hits = *Box::from_raw(boxed);
-                    APP.with(|c| {
-                        if let Some(a) = c.borrow_mut().as_mut() {
-                            a.search_hits = hits;
-                            rebuild_rows(a);
-                            render::resize(hwnd, a);
-                        }
-                    });
-                    let _ = InvalidateRect(hwnd, None, BOOL(0));
-                }
+                // авто-индекс обновил базу -> перезапросить активный поиск
+                run_live_search(hwnd);
                 LRESULT(0)
             }
             _ => DefWindowProcW(hwnd, msg, wp, lp),
@@ -632,13 +627,44 @@ extern "system" fn search_edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
 }
 
 // Живой BM25 по мере набора (синхронно, без демона).
+// ---------- авто-индексация (Phase-13) ----------
+static INDEXING: AtomicBool = AtomicBool::new(false);
+static INDEX_TICKS: AtomicU32 = AtomicU32::new(0);
+const INDEX_EVERY_TICKS: u32 = 180; // фоновая переиндексация ~раз в 3 мин (таймер 1с)
+
+// Запустить инкрементальную индексацию в фоновом потоке (не чаще одной зараз).
+fn spawn_index(hwnd: HWND) {
+    if INDEXING.swap(true, Ordering::SeqCst) {
+        return; // уже идёт
+    }
+    let (chats_db, projects_root) = APP.with(|c| {
+        c.borrow()
+            .as_ref()
+            .map(|a| (a.config.chats_db.clone(), a.config.projects_root.clone()))
+            .unwrap_or_default()
+    });
+    if chats_db.is_empty() || projects_root.is_empty() {
+        INDEXING.store(false, Ordering::SeqCst);
+        return;
+    }
+    let hwnd_i = hwnd.0 as isize;
+    std::thread::spawn(move || {
+        let _ = index::ensure_index(&chats_db, &projects_root);
+        INDEXING.store(false, Ordering::SeqCst);
+        // свежая база -> обновить активный поиск
+        unsafe {
+            let _ = PostMessageW(HWND(hwnd_i as *mut core::ffi::c_void), WM_APP_SEARCH, WPARAM(0), LPARAM(0));
+        }
+    });
+}
+
 fn run_live_search(hwnd: HWND) {
     let q = APP.with(|c| c.borrow().as_ref().map(|a| edit_text(a.search_edit)).unwrap_or_default());
     let q = q.trim().to_string();
     APP.with(|c| {
         if let Some(a) = c.borrow_mut().as_mut() {
             if q.chars().count() >= SEARCH_MIN {
-                let bm = search::bm25_search(&a.config.search_db, &q, "chats", 200);
+                let bm = search::bm25_search(&a.config.chats_db, &q, "chats", 200);
                 a.search_hits = search::aggregate_to_folders(&bm, search::Color::Bm25);
             } else {
                 a.search_hits.clear();
@@ -652,37 +678,9 @@ fn run_live_search(hwnd: HWND) {
     }
 }
 
-// Enter: если BM25 пуст — dense-fallback в фоновом потоке (спавн демона, до ~60с).
+// Enter: перезапросить BM25 (подхватит свежий авто-индекс). Dense отложен (Phase-13).
 fn commit_search_enter(hwnd: HWND) {
-    let (q, has_bm, db, cmd, port) = APP.with(|c| {
-        let a = c.borrow();
-        match a.as_ref() {
-            Some(a) => (
-                edit_text(a.search_edit).trim().to_string(),
-                !a.search_hits.is_empty(),
-                a.config.search_db.clone(),
-                a.config.search_cmd.clone(),
-                a.config.search_port,
-            ),
-            None => (String::new(), false, String::new(), String::new(), 0),
-        }
-    });
-    if q.chars().count() < SEARCH_MIN || has_bm {
-        return;
-    }
-    let hwnd_i = hwnd.0 as isize;
-    std::thread::spawn(move || {
-        let hits = search::search(&db, &cmd, port, &q); // bm25 пуст -> dense
-        let boxed = Box::into_raw(Box::new(hits)) as isize;
-        unsafe {
-            let _ = PostMessageW(
-                HWND(hwnd_i as *mut core::ffi::c_void),
-                WM_APP_SEARCH,
-                WPARAM(0),
-                LPARAM(boxed),
-            );
-        }
-    });
+    run_live_search(hwnd);
 }
 
 // Применить перетаскивание строки from на позицию to: переставить секцию или окно.
@@ -959,6 +957,7 @@ fn main() -> Result<()> {
 
         let _ = ShowWindow(hwnd, SW_SHOW);
         create_search_box(hwnd);
+        spawn_index(hwnd); // первичная индексация чатов в фоне
         SetTimer(hwnd, 1, 1000, None);
 
         let mut msg = MSG::default();
