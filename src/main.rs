@@ -42,6 +42,8 @@ const ID_SEARCH: usize = 40; // EDIT-поле поиска в шапке (WM_COM
 const SEARCH_MIN: usize = 3; // живой BM25 начинается с N символов
 const WM_APP_SEARCH: u32 = WM_APP + 1; // dense-результаты из фонового потока
 const EM_SETCUEBANNER: u32 = 0x1501; // подсказка-заглушка в пустом EDIT
+const C_SEARCH_BG: u32 = 0x00F8E0C8; // светло-голубой фон поля поиска (RGB 200,224,248)
+const C_SEARCH_TXT: u32 = 0x003C2319; // тёмный текст поля (RGB 25,35,60)
 
 // ---------- состояние ----------
 pub(crate) struct App {
@@ -69,6 +71,11 @@ thread_local! {
 thread_local! {
     // старый WNDPROC EDIT-поля поиска (для субкласса Enter/Esc)
     static SEARCH_OLDPROC: Cell<isize> = const { Cell::new(0) };
+}
+
+thread_local! {
+    // кисть фона поля поиска (создаётся один раз)
+    static SEARCH_BRUSH: Cell<isize> = const { Cell::new(0) };
 }
 
 // ---------- перечисление окон ----------
@@ -487,6 +494,18 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 });
                 PostQuitMessage(0);
                 LRESULT(0)
+            }
+            WM_CTLCOLOREDIT => {
+                // фон/текст поля поиска — светло-голубой, чтобы белый не резал на тёмном
+                let hdc = HDC(wp.0 as *mut core::ffi::c_void);
+                SetBkColor(hdc, COLORREF(C_SEARCH_BG));
+                SetTextColor(hdc, COLORREF(C_SEARCH_TXT));
+                let mut b = SEARCH_BRUSH.with(|c| c.get());
+                if b == 0 {
+                    b = CreateSolidBrush(COLORREF(C_SEARCH_BG)).0 as isize;
+                    SEARCH_BRUSH.with(|c| c.set(b));
+                }
+                LRESULT(b)
             }
             m if m == WM_APP_SEARCH => {
                 let boxed = lp.0 as *mut Vec<search::FolderHit>;
