@@ -143,13 +143,14 @@
     </M-SETTINGS>
 
     <M-SEARCH NAME="Search" TYPE="CORE_LOGIC" STATUS="implemented">
-      <purpose>Поиск по чатам с подсветкой папок: нативный BM25 (rusqlite поверх общего clfind.db FTS5, WAL ro) с 3-го символа; если BM25 пусто — fallback на dense через M-SDAEMON. Агрегация чанков по project_folder, цвет: жёлтый=BM25, синий=dense. Phase-12.</purpose>
+      <purpose>Поиск по чатам: нативный BM25 (rusqlite поверх своей claudebar_chats.db FTS5, ro) с агрегацией по project_folder, цвет жёлтый. snippet_for — фраза-сниппет для тултипа. Dense отложен (M-SDAEMON dormant). Phase-13.</purpose>
       <path>src/search.rs</path>
-      <depends>M-SDAEMON</depends>
+      <depends>none</depends>
       <verification-ref>V-M-SEARCH</verification-ref>
       <annotations>
         <fn-fts_query PURPOSE="Чистое: ввод -> FTS5 MATCH (токены \w+, последний как префикс term*); защита от инъекции" />
-        <fn-bm25_search PURPOSE="rusqlite: открыть clfind.db (WAL, read-only), FTS5 MATCH -> чанки (folder, score)" />
+        <fn-bm25_search PURPOSE="rusqlite: открыть свою claudebar_chats.db (read-only), FTS5 MATCH -> чанки (folder, score)" />
+        <fn-snippet_for PURPOSE="rusqlite: фраза-сниппет (FTS5 snippet) лучшего совпадения в папке — для тултипа чат-результата" />
         <fn-aggregate_to_folders PURPOSE="Чистое: чанки -> папки с флагами bm25/dense и лучшим чанком (тестируемо)" />
         <fn-parse_dense_response PURPOSE="Чистое: JSON ответа демона -> папки с dense-скором (ручной разбор)" />
         <type-Color PURPOSE="Цвет подсветки папки: Bm25 (жёлтый) | Dense (синий) — модальность, без отдельной функции (dense только при пустом BM25)" />
@@ -158,8 +159,8 @@
       </annotations>
     </M-SEARCH>
 
-    <M-SDAEMON NAME="SearchDaemon" TYPE="INTEGRATION" STATUS="implemented">
-      <purpose>Клиент Python-демона clfind (только dense): спавн `clfind serve` при молчащем /health (команда из M-CONFIG.search_daemon_cmd, pythonw без консоли), поллинг /health до ready, dense-запрос HTTP POST /search через std::net (без HTTP-крейта). Phase-12.</purpose>
+    <M-SDAEMON NAME="SearchDaemon" TYPE="INTEGRATION" STATUS="dormant">
+      <purpose>DORMANT (Phase-13: dense отложен, не вызывается; оживёт с Python-модулем смысла). Клиент Python-демона clfind (только dense): спавн `clfind serve` при молчащем /health (команда из M-CONFIG.search_daemon_cmd, pythonw без консоли), поллинг /health до ready, dense-запрос HTTP POST /search через std::net (без HTTP-крейта). Phase-12.</purpose>
       <path>src/sdaemon.rs</path>
       <depends>none</depends>
       <verification-ref>V-M-SDAEMON</verification-ref>
@@ -199,7 +200,6 @@
     <CrossLink from="M-RENDER" to="M-WINENUM" relation="строит строки и порядок из WinItem" />
     <CrossLink from="M-RECENT" to="M-CONFIG" relation="использует AppDef (расширения, editor_storage) для классификации недавних" />
     <CrossLink from="M-MAIN" to="M-SETTINGS" relation="из меню «⚙» открывает выбор шрифта (результат сохраняет через M-CONFIG.set_font) и окно «О программе» (settings::show_about)" />
-    <CrossLink from="M-SEARCH" to="M-SDAEMON" relation="при пустом BM25 запрашивает dense-поиск" />
     <CrossLink from="M-MAIN" to="M-SEARCH" relation="окошко поиска в шапке: ввод/Enter/Esc запускают поиск, debounce live BM25" />
     <CrossLink from="M-RENDER" to="M-SEARCH" relation="читает результаты поиска для подсветки папок (жёлтый/синий) и блока «Найдено ещё»" />
     <CrossLink from="M-MAIN" to="M-INDEX" relation="запускает авто-индексацию в фоне при старте и по таймеру; пути баз/корень индексации передаёт параметрами из M-CONFIG" />
