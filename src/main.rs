@@ -28,11 +28,6 @@ use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Controls::{
-    InitCommonControlsEx, ICC_BAR_CLASSES, INITCOMMONCONTROLSEX, TTF_ABSOLUTE, TTF_TRACK,
-    TTM_ADDTOOLW, TTM_SETMAXTIPWIDTH, TTM_TRACKACTIVATE, TTM_TRACKPOSITION, TTM_UPDATETIPTEXTW,
-    TTTOOLINFOW,
-};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     EnableWindow, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE,
     TRACKMOUSEEVENT, VK_ESCAPE, VK_RETURN,
@@ -51,11 +46,13 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 const ID_TIP_TIMER: usize = 3; // dwell-таймер подсказки (~0.5с)
 const TIP_DELAY: u32 = 500; // мс выдержки перед показом подсказки
 const TIP_SEARCHBOX: i32 = -2; // tip_row: курсор над строкой поиска -> правила
+const C_TIP_BG: u32 = 0x00E1FFFF; // фон подсказки (инфо-жёлтый, RGB 255,255,225)
+const C_TIP_TXT: u32 = 0x00202020; // тёмный текст подсказки
 const SEARCH_RULES: &str = "Правила поиска:\r\n  пробел — И (оба слова)\r\n  a+b — точная фраза (подряд)\r\n  a++b — рядом (NEAR)\r\n  -слово — исключить\r\n  OR — или (заглавными)\r\nIP / путь / дата ищутся как фраза.";
 
 thread_local! {
-    // живой wide-буфер текста подсказки (TTM_UPDATETIPTEXT читает указатель)
-    static TIP_TEXT: RefCell<Vec<u16>> = const { RefCell::new(Vec::new()) };
+    // текст текущей подсказки (для собственной отрисовки попапа)
+    static TIP_SHOW: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
 // id команд меню
@@ -697,19 +694,22 @@ extern "system" fn search_edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
 
 // ---------- подсказки (tooltip, Phase-13 Ф-B) ----------
 
-// Создать tracking-подсказку с одним инструментом (один раз при старте).
+// Создать собственное popup-окно подсказки (один раз при старте).
 unsafe fn create_tooltip(hwnd: HWND) {
-    let icc = INITCOMMONCONTROLSEX {
-        dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
-        dwICC: ICC_BAR_CLASSES,
-    };
-    let _ = InitCommonControlsEx(&icc);
     let hinst = APP.with(|c| c.borrow().as_ref().map(|a| a.hinst).unwrap_or_default());
+    let cls = WNDCLASSW {
+        lpfnWndProc: Some(tip_proc),
+        hInstance: hinst,
+        lpszClassName: w!("ClbarTip"),
+        hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+        ..Default::default()
+    };
+    RegisterClassW(&cls); // повторная регистрация вернёт 0 — не страшно
     let tip = CreateWindowExW(
-        WINDOW_EX_STYLE(0),
-        w!("tooltips_class32"),
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        w!("ClbarTip"),
         PCWSTR::null(),
-        WS_POPUP | WINDOW_STYLE(0x01 | 0x02), // TTS_ALWAYSTIP | TTS_NOPREFIX
+        WS_POPUP,
         0,
         0,
         0,
@@ -720,23 +720,40 @@ unsafe fn create_tooltip(hwnd: HWND) {
         None,
     )
     .unwrap_or_default();
-    if tip.0.is_null() {
-        return;
-    }
-    let mut ti = TTTOOLINFOW {
-        cbSize: std::mem::size_of::<TTTOOLINFOW>() as u32,
-        uFlags: TTF_TRACK | TTF_ABSOLUTE,
-        hwnd,
-        uId: 1,
-        ..Default::default()
-    };
-    SendMessageW(tip, TTM_ADDTOOLW, WPARAM(0), LPARAM(&mut ti as *mut _ as isize));
-    SendMessageW(tip, TTM_SETMAXTIPWIDTH, WPARAM(0), LPARAM(480));
     APP.with(|c| {
         if let Some(a) = c.borrow_mut().as_mut() {
             a.tooltip = tip;
         }
     });
+}
+
+// Отрисовка попапа: фон + рамка + текст панельным шрифтом.
+extern "system" fn tip_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    unsafe {
+        if msg == WM_PAINT {
+            let mut ps = PAINTSTRUCT::default();
+            let hdc = BeginPaint(hwnd, &mut ps);
+            let mut rc = RECT::default();
+            let _ = GetClientRect(hwnd, &mut rc);
+            let bg = CreateSolidBrush(COLORREF(C_TIP_BG));
+            FillRect(hdc, &rc, bg);
+            let _ = DeleteObject(bg);
+            let frame = CreateSolidBrush(COLORREF(0x0080_8080));
+            FrameRect(hdc, &rc, frame);
+            let _ = DeleteObject(frame);
+            let font = APP.with(|c| c.borrow().as_ref().map(|a| a.font_small).unwrap_or_default());
+            let old = SelectObject(hdc, font);
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, COLORREF(C_TIP_TXT));
+            let mut tr = RECT { left: 7, top: 4, right: rc.right - 4, bottom: rc.bottom - 2 };
+            let mut wide: Vec<u16> = TIP_SHOW.with(|t| t.borrow().encode_utf16().collect());
+            DrawTextW(hdc, &mut wide, &mut tr, DT_LEFT | DT_TOP | DT_NOPREFIX);
+            SelectObject(hdc, old);
+            let _ = EndPaint(hwnd, &ps);
+            return LRESULT(0);
+        }
+        DefWindowProcW(hwnd, msg, wp, lp)
+    }
 }
 
 // Сменить цель подсказки: спрятать текущую, перезавести dwell-таймер.
@@ -758,8 +775,9 @@ unsafe fn arm_tip(hwnd: HWND, row: i32) {
 }
 
 // Показать подсказку у курсора (по срабатыванию dwell-таймера).
-unsafe fn show_tooltip(hwnd: HWND) {
-    let tip = APP.with(|c| c.borrow().as_ref().map(|a| a.tooltip).unwrap_or_default());
+unsafe fn show_tooltip(_hwnd: HWND) {
+    let (tip, font) =
+        APP.with(|c| c.borrow().as_ref().map(|a| (a.tooltip, a.font_small)).unwrap_or_default());
     if tip.0.is_null() {
         return;
     }
@@ -770,36 +788,29 @@ unsafe fn show_tooltip(hwnd: HWND) {
     let Some(text) = text else {
         return;
     };
-    TIP_TEXT.with(|b| *b.borrow_mut() = text.encode_utf16().chain(std::iter::once(0)).collect());
-    let ptr = TIP_TEXT.with(|b| b.borrow().as_ptr() as *mut u16);
-    let mut ti = TTTOOLINFOW {
-        cbSize: std::mem::size_of::<TTTOOLINFOW>() as u32,
-        uFlags: TTF_TRACK | TTF_ABSOLUTE,
-        hwnd,
-        uId: 1,
-        lpszText: PWSTR(ptr),
-        ..Default::default()
-    };
-    SendMessageW(tip, TTM_UPDATETIPTEXTW, WPARAM(0), LPARAM(&mut ti as *mut _ as isize));
+    TIP_SHOW.with(|t| *t.borrow_mut() = text.clone());
+    // измерить текст панельным шрифтом
+    let hdc = GetDC(tip);
+    let old = SelectObject(hdc, font);
+    let mut wide: Vec<u16> = text.encode_utf16().collect();
+    let mut rc = RECT { left: 0, top: 0, right: 600, bottom: 0 };
+    DrawTextW(hdc, &mut wide, &mut rc, DT_CALCRECT | DT_LEFT | DT_TOP | DT_NOPREFIX);
+    SelectObject(hdc, old);
+    ReleaseDC(tip, hdc);
+    let w = (rc.right - rc.left) + 14;
+    let h = (rc.bottom - rc.top) + 8;
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
-    let pos = (((pt.x + 14) & 0xFFFF) | (((pt.y + 18) & 0xFFFF) << 16)) as isize;
-    SendMessageW(tip, TTM_TRACKPOSITION, WPARAM(0), LPARAM(pos));
-    SendMessageW(tip, TTM_TRACKACTIVATE, WPARAM(1), LPARAM(&mut ti as *mut _ as isize));
+    let _ = SetWindowPos(tip, HWND_TOPMOST, pt.x + 14, pt.y + 18, w, h, SWP_NOACTIVATE);
+    let _ = ShowWindow(tip, SW_SHOWNOACTIVATE);
+    let _ = InvalidateRect(tip, None, BOOL(1));
 }
 
-unsafe fn hide_tooltip(hwnd: HWND) {
+unsafe fn hide_tooltip(_hwnd: HWND) {
     let tip = APP.with(|c| c.borrow().as_ref().map(|a| a.tooltip).unwrap_or_default());
-    if tip.0.is_null() {
-        return;
+    if !tip.0.is_null() {
+        let _ = ShowWindow(tip, SW_HIDE);
     }
-    let mut ti = TTTOOLINFOW {
-        cbSize: std::mem::size_of::<TTTOOLINFOW>() as u32,
-        hwnd,
-        uId: 1,
-        ..Default::default()
-    };
-    SendMessageW(tip, TTM_TRACKACTIVATE, WPARAM(0), LPARAM(&mut ti as *mut _ as isize));
 }
 
 // Текст подсказки для цели: правила / полный путь-имя / путь+сниппет.
