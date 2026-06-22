@@ -276,9 +276,14 @@ mod tests {
         assert_eq!(fts_query("смета OR накладная").as_deref(), Some("смета OR накладная*"));
         // санитизация: спецсимволы FTS5 срезаются
         assert_eq!(fts_query("a\" b").as_deref(), Some("a b*"));
-        // regression: IP/url с точками -> фраза (соседние токены), не схлопывание в один
-        assert_eq!(fts_query("187.124.242.233").as_deref(), Some("\"187 124 242 233\"*"));
+        // regression: токен с любой пунктуацией -> фраза (соседние), не схлопывание
+        assert_eq!(fts_query("187.124.242.233").as_deref(), Some("\"187 124 242 233\"*")); // IP (точки)
         assert_eq!(fts_query("ip 187.124.242.233").as_deref(), Some("ip \"187 124 242 233\"*"));
+        assert_eq!(fts_query("12:34:56").as_deref(), Some("\"12 34 56\"*")); // время (двоеточия)
+        assert_eq!(fts_query("site.com/path").as_deref(), Some("\"site com path\"*")); // url (слэш)
+        // Windows \ и Linux / -> один знаменатель (оба слэша — разделители)
+        assert_eq!(fts_query("D:\\Python\\hh").as_deref(), fts_query("D:/Python/hh").as_deref());
+        assert_eq!(fts_query("D:\\Python\\hh").as_deref(), Some("\"d python hh\"*"));
         // пусто / только исключение -> None
         assert_eq!(fts_query("   ").as_deref(), None);
         assert_eq!(fts_query("-только").as_deref(), None);
