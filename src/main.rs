@@ -6,6 +6,8 @@
 mod activate;
 mod config;
 mod icon;
+#[allow(dead_code)] // ensure_index подключает step-4 (M-MAIN: авто-индекс)
+mod index;
 mod recent;
 mod render;
 mod sdaemon;

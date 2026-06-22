@@ -10,6 +10,9 @@ repository = "https://github.com/Baho73/claudebar"
 version = "0.32"
 features = ["bundled"]
 
+[dependencies.serde_json]
+version = "1"
+
 [dependencies.windows]
 version = "0.58"
 features = [
