@@ -143,7 +143,19 @@ cargo build --release
 # -> target\release\claudebar.exe
 ```
 
-Single dependency: the official [`windows`](https://crates.io/crates/windows) crate (Win32 bindings).
+Dependencies: the official [`windows`](https://crates.io/crates/windows) crate (Win32 bindings)
+and [`rusqlite`](https://crates.io/crates/rusqlite) (bundled SQLite/FTS5, for native chat search).
+
+> **C compiler for the GNU toolchain.** `rusqlite`'s bundled SQLite is C, so the build needs a
+> mingw-w64 **gcc on `PATH`** (the Rust GNU toolchain ships only a linker, not a C compiler).
+> Install [MSYS2](https://www.msys2.org/) or [w64devkit](https://github.com/skeeto/w64devkit) and add
+> its `mingw64\bin` to `PATH` before `cargo build`. A gcc 14.x (matching Rust's bundled mingw) links
+> cleanly; a bleeding-edge gcc 16 needs `-C link-self-contained=yes`.
+
+### Chat search engine (`clfind`)
+The in-panel search (🔍) reads an index built by the companion Python tool **clfind**
+(`clfind index` → `~/.clfind/clfind.db`). The panel runs BM25 natively over that SQLite index;
+semantic (dense) fallback is served by the `clfind` daemon. See the clfind project for setup.
 
 ## Limitations
 
