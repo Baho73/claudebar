@@ -1,5 +1,5 @@
 // FILE: src/search.rs
-// VERSION: 1.1.0
+// VERSION: 1.1.1
 // START_MODULE_CONTRACT
 //   PURPOSE: Поиск по чатам с подсветкой папок. Живой BM25 нативно (rusqlite поверх общего clfind.db FTS5, read-only) с агрегацией по project_folder; при пустом BM25 — fallback на dense через M-SDAEMON. Цвет: Bm25 (жёлтый) / Dense (синий).
 //   SCOPE: fts_query/aggregate_to_folders/parse_dense_response (чистые, тестируемые), bm25_search (rusqlite), search (оркестрация bm25 -> пусто -> dense).
@@ -21,7 +21,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.1.0 - Phase-12: синтаксис запросов (Google-style) в fts_query — пробел=И, a+b=фраза, a++b=NEAR, -w=исключить, OR=или; sanitize_word против инъекции.
+//   LAST_CHANGE: v1.1.1 - fix(grace-fix): токен с пунктуацией (IP «187.124.242.233», url, дата) больше не схлопывается в один — words() дробит как unicode61, atom() ищет соседние под-слова фразой. Тест fts_query_operators (IP).
+//   v1.1.0 - Phase-12: синтаксис запросов (Google-style) в fts_query — пробел=И, a+b=фраза, a++b=NEAR, -w=исключить, OR=или; sanitize_word против инъекции.
 //   v1.0.0 - Phase-12 Step 3: новый модуль поиска. Нативный BM25 (rusqlite по clfind.db) + чистые fts_query/aggregate/parse_dense + оркестрация с dense-fallback (M-SDAEMON).
 // END_CHANGE_SUMMARY
 
@@ -45,14 +46,32 @@ pub struct FolderHit {
     pub score: f64,
 }
 
-// Оставить только \w-символы (защита от инъекции в FTS5), нижний регистр.
-fn sanitize_word(s: &str) -> String {
-    s.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase()
+// Разбить на \w-под-токены (как делает unicode61: по любым не-буквенно-цифровым),
+// нижний регистр. Так IP/url/дата/имя_файла дробятся как в индексе; спецсимволы FTS5
+// не проходят (защита от инъекции).
+fn words(s: &str) -> Vec<String> {
+    s.split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_lowercase())
+        .collect()
+}
+
+// Атом FTS5 из под-слов: одно слово, либо фраза в кавычках (несколько под-слов —
+// IP «187.124.242.233» -> "187 124 242 233", соседние). prefix — добавить * (живой набор).
+fn atom(ws: &[String], prefix: bool) -> Option<String> {
+    match ws.len() {
+        0 => None,
+        1 => Some(if prefix { format!("{}*", ws[0]) } else { ws[0].clone() }),
+        _ => {
+            let p = ws.join(" ");
+            Some(if prefix { format!("\"{p}\"*") } else { format!("\"{p}\"") })
+        }
+    }
 }
 
 // START_CONTRACT: fts_query
 //   PURPOSE: Преобразовать пользовательский ввод (Google-синтаксис) в безопасный FTS5 MATCH.
-//   INPUTS: { input: &str }  // пробел=И; a+b=фраза; a++b=NEAR; -w=исключить; OR=или; последний токен — префикс
+//   INPUTS: { input: &str }  // пробел=И; a+b=фраза; a++b=NEAR; -w=исключить; OR=или; токен с пунктуацией (IP/url) -> фраза; последнее слово — префикс
 //   OUTPUTS: { Option<String> - MATCH-строка или None, если нет позитивных термов }
 //   SIDE_EFFECTS: none
 // END_CONTRACT: fts_query
@@ -60,35 +79,31 @@ pub fn fts_query(input: &str) -> Option<String> {
     let toks: Vec<&str> = input.split_whitespace().collect();
     let n = toks.len();
     let mut pos: Vec<String> = Vec::new(); // позитивные атомы + операторы OR
-    let mut excl: Vec<String> = Vec::new(); // исключения (-слово)
+    let mut excl: Vec<String> = Vec::new(); // исключения (-слово/-фраза)
     for (i, tok) in toks.iter().enumerate() {
+        let last = i == n - 1;
         if *tok == "OR" {
             if !pos.is_empty() {
                 pos.push("OR".into());
             }
         } else if let Some(rest) = tok.strip_prefix('-') {
-            let w = sanitize_word(rest);
-            if !w.is_empty() {
-                excl.push(w);
+            if let Some(a) = atom(&words(rest), false) {
+                excl.push(a);
             }
         } else if tok.contains("++") {
-            let ws: Vec<String> = tok.split('+').map(sanitize_word).filter(|w| !w.is_empty()).collect();
+            let ws = words(tok);
             match ws.len() {
                 0 => {}
                 1 => pos.push(ws.into_iter().next().unwrap()),
                 _ => pos.push(format!("NEAR({}, 10)", ws.join(" "))),
             }
         } else if tok.contains('+') {
-            let ws: Vec<String> = tok.split('+').map(sanitize_word).filter(|w| !w.is_empty()).collect();
-            if !ws.is_empty() {
-                pos.push(format!("\"{}\"", ws.join(" ")));
+            if let Some(a) = atom(&words(tok), false) {
+                pos.push(a);
             }
-        } else {
-            let w = sanitize_word(tok);
-            if !w.is_empty() {
-                // последнее слово — префикс (живой набор)
-                pos.push(if i == n - 1 { format!("{w}*") } else { w });
-            }
+        } else if let Some(a) = atom(&words(tok), last) {
+            // обычный токен; с внутренней пунктуацией (IP/url/дата) станет фразой
+            pos.push(a);
         }
     }
     while pos.last().map(|s| s == "OR").unwrap_or(false) {
@@ -261,6 +276,9 @@ mod tests {
         assert_eq!(fts_query("смета OR накладная").as_deref(), Some("смета OR накладная*"));
         // санитизация: спецсимволы FTS5 срезаются
         assert_eq!(fts_query("a\" b").as_deref(), Some("a b*"));
+        // regression: IP/url с точками -> фраза (соседние токены), не схлопывание в один
+        assert_eq!(fts_query("187.124.242.233").as_deref(), Some("\"187 124 242 233\"*"));
+        assert_eq!(fts_query("ip 187.124.242.233").as_deref(), Some("ip \"187 124 242 233\"*"));
         // пусто / только исключение -> None
         assert_eq!(fts_query("   ").as_deref(), None);
         assert_eq!(fts_query("-только").as_deref(), None);
