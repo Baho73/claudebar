@@ -551,7 +551,7 @@
       <step-1 module="M-INDEX" status="done" verification="V-M-INDEX">Rust-индексатор чатов: ensure_index (обход ~/.claude/projects/*.jsonl, инкремент по mtime) + чистые parse_transcript/chunk_text + init_schema -&gt; FTS5 claudebar_chats.db. Зависимость serde_json</step-1>
       <step-2 module="M-CONFIG" status="done" verification="V-M-CONFIG">Пути своих баз (chats_db, files_db) + корень индексации (projects_root, дефолт %USERPROFILE%\.claude\projects); search_cmd/port остаются dormant (отложенный dense)</step-2>
       <step-3 module="M-SEARCH" status="done" verification="V-M-SEARCH">bm25_search читает свою claudebar_chats.db; + snippet_for (FTS5 snippet для тултипа); dense-путь (M-SDAEMON) усыплён -&gt; search() = BM25-only</step-3>
-      <step-4 module="M-MAIN" status="pending" verification="V-M-MAIN">Авто-индекс: ensure_index в фоновом потоке при старте + по таймеру (инкремент); UI не морозим</step-4>
+      <step-4 module="M-MAIN" status="done" verification="V-M-MAIN">Авто-индекс: ensure_index в фоновом потоке при старте + по таймеру (~3 мин, INDEXING-guard); live/Enter BM25 читают chats_db; WM_APP_SEARCH = refresh после индекса. UI не морозим</step-4>
       <!-- Фаза B: тултипы -->
       <step-5 module="M-MAIN" status="pending" verification="V-M-MAIN">Win32-подсказки (задержка ~0.5с): полный путь на обрезанных строках; путь+сниппет для чат-результатов; правила синтаксиса над строкой поиска</step-5>
       <!-- Фаза C: индекс файлов -->
