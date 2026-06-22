@@ -8,15 +8,13 @@ mod config;
 mod icon;
 mod recent;
 mod render;
-#[allow(dead_code)] // M-SEARCH/M-SDAEMON подключает step-5 (M-MAIN: окошко поиска)
 mod sdaemon;
-#[allow(dead_code)]
 mod search;
 mod settings;
 mod signal;
 mod win_enum;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -26,7 +24,10 @@ use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, ReleaseCapture, SetCapture, SetFocus};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    EnableWindow, ReleaseCapture, SetCapture, SetFocus, VK_ESCAPE, VK_RETURN,
+};
+use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 const EM_SETSEL: u32 = 0x00B1;
@@ -37,6 +38,9 @@ const ID_LABEL: usize = 20;
 const ID_LABEL_CLEAR: usize = 21;
 const ID_SET_FONT: usize = 30; // меню настроек: выбрать шрифт
 const ID_ABOUT: usize = 31; // меню настроек: о программе
+const ID_SEARCH: usize = 40; // EDIT-поле поиска в шапке (WM_COMMAND EN_CHANGE)
+const SEARCH_MIN: usize = 3; // живой BM25 начинается с N символов
+const WM_APP_SEARCH: u32 = WM_APP + 1; // dense-результаты из фонового потока
 
 // ---------- состояние ----------
 pub(crate) struct App {
@@ -52,12 +56,18 @@ pub(crate) struct App {
     pub(crate) last_h: i32,
     pub(crate) bell: HashSet<String>, // имена проектов со «звоночком» (lower) — подсветка строк
     pub(crate) search_hits: Vec<search::FolderHit>, // папки-совпадения поиска (Phase-12)
+    pub(crate) search_edit: HWND, // EDIT-поле поиска в шапке (null = скрыто)
     pub(crate) reorder: bool, // режим перетаскивания: ручки видны, ✕ скрыт
     pub(crate) drag: Option<i32>, // индекс перетаскиваемой строки во время drag
 }
 
 thread_local! {
     static APP: RefCell<Option<App>> = RefCell::new(None);
+}
+
+thread_local! {
+    // старый WNDPROC EDIT-поля поиска (для субкласса Enter/Esc)
+    static SEARCH_OLDPROC: Cell<isize> = const { Cell::new(0) };
 }
 
 // ---------- перечисление окон ----------
@@ -74,7 +84,7 @@ fn refresh_items(app: &mut App) {
         })
         .collect();
     app.recent = recent::list_recent(&app.config.apps, &open);
-    app.rows = render::build_rows(&app.items, &app.recent, &app.config.apps, &app.config);
+    rebuild_rows(app);
     // звоночек: сбросить сигналы окон, получивших фокус, затем собрать активные ключи
     let fg = unsafe { GetForegroundWindow() };
     signal::reconcile(&app.items, fg);
@@ -279,6 +289,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                         let _ = DestroyWindow(hwnd);
                     } else if x >= w - 2 * render::HEAD_BTN_W {
                         show_settings_menu(hwnd);
+                    } else if x >= w - 3 * render::HEAD_BTN_W {
+                        toggle_search(hwnd);
                     } else {
                         // тянем панель за шапку
                         let _ = ReleaseCapture();
@@ -319,6 +331,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     ToggleRecent(usize),
                     ToggleShowall(usize),
                     Open(usize),
+                    OpenFolder(String),
                 }
                 let w = client_w(hwnd);
                 let act = APP.with(|c| {
@@ -342,7 +355,9 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                         render::Row::Recent { ridx } => Some(Act::Open(ridx)),
                         render::Row::RecentMore { app } => Some(Act::ToggleShowall(app)),
                         render::Row::SearchHeader => None,
-                        render::Row::SearchResult { .. } => None, // открытие — step-5 (M-MAIN)
+                        render::Row::SearchResult { hit } => {
+                            a.search_hits.get(hit).map(|h| Act::OpenFolder(h.folder.clone()))
+                        }
                     }
                 });
                 #[derive(Clone, Copy)]
@@ -361,7 +376,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                                 SecToggle::Showall => a.config.toggle_showall(&block),
                             }
                             a.config.save(hwnd);
-                            a.rows = render::build_rows(&a.items, &a.recent, &a.config.apps, &a.config);
+                            rebuild_rows(a);
                             render::resize(hwnd, a);
                         }
                     });
@@ -381,6 +396,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                             recent::open(&cmd);
                         }
                     }
+                    Some(Act::OpenFolder(folder)) => {
+                        let wide: Vec<u16> = folder.encode_utf16().chain(std::iter::once(0)).collect();
+                        ShellExecuteW(None, w!("open"), PCWSTR(wide.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
+                    }
                     None => {}
                 }
                 LRESULT(0)
@@ -396,7 +415,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                             drop_reorder(a, from, to);
                             a.drag = None;
                             a.config.save(hwnd);
-                            a.rows = render::build_rows(&a.items, &a.recent, &a.config.apps, &a.config);
+                            rebuild_rows(a);
                             render::resize(hwnd, a);
                         }
                     });
@@ -447,7 +466,14 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             }
             WM_COMMAND => {
                 let id = (wp.0 & 0xFFFF) as usize;
-                handle_command(hwnd, id);
+                let notif = ((wp.0 >> 16) & 0xFFFF) as u32;
+                if id == ID_SEARCH {
+                    if notif == EN_CHANGE {
+                        run_live_search(hwnd);
+                    }
+                } else {
+                    handle_command(hwnd, id);
+                }
                 LRESULT(0)
             }
             WM_DESTROY => {
@@ -459,6 +485,21 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     }
                 });
                 PostQuitMessage(0);
+                LRESULT(0)
+            }
+            m if m == WM_APP_SEARCH => {
+                let boxed = lp.0 as *mut Vec<search::FolderHit>;
+                if !boxed.is_null() {
+                    let hits = *Box::from_raw(boxed);
+                    APP.with(|c| {
+                        if let Some(a) = c.borrow_mut().as_mut() {
+                            a.search_hits = hits;
+                            rebuild_rows(a);
+                            render::resize(hwnd, a);
+                        }
+                    });
+                    let _ = InvalidateRect(hwnd, None, BOOL(0));
+                }
                 LRESULT(0)
             }
             _ => DefWindowProcW(hwnd, msg, wp, lp),
@@ -478,6 +519,161 @@ fn client_w(hwnd: HWND) -> i32 {
         let _ = GetClientRect(hwnd, &mut rc);
     }
     rc.right
+}
+
+// ---------- поиск по чатам (Phase-12) ----------
+fn edit_text(edit: HWND) -> String {
+    if edit.0.is_null() {
+        return String::new();
+    }
+    unsafe {
+        let len = GetWindowTextLengthW(edit);
+        if len <= 0 {
+            return String::new();
+        }
+        let mut buf = vec![0u16; (len + 1) as usize];
+        let n = GetWindowTextW(edit, &mut buf);
+        String::from_utf16_lossy(&buf[..n.max(0) as usize])
+    }
+}
+
+// Пересобрать строки панели + (если активен поиск) дописать блок «Найдено ещё».
+fn rebuild_rows(app: &mut App) {
+    app.rows = render::build_rows(&app.items, &app.recent, &app.config.apps, &app.config);
+    if !app.search_hits.is_empty() {
+        let open: HashSet<String> = app.items.iter().map(|it| it.name.to_lowercase()).collect();
+        app.rows.extend(render::search_result_rows(&app.search_hits, &open));
+    }
+}
+
+// Открыть/закрыть окошко поиска (клик «🔍» в шапке).
+unsafe fn toggle_search(hwnd: HWND) {
+    let (edit, hinst, font) = APP.with(|c| {
+        c.borrow().as_ref().map(|a| (a.search_edit, a.hinst, a.font_small)).unwrap_or_default()
+    });
+    if !edit.0.is_null() {
+        close_search(hwnd);
+        return;
+    }
+    let w = client_w(hwnd);
+    let new = CreateWindowExW(
+        WINDOW_EX_STYLE(0),
+        w!("EDIT"),
+        PCWSTR::null(),
+        WS_CHILD | WS_VISIBLE | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
+        6,
+        2,
+        w - 3 * render::HEAD_BTN_W - 10,
+        render::HEAD - 4,
+        hwnd,
+        HMENU(ID_SEARCH as *mut core::ffi::c_void),
+        hinst,
+        None,
+    )
+    .unwrap_or_default();
+    if new.0.is_null() {
+        return;
+    }
+    SendMessageW(new, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
+    // субкласс EDIT для перехвата Enter/Esc
+    let old = SetWindowLongPtrW(new, GWLP_WNDPROC, search_edit_proc as *const () as isize);
+    SEARCH_OLDPROC.with(|p| p.set(old));
+    APP.with(|c| {
+        if let Some(a) = c.borrow_mut().as_mut() {
+            a.search_edit = new;
+        }
+    });
+    let _ = SetFocus(new);
+}
+
+unsafe fn close_search(hwnd: HWND) {
+    let edit = APP.with(|c| c.borrow().as_ref().map(|a| a.search_edit).unwrap_or_default());
+    if !edit.0.is_null() {
+        let _ = DestroyWindow(edit);
+    }
+    APP.with(|c| {
+        if let Some(a) = c.borrow_mut().as_mut() {
+            a.search_edit = HWND(std::ptr::null_mut());
+            a.search_hits.clear();
+            rebuild_rows(a);
+            render::resize(hwnd, a);
+        }
+    });
+    let _ = SetFocus(hwnd);
+    let _ = InvalidateRect(hwnd, None, BOOL(0));
+}
+
+// Субкласс EDIT: Enter -> dense, Esc -> закрыть; прочее в старый proc.
+extern "system" fn search_edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    unsafe {
+        if msg == WM_KEYDOWN {
+            let vk = wp.0 as u32;
+            if vk == VK_RETURN.0 as u32 {
+                commit_search_enter(GetParent(hwnd).unwrap_or_default());
+                return LRESULT(0);
+            }
+            if vk == VK_ESCAPE.0 as u32 {
+                close_search(GetParent(hwnd).unwrap_or_default());
+                return LRESULT(0);
+            }
+        }
+        let old: WNDPROC = std::mem::transmute::<isize, WNDPROC>(SEARCH_OLDPROC.with(|p| p.get()));
+        CallWindowProcW(old, hwnd, msg, wp, lp)
+    }
+}
+
+// Живой BM25 по мере набора (синхронно, без демона).
+fn run_live_search(hwnd: HWND) {
+    let q = APP.with(|c| c.borrow().as_ref().map(|a| edit_text(a.search_edit)).unwrap_or_default());
+    let q = q.trim().to_string();
+    APP.with(|c| {
+        if let Some(a) = c.borrow_mut().as_mut() {
+            if q.chars().count() >= SEARCH_MIN {
+                let bm = search::bm25_search(&a.config.search_db, &q, "chats", 200);
+                a.search_hits = search::aggregate_to_folders(&bm, search::Color::Bm25);
+            } else {
+                a.search_hits.clear();
+            }
+            rebuild_rows(a);
+            unsafe { render::resize(hwnd, a) };
+        }
+    });
+    unsafe {
+        let _ = InvalidateRect(hwnd, None, BOOL(0));
+    }
+}
+
+// Enter: если BM25 пуст — dense-fallback в фоновом потоке (спавн демона, до ~60с).
+fn commit_search_enter(hwnd: HWND) {
+    let (q, has_bm, db, cmd, port) = APP.with(|c| {
+        let a = c.borrow();
+        match a.as_ref() {
+            Some(a) => (
+                edit_text(a.search_edit).trim().to_string(),
+                !a.search_hits.is_empty(),
+                a.config.search_db.clone(),
+                a.config.search_cmd.clone(),
+                a.config.search_port,
+            ),
+            None => (String::new(), false, String::new(), String::new(), 0),
+        }
+    });
+    if q.chars().count() < SEARCH_MIN || has_bm {
+        return;
+    }
+    let hwnd_i = hwnd.0 as isize;
+    std::thread::spawn(move || {
+        let hits = search::search(&db, &cmd, port, &q); // bm25 пуст -> dense
+        let boxed = Box::into_raw(Box::new(hits)) as isize;
+        unsafe {
+            let _ = PostMessageW(
+                HWND(hwnd_i as *mut core::ffi::c_void),
+                WM_APP_SEARCH,
+                WPARAM(0),
+                LPARAM(boxed),
+            );
+        }
+    });
 }
 
 // Применить перетаскивание строки from на позицию to: переставить секцию или окно.
@@ -700,6 +896,7 @@ fn main() -> Result<()> {
             last_h: 0,
             bell: HashSet::new(),
             search_hits: Vec::new(),
+            search_edit: HWND(std::ptr::null_mut()),
             reorder: false,
             drag: None,
         };

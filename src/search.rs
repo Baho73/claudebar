@@ -3,7 +3,7 @@
 // START_MODULE_CONTRACT
 //   PURPOSE: Поиск по чатам с подсветкой папок. Живой BM25 нативно (rusqlite поверх общего clfind.db FTS5, read-only) с агрегацией по project_folder; при пустом BM25 — fallback на dense через M-SDAEMON. Цвет: Bm25 (жёлтый) / Dense (синий).
 //   SCOPE: fts_query/aggregate_to_folders/parse_dense_response (чистые, тестируемые), bm25_search (rusqlite), search (оркестрация bm25 -> пусто -> dense).
-//   DEPENDS: M-CONFIG (путь clfind.db, команда/порт демона), M-SDAEMON (dense-fallback)
+//   DEPENDS: M-SDAEMON (dense-fallback); параметры поиска (db/cmd/port) приходят из M-CONFIG через M-MAIN
 //   LINKS: M-SEARCH
 //   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS
@@ -29,7 +29,6 @@ use std::time::Duration;
 
 use rusqlite::{params, Connection, OpenFlags};
 
-use crate::config::Config;
 use crate::sdaemon;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -182,20 +181,20 @@ pub fn parse_dense_response(json: &str) -> Vec<(String, f64)> {
 
 // START_CONTRACT: search
 //   PURPOSE: Поиск: живой BM25; при пустом результате — dense-fallback через демон.
-//   INPUTS: { cfg: &Config; query: &str }
+//   INPUTS: { db: &str - путь clfind.db; cmd: &str - команда демона; port: u16; query: &str }
 //   OUTPUTS: { Vec<FolderHit> - папки (Bm25 или Dense) }
 //   SIDE_EFFECTS: чтение clfind.db; при fallback — спавн/опрос демона (M-SDAEMON)
 // END_CONTRACT: search
-pub fn search(cfg: &Config, query: &str) -> Vec<FolderHit> {
+pub fn search(db: &str, cmd: &str, port: u16, query: &str) -> Vec<FolderHit> {
     // START_BLOCK_LIVE_BM25
-    let bm = bm25_search(&cfg.search_db, query, "chats", 200);
+    let bm = bm25_search(db, query, "chats", 200);
     if !bm.is_empty() {
         return aggregate_to_folders(&bm, Color::Bm25);
     }
     // END_BLOCK_LIVE_BM25
     // START_BLOCK_DENSE_FALLBACK
-    if sdaemon::ensure_running(&cfg.search_cmd, cfg.search_port, Duration::from_secs(60)) {
-        if let Some(json) = sdaemon::dense_search(cfg.search_port, query, "chats", 50) {
+    if sdaemon::ensure_running(cmd, port, Duration::from_secs(60)) {
+        if let Some(json) = sdaemon::dense_search(port, query, "chats", 50) {
             return aggregate_to_folders(&parse_dense_response(&json), Color::Dense);
         }
     }
