@@ -140,7 +140,7 @@
       </annotations>
     </M-SETTINGS>
 
-    <M-SEARCH NAME="Search" TYPE="CORE_LOGIC" STATUS="planned">
+    <M-SEARCH NAME="Search" TYPE="CORE_LOGIC" STATUS="implemented">
       <purpose>Поиск по чатам с подсветкой папок: нативный BM25 (rusqlite поверх общего clfind.db FTS5, WAL ro) с 3-го символа; если BM25 пусто — fallback на dense через M-SDAEMON. Агрегация чанков по project_folder, цвет: жёлтый=BM25, синий=dense. Phase-12.</purpose>
       <path>src/search.rs</path>
       <depends>M-CONFIG, M-SDAEMON</depends>
@@ -150,7 +150,7 @@
         <fn-bm25_search PURPOSE="rusqlite: открыть clfind.db (WAL, read-only), FTS5 MATCH -> чанки (folder, score)" />
         <fn-aggregate_to_folders PURPOSE="Чистое: чанки -> папки с флагами bm25/dense и лучшим чанком (тестируемо)" />
         <fn-parse_dense_response PURPOSE="Чистое: JSON ответа демона -> папки с dense-скором (ручной разбор)" />
-        <fn-color_of PURPOSE="Чистое: флаги bm25/dense -> цвет подсветки (жёлтый/синий)" />
+        <type-Color PURPOSE="Цвет подсветки папки: Bm25 (жёлтый) | Dense (синий) — модальность, без отдельной функции (dense только при пустом BM25)" />
         <fn-search PURPOSE="Оркестрация: live BM25; при пустом результате -> dense-fallback через M-SDAEMON" />
         <type-FolderHit PURPOSE="Папка-совпадение: folder, bm25, dense, best, цвет" />
       </annotations>

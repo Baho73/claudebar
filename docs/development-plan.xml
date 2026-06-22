@@ -227,7 +227,7 @@
       <verification-ref>V-M-MAIN</verification-ref>
     </M-MAIN>
 
-    <M-SEARCH NAME="Search" TYPE="CORE_LOGIC" LAYER="2" ORDER="5" STATUS="planned">
+    <M-SEARCH NAME="Search" TYPE="CORE_LOGIC" LAYER="2" ORDER="5" STATUS="implemented">
       <contract>
         <purpose>Поиск по чатам с подсветкой папок. Живой BM25 нативно (rusqlite поверх общего clfind.db FTS5, WAL read-only) с 3-го символа; при пустом BM25 — fallback на dense через M-SDAEMON. Агрегация чанков по project_folder, цвет: жёлтый=BM25, синий=dense (зелёного нет). Phase-12.</purpose>
         <inputs><param name="query" type="&amp;str" /><param name="db_path" type="&amp;Path" /></inputs>
@@ -484,7 +484,7 @@
       <goal>Окошко поиска в шапке: живой нативный BM25 (rusqlite по clfind.db) подсвечивает папки жёлтым; при пустом результате поднимается Python-демон и даёт dense (синие). Дизайн: docs/superpowers/specs/2026-06-20-chat-folder-search-design.md (v2).</goal>
       <step-1 module="M-CONFIG" status="done" verification="V-M-CONFIG">Конфиг поиска: search_daemon_cmd, путь clfind.db, порт демона (ключи в claudebar.ini)</step-1>
       <step-2 module="M-SDAEMON" status="done" verification="V-M-SDAEMON">Клиент демона: ensure_running (спавн+поллинг /health), dense_search (HTTP POST через std::net), чистые parse_health/build_dense_request. Демон недоступен -&gt; BM25-only без краха</step-2>
-      <step-3 module="M-SEARCH" status="pending" verification="V-M-SEARCH">rusqlite BM25 по clfind.db (WAL ro) + чистые fts_query (санитизация)/aggregate_to_folders/color/parse_dense_response + оркестрация (bm25 -&gt; пусто -&gt; dense). NB: первым делом проверить сборку rusqlite bundled под GNU</step-3>
+      <step-3 module="M-SEARCH" status="done" verification="V-M-SEARCH">rusqlite BM25 по clfind.db (WAL ro) + чистые fts_query (санитизация)/aggregate_to_folders/color/parse_dense_response + оркестрация (bm25 -&gt; пусто -&gt; dense). NB: первым делом проверить сборку rusqlite bundled под GNU</step-3>
       <step-4 module="M-RENDER" status="pending" verification="V-M-RENDER">Окошко поиска в шапке (Win32 EDIT); подсветка search-hit полосой (жёлтый/синий); блок «Найдено ещё» для закрытых совпадений</step-4>
       <step-5 module="M-MAIN" status="pending" verification="V-M-MAIN">🔍/горячая клавиша открывает поле; ввод -&gt; debounce live BM25; Enter; Esc сброс; спавн-на-пустом через M-SDAEMON</step-5>
       <checkpoint>
