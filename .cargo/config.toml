@@ -1,6 +1,0 @@
-# Phase-12: rusqlite (bundled SQLite/FTS5) под windows-gnu.
-# gcc 16 (w64devkit) слил libgcc_eh в libgcc и не даёт отдельного libgcc_eh.a,
-# который ждёт линковка windows-gnu. Поэтому линкуем self-contained либами Rust.
-# Сборка ТРЕБУЕТ mingw gcc на PATH (w64devkit\bin) для компиляции SQLite-C — см. README.
-[target.x86_64-pc-windows-gnu]
-rustflags = ["-C", "link-self-contained=yes"]
