@@ -38,6 +38,7 @@ features = [
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_Storage_FileSystem",
     "Win32_UI_Shell",
+    "Win32_System_Com",
 ]
 
 [profile.release]

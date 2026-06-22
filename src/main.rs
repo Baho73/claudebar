@@ -37,8 +37,14 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     EnableWindow, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE,
     TRACKMOUSEEVENT, VK_ESCAPE, VK_RETURN,
 };
-use windows::Win32::UI::Shell::ShellExecuteW;
+use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
+    COINIT_APARTMENTTHREADED, STGM_READ,
+};
+use windows::Win32::UI::Shell::{IShellLinkW, ShellExecuteW, ShellLink};
 use windows::Win32::UI::WindowsAndMessaging::*;
+use std::os::windows::ffi::OsStrExt;
 
 const EM_SETSEL: u32 = 0x00B1;
 const WM_MOUSELEAVE: u32 = 0x02A3;
@@ -58,6 +64,7 @@ const ID_LABEL: usize = 20;
 const ID_LABEL_CLEAR: usize = 21;
 const ID_SET_FONT: usize = 30; // меню настроек: выбрать шрифт
 const ID_ABOUT: usize = 31; // меню настроек: о программе
+const ID_TOGGLE_FILES: usize = 32; // меню настроек: искать и в файлах (history)
 const ID_SEARCH: usize = 40; // EDIT-поле поиска в шапке (WM_COMMAND EN_CHANGE)
 const SEARCH_MIN: usize = 3; // живой BM25 начинается с N символов
 const WM_APP_SEARCH: u32 = WM_APP + 1; // dense-результаты из фонового потока
@@ -82,6 +89,7 @@ pub(crate) struct App {
     pub(crate) search_edit: HWND, // EDIT-поле поиска в шапке (null = скрыто)
     pub(crate) tooltip: HWND, // tracking-подсказка (путь/сниппет/правила) — Phase-13 Ф-B
     pub(crate) tip_row: i32, // под подсказкой: -1 нет, -2 строка поиска, >=0 индекс строки
+    pub(crate) search_files: bool, // scope «+Файлы»: искать и в claudebar_files.db — Ф-C
     pub(crate) reorder: bool, // режим перетаскивания: ручки видны, ✕ скрыт
     pub(crate) drag: Option<i32>, // индекс перетаскиваемой строки во время drag
 }
@@ -853,14 +861,80 @@ fn spawn_index(hwnd: HWND) {
     });
 }
 
+// ---------- индекс файлов history (Phase-13 Ф-C) ----------
+static FILES_INDEXING: AtomicBool = AtomicBool::new(false);
+
+// Построить/освежить индекс файлов в фоне (COM-резолв .lnk -> извлечение текста).
+fn spawn_files_index(hwnd: HWND) {
+    if FILES_INDEXING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let files_db = APP.with(|c| c.borrow().as_ref().map(|a| a.config.files_db.clone()).unwrap_or_default());
+    if files_db.is_empty() {
+        FILES_INDEXING.store(false, Ordering::SeqCst);
+        return;
+    }
+    let hwnd_i = hwnd.0 as isize;
+    std::thread::spawn(move || {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        }
+        let docs = collect_history_docs();
+        let _ = index::ensure_files_index(&files_db, &docs);
+        unsafe {
+            CoUninitialize();
+        }
+        FILES_INDEXING.store(false, Ordering::SeqCst);
+        unsafe {
+            let _ = PostMessageW(HWND(hwnd_i as *mut core::ffi::c_void), WM_APP_SEARCH, WPARAM(0), LPARAM(0));
+        }
+    });
+}
+
+// Пути файлов из Windows Recent: резолвим цели всех .lnk, что реально файлы.
+fn collect_history_docs() -> Vec<String> {
+    let Some(appdata) = std::env::var_os("APPDATA") else {
+        return Vec::new();
+    };
+    let dir = std::path::PathBuf::from(appdata).join("Microsoft").join("Windows").join("Recent");
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|s| s.to_str()).map(|s| s.eq_ignore_ascii_case("lnk")) != Some(true) {
+                continue;
+            }
+            if let Some(target) = unsafe { resolve_lnk(&p) } {
+                if std::path::Path::new(&target).is_file() {
+                    out.push(target);
+                }
+            }
+        }
+    }
+    out
+}
+
+// Резолв .lnk -> путь цели через IShellLinkW (вызывать в COM-инициализированном потоке).
+unsafe fn resolve_lnk(lnk: &std::path::Path) -> Option<String> {
+    let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+    let pf: IPersistFile = link.cast().ok()?;
+    let wide: Vec<u16> = lnk.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    pf.Load(PCWSTR(wide.as_ptr()), STGM_READ).ok()?;
+    let mut buf = [0u16; 260];
+    let mut wfd = WIN32_FIND_DATAW::default();
+    link.GetPath(&mut buf, &mut wfd, 0).ok()?;
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    (len > 0).then(|| String::from_utf16_lossy(&buf[..len]))
+}
+
 fn run_live_search(hwnd: HWND) {
     let q = APP.with(|c| c.borrow().as_ref().map(|a| edit_text(a.search_edit)).unwrap_or_default());
     let q = q.trim().to_string();
     APP.with(|c| {
         if let Some(a) = c.borrow_mut().as_mut() {
             if q.chars().count() >= SEARCH_MIN {
-                let bm = search::bm25_search(&a.config.chats_db, &q, "chats", 200);
-                a.search_hits = search::aggregate_to_folders(&bm, search::Color::Bm25);
+                let files_db = a.search_files.then(|| a.config.files_db.clone());
+                a.search_hits = search::search_bm25(&a.config.chats_db, files_db.as_deref(), &q, 200);
             } else {
                 a.search_hits.clear();
             }
@@ -951,6 +1025,9 @@ unsafe fn show_menu(hwnd: HWND) {
 unsafe fn show_settings_menu(hwnd: HWND) {
     let menu = CreatePopupMenu().unwrap_or_default();
     let _ = AppendMenuW(menu, MF_STRING, ID_SET_FONT, w!("Шрифт…"));
+    let files_on = APP.with(|c| c.borrow().as_ref().map(|a| a.search_files).unwrap_or(false));
+    let fflag = if files_on { MF_STRING | MF_CHECKED } else { MF_STRING };
+    let _ = AppendMenuW(menu, fflag, ID_TOGGLE_FILES, w!("Искать в файлах (history)"));
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
     let _ = AppendMenuW(menu, MF_STRING, ID_ABOUT, w!("О программе…"));
     let mut pt = POINT::default();
@@ -984,6 +1061,23 @@ fn handle_command(hwnd: HWND, id: usize) {
     // настройки: окно «О программе» (версия + контакты автора)
     if id == ID_ABOUT {
         settings::show_about(hwnd);
+        return;
+    }
+    // настройки: переключить scope «+Файлы» (history)
+    if id == ID_TOGGLE_FILES {
+        let on = APP.with(|c| {
+            c.borrow_mut()
+                .as_mut()
+                .map(|a| {
+                    a.search_files = !a.search_files;
+                    a.search_files
+                })
+                .unwrap_or(false)
+        });
+        if on {
+            spawn_files_index(hwnd); // построить индекс файлов в фоне
+        }
+        run_live_search(hwnd); // пересчитать выдачу с учётом нового scope
         return;
     }
     // имя проекта по menu_target
@@ -1101,6 +1195,7 @@ fn main() -> Result<()> {
             search_edit: HWND(std::ptr::null_mut()),
             tooltip: HWND(std::ptr::null_mut()),
             tip_row: -1,
+            search_files: false,
             reorder: false,
             drag: None,
         };
