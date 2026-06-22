@@ -1,5 +1,5 @@
 // FILE: src/config.rs
-// VERSION: 1.9.0
+// VERSION: 1.10.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Конфигурация: приложения (по процессу и классу окна), настройки проектов (цвет, метка), свёрнутость секций, «показать все» недавних, позиция, шрифт панели.
 //   SCOPE: палитра, авто-цвет, AppDef (proc/proc_alts/class)/NameMode (вкл. Whole), дефолтный набор приложений (редакторы, Office, терминалы, Проводник), свёрнутость секций, раскрытие/showall недавних, шрифт (font_face/font_size/font_weight), парсинг/сериализация ini.
@@ -15,6 +15,7 @@
 //   NameMode      - извлечение имени: Project{suffix} | Document | DocumentLast | Whole
 //   set_font / font_face / font_size / font_weight - шрифт панели (ключ font=face⇥size⇥weight), дефолт Iosevka Fixed/16/600
 //   visible_start_pos - стартовая позиция окна с учётом конфигурации мониторов: дефолт, если saved вне виртуального экрана
+//   search_db / search_cmd / search_port - конфиг поиска по чатам: путь clfind.db, команда dense-демона, порт (ключи searchdb=/searchcmd=/searchport=) — Phase-12
 //   ProjConf      - настройки проекта: индекс цвета (-1 = авто), метка
 //   PALETTE       - палитра из 8 цветов
 //   auto_color    - детерминированный цвет по имени
@@ -24,7 +25,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.9.0 - fix(grace-fix): visible_start_pos — стартовая позиция с учётом мониторов. После смены конфигурации мониторов сохранённая pos= оказывалась вне виртуального экрана, окно создавалось за экраном (видно лишь в панели задач). M-MAIN теперь клампит через SM_*VIRTUALSCREEN.
+//   LAST_CHANGE: v1.10.0 - Phase-12 Step 1: конфиг поиска (search_db/search_cmd/search_port; ключи searchdb=/searchcmd=/searchport=) для M-SEARCH/M-SDAEMON.
+//   v1.9.0 - fix(grace-fix): visible_start_pos — стартовая позиция с учётом мониторов. После смены конфигурации мониторов сохранённая pos= оказывалась вне виртуального экрана, окно создавалось за экраном (видно лишь в панели задач). M-MAIN теперь клампит через SM_*VIRTUALSCREEN.
 //   v1.8.0 - fix(grace-fix): вес шрифта (font_weight, 3-е поле font=); set_font(face,size,weight). Без веса панель была всегда 600 (жирная) и диалог не предзаполнял стиль.
 //   v1.7.0 - Phase-10 Step 1: AppDef + proc_alts/class; NameMode::Whole; default_apps += терминалы (Windows Terminal, cmd, PowerShell, Git Bash) и Проводник.
 //   v1.6.0 - Phase-9 Step 1: шрифт панели (font_face/font_size, ключ font=, деф. Iosevka Fixed/16); set_font; round-trip.
@@ -47,6 +49,16 @@ use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 pub const DEFAULT_FONT: &str = "Iosevka Fixed";
 pub const DEFAULT_FONT_SIZE: i32 = 16;
 pub const DEFAULT_FONT_WEIGHT: i32 = 600; // полужирный — текущий вид заголовков/имён по умолчанию
+
+// Поиск по чатам (Phase-12): команда запуска dense-демона clfind и его порт.
+pub const DEFAULT_SEARCH_CMD: &str = "D:\\Python\\clfind\\.venv\\Scripts\\pythonw.exe -m clfind.cli serve";
+pub const DEFAULT_SEARCH_PORT: u16 = 8799;
+
+// Путь к индексу clfind по умолчанию: %USERPROFILE%\.clfind\clfind.db.
+fn default_search_db() -> String {
+    let base = std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_default();
+    base.join(".clfind").join("clfind.db").to_string_lossy().into_owned()
+}
 
 pub const PALETTE: [(&str, u8, u8, u8); 8] = [
     ("Синий", 0x5B, 0x8F, 0xF9),
@@ -100,6 +112,9 @@ pub struct Config {
     pub font_size: i32, // базовый кегль (px); мелкий шрифт = font_size-3
     pub font_weight: i32, // насыщенность основного шрифта (100..900); мелкий = min(weight, 400)
     pub pos: Option<(i32, i32)>,
+    pub search_db: String, // путь к индексу clfind.db (нативный BM25 через rusqlite) — Phase-12
+    pub search_cmd: String, // команда запуска dense-демона (clfind serve) — Phase-12
+    pub search_port: u16, // порт HTTP-демона dense — Phase-12
     pub cfg_path: PathBuf,
 }
 
@@ -214,6 +229,9 @@ struct ParsedIni {
     font_size: i32,
     font_weight: i32,
     pos: Option<(i32, i32)>,
+    search_db: String,
+    search_cmd: String,
+    search_port: u16,
 }
 
 fn parse_ini(text: &str) -> ParsedIni {
@@ -227,6 +245,9 @@ fn parse_ini(text: &str) -> ParsedIni {
     let mut font_size: i32 = DEFAULT_FONT_SIZE;
     let mut font_weight: i32 = DEFAULT_FONT_WEIGHT;
     let mut pos: Option<(i32, i32)> = None;
+    let mut search_db: String = default_search_db();
+    let mut search_cmd: String = DEFAULT_SEARCH_CMD.to_string();
+    let mut search_port: u16 = DEFAULT_SEARCH_PORT;
     // START_BLOCK_PARSE_LINES
     for line in text.lines() {
         if let Some(v) = line.strip_prefix("pos=") {
@@ -257,6 +278,20 @@ fn parse_ini(text: &str) -> ParsedIni {
                     if (100..=900).contains(&n) {
                         font_weight = n;
                     }
+                }
+            }
+        } else if let Some(v) = line.strip_prefix("searchdb=") {
+            if !v.trim().is_empty() {
+                search_db = v.to_string();
+            }
+        } else if let Some(v) = line.strip_prefix("searchcmd=") {
+            if !v.trim().is_empty() {
+                search_cmd = v.to_string();
+            }
+        } else if let Some(v) = line.strip_prefix("searchport=") {
+            if let Ok(n) = v.trim().parse::<u16>() {
+                if n != 0 {
+                    search_port = n;
                 }
             }
         } else if let Some(v) = line.strip_prefix("os=") {
@@ -292,7 +327,7 @@ fn parse_ini(text: &str) -> ParsedIni {
         }
     }
     // END_BLOCK_PARSE_LINES
-    ParsedIni { projects, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos }
+    ParsedIni { projects, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, search_port }
 }
 
 impl Config {
@@ -311,6 +346,9 @@ impl Config {
             font_size: p.font_size,
             font_weight: p.font_weight,
             pos: p.pos,
+            search_db: p.search_db,
+            search_cmd: p.search_cmd,
+            search_port: p.search_port,
             cfg_path,
         }
     }
@@ -321,6 +359,9 @@ impl Config {
             out += &format!("pos={},{}\n", x, y);
         }
         out += &format!("font={}\t{}\t{}\n", self.font_face, self.font_size, self.font_weight);
+        out += &format!("searchdb={}\n", self.search_db);
+        out += &format!("searchcmd={}\n", self.search_cmd);
+        out += &format!("searchport={}\n", self.search_port);
         for block in &self.collapsed {
             out += &format!("c={}\n", block);
         }
@@ -473,6 +514,9 @@ mod tests {
             font_size: DEFAULT_FONT_SIZE,
             font_weight: DEFAULT_FONT_WEIGHT,
             pos: None,
+            search_db: String::new(),
+            search_cmd: String::new(),
+            search_port: DEFAULT_SEARCH_PORT,
             cfg_path: PathBuf::new(),
         }
     }
@@ -651,6 +695,24 @@ mod tests {
         assert_eq!(a.color, 3);
         assert_eq!(a.label, "opus");
         assert!(p.projects.get("Empty").is_none());
+    }
+
+    #[test]
+    fn search_config_roundtrip_and_defaults() {
+        // дефолты без ключей в ini
+        let p = parse_ini("");
+        assert_eq!(p.search_port, DEFAULT_SEARCH_PORT);
+        assert!(p.search_db.ends_with("clfind.db"));
+        assert!(p.search_cmd.contains("clfind"));
+        // round-trip serialize -> parse
+        let mut c = cfg(vec![]);
+        c.search_db = "D:\\idx\\clfind.db".into();
+        c.search_cmd = "pythonw.exe -m clfind.cli serve".into();
+        c.search_port = 9100;
+        let p2 = parse_ini(&c.serialize(None));
+        assert_eq!(p2.search_db, "D:\\idx\\clfind.db");
+        assert_eq!(p2.search_cmd, "pythonw.exe -m clfind.cli serve");
+        assert_eq!(p2.search_port, 9100);
     }
 
     #[test]

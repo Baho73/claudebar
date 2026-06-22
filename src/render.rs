@@ -507,6 +507,9 @@ mod tests {
             font_size: crate::config::DEFAULT_FONT_SIZE,
             font_weight: crate::config::DEFAULT_FONT_WEIGHT,
             pos: None,
+            search_db: String::new(),
+            search_cmd: String::new(),
+            search_port: crate::config::DEFAULT_SEARCH_PORT,
             cfg_path: std::path::PathBuf::new(),
         };
         // 2 окна VS Code (app 0) + 1 окно Word (app 2)
@@ -569,6 +572,9 @@ mod tests {
             font_size: crate::config::DEFAULT_FONT_SIZE,
             font_weight: crate::config::DEFAULT_FONT_WEIGHT,
             pos: None,
+            search_db: String::new(),
+            search_cmd: String::new(),
+            search_port: crate::config::DEFAULT_SEARCH_PORT,
             cfg_path: std::path::PathBuf::new(),
         };
         cfg.toggle_collapsed("VS Code");
