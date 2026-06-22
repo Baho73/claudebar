@@ -241,7 +241,7 @@
         <export-parse_dense_response PURPOSE="Чистое: JSON демона -&gt; папки с dense-скором (ручной разбор)" />
         <export-search PURPOSE="Оркестрация: live BM25; пусто -&gt; dense-fallback через M-SDAEMON" />
       </interface>
-      <depends>M-CONFIG, M-SDAEMON</depends>
+      <depends>M-SDAEMON</depends>
       <target><source>src/search.rs</source><tests>src/search.rs (#[cfg(test)] на fts_query/aggregate/parse + bm25 на temp clfind.db)</tests></target>
       <verification-ref>V-M-SEARCH</verification-ref>
     </M-SEARCH>
@@ -259,7 +259,7 @@
         <export-parse_health PURPOSE="Чистое: тело /health -&gt; статус (cold|loading|ready)" />
         <export-build_dense_request PURPOSE="Чистое: запрос -&gt; HTTP-текст POST /search (тестируемо)" />
       </interface>
-      <depends>M-CONFIG</depends>
+      <depends>none</depends>
       <target><source>src/sdaemon.rs</source><tests>src/sdaemon.rs (#[cfg(test)] на parse_health/build_dense_request)</tests></target>
       <verification-ref>V-M-SDAEMON</verification-ref>
     </M-SDAEMON>
@@ -480,13 +480,13 @@
       </checkpoint>
     </Phase-11>
 
-    <Phase-12 name="Поиск по чатам (M-SEARCH)" status="pending">
+    <Phase-12 name="Поиск по чатам (M-SEARCH)" status="done">
       <goal>Окошко поиска в шапке: живой нативный BM25 (rusqlite по clfind.db) подсвечивает папки жёлтым; при пустом результате поднимается Python-демон и даёт dense (синие). Дизайн: docs/superpowers/specs/2026-06-20-chat-folder-search-design.md (v2).</goal>
       <step-1 module="M-CONFIG" status="done" verification="V-M-CONFIG">Конфиг поиска: search_daemon_cmd, путь clfind.db, порт демона (ключи в claudebar.ini)</step-1>
       <step-2 module="M-SDAEMON" status="done" verification="V-M-SDAEMON">Клиент демона: ensure_running (спавн+поллинг /health), dense_search (HTTP POST через std::net), чистые parse_health/build_dense_request. Демон недоступен -&gt; BM25-only без краха</step-2>
       <step-3 module="M-SEARCH" status="done" verification="V-M-SEARCH">rusqlite BM25 по clfind.db (WAL ro) + чистые fts_query (санитизация)/aggregate_to_folders/color/parse_dense_response + оркестрация (bm25 -&gt; пусто -&gt; dense). NB: первым делом проверить сборку rusqlite bundled под GNU</step-3>
       <step-4 module="M-RENDER" status="done" verification="V-M-RENDER">Окошко поиска в шапке (Win32 EDIT); подсветка search-hit полосой (жёлтый/синий); блок «Найдено ещё» для закрытых совпадений</step-4>
-      <step-5 module="M-MAIN" status="pending" verification="V-M-MAIN">🔍/горячая клавиша открывает поле; ввод -&gt; debounce live BM25; Enter; Esc сброс; спавн-на-пустом через M-SDAEMON</step-5>
+      <step-5 module="M-MAIN" status="done" verification="V-M-MAIN">🔍 открывает EDIT-поле; EN_CHANGE -&gt; debounce live BM25; Enter (subclass) -&gt; dense в фоне + PostMessage; Esc сброс; клик «Найдено ещё» -&gt; ShellExecute папки</step-5>
       <checkpoint>
         <tests>cargo test (M-SEARCH: fts_query/санитизация, bm25 на temp clfind.db, aggregate/color, parse_dense_response; M-SDAEMON: parse_health, build_dense_request) зелёные; cargo build --release с rusqlite под GNU</tests>
         <smoke>Набор «telegram» с 3-й буквы подсвечивает папки жёлтым вживую; на заведомо пустом запросе демон поднимается, появляются синие; Esc сбрасывает; демон выключен -&gt; BM25 работает</smoke>
