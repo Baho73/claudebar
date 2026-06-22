@@ -182,6 +182,8 @@
         <fn-parse_transcript PURPOSE="Чистое: jsonl -> (project_folder из cwd, тексты user/assistant без шума)" />
         <fn-chunk_text PURPOSE="Чистое: длинный текст -> чанки ~512 слов" />
         <fn-init_schema PURPOSE="DDL: chunks + chunks_fts(unicode61) + files_meta(mtime) — совместимо с читателем M-SEARCH" />
+        <fn-extract_text PURPOSE="Текст файла по расширению: txt/md/xer/код напрямую; xlsx=calamine; docx/pptx=zip+xml; pdf=pdf-extract — Ф-C" />
+        <fn-ensure_files_index PURPOSE="Инкрементально проиндексировать список доков history в claudebar_files.db (source=file) — Ф-C" />
         <type-IndexStats PURPOSE="Итог прогона: добавлено/пропущено файлов и чанков" />
       </annotations>
     </M-INDEX>

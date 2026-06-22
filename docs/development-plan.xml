@@ -55,11 +55,31 @@
       <security>Чистый Rust-парсер; известных критичных CVE нет</security>
       <blast-radius>Импортируется только в M-INDEX (парс транскриптов) — изолировано</blast-radius>
     </dep-serde_json>
-    <dep-files-extract phase="Phase-13" status="Ф-C (отложено до step-6)">
-      <crate-calamine>xlsx/xls/ods на чистом Rust; обоснование детально перед step-6</crate-calamine>
-      <crate-zip>docx/pptx = zip + xml; снятие тегов</crate-zip>
-      <crate-pdf-extract>pdf -&gt; текст (чистый Rust, капризен — risk-19)</crate-pdf-extract>
-      <note>Полная dependency-discipline по каждому — отдельными блоками перед началом Ф-C, не сейчас</note>
+    <dep-files-extract phase="Phase-13" status="Ф-C step-6 done — собраны под GNU">
+      <dep-calamine crate="calamine" version="0.26">
+        <duplicate>Нет: чтение xlsx/xls/xlsm/ods из Rust</duplicate>
+        <size>Чистый Rust (тянет zip+quick-xml); собирается под GNU без C</size>
+        <maintenance>tafia/calamine — активно, де-факто стандарт Excel в Rust</maintenance>
+        <license>MIT — совместимо</license>
+        <security>Чистый Rust-парсер; критичных CVE нет</security>
+        <blast-radius>Только M-INDEX (extract_spreadsheet)</blast-radius>
+      </dep-calamine>
+      <dep-zip crate="zip" version="2" features="deflate, default-features=false">
+        <duplicate>Нет: docx/pptx — zip-контейнеры, распаковка xml</duplicate>
+        <size>Чистый Rust; deflate через miniz_oxide (без zlib C)</size>
+        <maintenance>zip-rs — активно</maintenance>
+        <license>MIT — совместимо</license>
+        <security>default-features off (без bzip2/zstd C-бэкендов)</security>
+        <blast-radius>Только M-INDEX (extract_ooxml)</blast-radius>
+      </dep-zip>
+      <dep-pdf-extract crate="pdf-extract" version="0.7">
+        <duplicate>Нет: текст из PDF</duplicate>
+        <size>Чистый Rust (lopdf и пр.); тяжеловат, собрался под GNU</size>
+        <maintenance>jrmuizel/pdf-extract — поддерживается</maintenance>
+        <license>MIT — совместимо</license>
+        <security>Чистый Rust; PDF капризен -&gt; пер-файл try (risk-19)</security>
+        <blast-radius>Только M-INDEX (extract_text pdf-ветка)</blast-radius>
+      </dep-pdf-extract>
     </dep-files-extract>
     <new-features-v04>Этап v0.4 новых внешних крейтов НЕ добавляет. Новые features уже подключённого windows 0.58: Win32_UI_Controls_Dialogs (ChooseFontW для M-SETTINGS) и Win32_System_Diagnostics_ToolHelp (CreateToolhelp32Snapshot / PROCESSENTRY32W / Process32FirstW/NextW для разрешения shell-клиента консоли в M-WINENUM). GetClassNameW — уже в Win32_UI_WindowsAndMessaging. Хранение шрифта — std::fs (ключ font= в ini), без новых вызовов. duplicate-check: snapshot процессов делается раз на опрос (не на окно), дешево; ChooseFontW — стандартный нативный диалог, лицензия/размер/CVE без изменений.</new-features-v04>
   </DependencyRationale>
@@ -555,7 +575,7 @@
       <!-- Фаза B: тултипы -->
       <step-5 module="M-MAIN" status="done" verification="V-M-MAIN">Win32-подсказки (задержка ~0.5с): полный путь на обрезанных строках; путь+сниппет для чат-результатов; правила синтаксиса над строкой поиска</step-5>
       <!-- Фаза C: индекс файлов -->
-      <step-6 module="M-INDEX" status="pending" verification="V-M-INDEX">Расширение: history (Recent) -&gt; извлечение текста (md/txt напрямую; xlsx=calamine; docx/pptx=zip+xml; pdf=pdf-extract; xer=текст) -&gt; claudebar_files.db. Зависимости calamine/zip/pdf-extract (обосновать перед step-6)</step-6>
+      <step-6 module="M-INDEX" status="done" verification="V-M-INDEX">Расширение: history (Recent) -&gt; извлечение текста (md/txt напрямую; xlsx=calamine; docx/pptx=zip+xml; pdf=pdf-extract; xer=текст) -&gt; claudebar_files.db. Зависимости calamine/zip/pdf-extract (обосновать перед step-6)</step-6>
       <step-7 module="M-SEARCH" status="pending" verification="V-M-SEARCH">Параллельный запрос в обе базы (chats+files), слияние по папке</step-7>
       <step-8 module="M-MAIN" status="pending" verification="V-M-MAIN">Кнопка «+Файлы»: scope chats|all</step-8>
       <checkpoint>

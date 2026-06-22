@@ -218,6 +218,7 @@
         <scenario-3 kind="success">ensure_index на temp dir с фейковыми jsonl -&gt; claudebar_chats.db (chunks+chunks_fts) заполнена; FTS5 MATCH находит слово</scenario-3>
         <scenario-4 kind="success">Инкремент по mtime: повторный ensure_index без изменений не переиндексирует (files_meta); изменённый файл — переиндексирует</scenario-4>
         <scenario-5 kind="failure">Битая/незнакомая строка jsonl -&gt; пропуск (skip), не паника; индексация продолжается</scenario-5>
+        <scenario-6 kind="success">Ф-C: extract_text — txt/md дают текст, .mpp/неизвестное -&gt; None; strip_xml_text оставляет текстовые узлы; ensure_files_index пишет source='file', FTS5 находит слово, инкремент по mtime</scenario-6>
       </scenarios>
     </V-M-INDEX>
   </ModuleVerification>
