@@ -13,6 +13,17 @@ features = ["bundled"]
 [dependencies.serde_json]
 version = "1"
 
+[dependencies.calamine]
+version = "0.26"
+
+[dependencies.zip]
+version = "2"
+default-features = false
+features = ["deflate"]
+
+[dependencies.pdf-extract]
+version = "0.7"
+
 [dependencies.windows]
 version = "0.58"
 features = [

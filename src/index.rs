@@ -1,5 +1,5 @@
 // FILE: src/index.rs
-// VERSION: 1.0.0
+// VERSION: 1.1.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Rust-индексатор BM25: транскрипты Claude Code (~/.claude/projects/**/*.jsonl) -> чанки -> FTS5 claudebar_chats.db. Инкремент по mtime. Своя база (заменяет Python-сборку BM25; clfind остаётся для отложенного dense). Phase-13.
 //   SCOPE: init_schema (DDL), parse_transcript/chunk_text (чистые, тестируемые), ensure_index (инкрементальный обход + запись).
@@ -16,11 +16,15 @@
 //   parse_transcript   - чистое: jsonl -> Transcript (cwd + тексты, шум отсеян)
 //   chunk_text         - чистое: текст -> чанки ~N слов (хвост не теряется)
 //   ensure_index       - инкрементальный обход projects_root, запись новых/изменённых (mtime)
-//   message_text / collect_jsonl / index_file / load_meta - приватные помощники
+//   extract_text       - чистое-ish: текст файла по расширению (txt/md/xer/код; xlsx=calamine; docx/pptx=zip+xml; pdf=pdf-extract)
+//   ensure_files_index - инкрементально проиндексировать список доков history в claudebar_files.db (source='file')
+//   strip_xml_text     - чистое: снять теги OOXML, оставить текстовые узлы
+//   message_text / collect_jsonl / index_file / index_doc / load_meta / mtime_secs - приватные помощники
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.0.0 - Phase-13 Ф-A step-1: новый Rust-индексатор. Транскрипты -> FTS5 claudebar_chats.db, инкремент по mtime; чистые parse_transcript/chunk_text + ensure_index (serde_json для парса).
+//   LAST_CHANGE: v1.1.0 - Phase-13 Ф-C step-6: индекс файлов history. extract_text (txt/md/xer/код напрямую; xlsx=calamine; docx/pptx=zip+xml; pdf=pdf-extract) + ensure_files_index (source='file', инкремент по mtime). Крейты calamine/zip/pdf-extract.
+//   v1.0.0 - Phase-13 Ф-A step-1: новый Rust-индексатор. Транскрипты -> FTS5 claudebar_chats.db, инкремент по mtime; чистые parse_transcript/chunk_text + ensure_index (serde_json для парса).
 // END_CHANGE_SUMMARY
 
 use std::collections::HashMap;
@@ -251,6 +255,167 @@ fn index_file(conn: &mut Connection, key: &str, path: &Path, mtime: i64) -> Opti
     Some(n)
 }
 
+// ---------- индекс файлов (Phase-13 Ф-C) ----------
+
+// START_CONTRACT: extract_text
+//   PURPOSE: Извлечь текст из файла по расширению (для индекса файлов).
+//   INPUTS: { path: &Path }
+//   OUTPUTS: { Option<String> - текст или None (формат не поддержан / пусто / ошибка) }
+//   SIDE_EFFECTS: чтение файла; битый файл -> None (пер-файл try, не паника)
+// END_CONTRACT: extract_text
+pub fn extract_text(path: &Path) -> Option<String> {
+    let ext = path.extension().and_then(|e| e.to_str())?.to_lowercase();
+    match ext.as_str() {
+        // плоский текст / код / разметка / Primavera .xer
+        "md" | "txt" | "json" | "py" | "html" | "htm" | "csv" | "xer" | "log" | "rs" | "toml"
+        | "yaml" | "yml" | "ini" | "tex" | "srt" | "vtt" => fs::read_to_string(path).ok(),
+        "xlsx" | "xls" | "xlsm" | "xlsb" | "ods" => extract_spreadsheet(path),
+        "docx" | "pptx" => extract_ooxml(path),
+        "pdf" => pdf_extract::extract_text(path).ok().filter(|s| !s.trim().is_empty()),
+        _ => None, // .mpp (бинарный OLE), картинки/медиа и пр. — пропуск
+    }
+}
+
+// Таблицы (Excel/ODS) через calamine: все листы, ячейки через пробел.
+fn extract_spreadsheet(path: &Path) -> Option<String> {
+    use calamine::{open_workbook_auto, Data, Reader};
+    let mut wb = open_workbook_auto(path).ok()?;
+    let mut out = String::new();
+    for name in wb.sheet_names() {
+        if let Ok(range) = wb.worksheet_range(&name) {
+            for row in range.rows() {
+                for cell in row {
+                    if !matches!(cell, Data::Empty) {
+                        out.push_str(&cell.to_string());
+                        out.push(' ');
+                    }
+                }
+                out.push('\n');
+            }
+        }
+    }
+    (!out.trim().is_empty()).then_some(out)
+}
+
+// OOXML (docx/pptx): достать текстовые узлы из document.xml / слайдов (грубое снятие тегов).
+fn extract_ooxml(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let file = fs::File::open(path).ok()?;
+    let mut zip = zip::ZipArchive::new(file).ok()?;
+    let mut out = String::new();
+    for i in 0..zip.len() {
+        let name = match zip.by_index(i) {
+            Ok(f) => f.name().to_string(),
+            Err(_) => continue,
+        };
+        let target = name == "word/document.xml"
+            || (name.starts_with("ppt/slides/slide") && name.ends_with(".xml"));
+        if target {
+            if let Ok(mut f) = zip.by_index(i) {
+                let mut xml = String::new();
+                if f.read_to_string(&mut xml).is_ok() {
+                    out.push_str(&strip_xml_text(&xml));
+                    out.push(' ');
+                }
+            }
+        }
+    }
+    (!out.trim().is_empty()).then_some(out)
+}
+
+// Грубо: убрать теги, оставить текстовые узлы; схлопнуть пробелы.
+fn strip_xml_text(xml: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for c in xml.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                out.push(' ');
+            }
+            _ if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn mtime_secs(meta: &fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+// START_CONTRACT: ensure_files_index
+//   PURPOSE: Инкрементально проиндексировать заданные файлы (история) в claudebar_files.db.
+//   INPUTS: { files_db: &str; paths: &[String] - пути доков из history }
+//   OUTPUTS: { IndexStats }
+//   SIDE_EFFECTS: создаёт/пишет files_db (chunks source='file'); ошибка файла -> пропуск
+// END_CONTRACT: ensure_files_index
+pub fn ensure_files_index(files_db: &str, paths: &[String]) -> IndexStats {
+    let mut stats = IndexStats::default();
+    let Ok(mut conn) = Connection::open(files_db) else {
+        return stats;
+    };
+    if init_schema(&conn).is_err() {
+        return stats;
+    }
+    let known = load_meta(&conn);
+    for key in paths {
+        let path = Path::new(key);
+        let Ok(meta) = fs::metadata(path) else {
+            stats.files_skipped += 1;
+            continue;
+        };
+        let mtime = mtime_secs(&meta);
+        if known.get(key) == Some(&mtime) {
+            stats.files_skipped += 1;
+            continue;
+        }
+        match index_doc(&mut conn, key, path, mtime) {
+            Some(n) => {
+                stats.files_indexed += 1;
+                stats.chunks_added += n;
+            }
+            None => stats.files_skipped += 1,
+        }
+    }
+    stats
+}
+
+// Проиндексировать один документ: извлечь текст, чанковать, записать (source='file').
+fn index_doc(conn: &mut Connection, key: &str, path: &Path, mtime: i64) -> Option<usize> {
+    let text = extract_text(path)?;
+    let folder = path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    let fname = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+    let tx = conn.transaction().ok()?;
+    let _ = tx.execute(
+        "DELETE FROM chunks_fts WHERE rowid IN (SELECT id FROM chunks WHERE ref=?1)",
+        params![key],
+    );
+    let _ = tx.execute("DELETE FROM chunks WHERE ref=?1", params![key]);
+    let mut n = 0;
+    for chunk in chunk_text(&text, CHUNK_WORDS) {
+        if tx
+            .execute(
+                "INSERT INTO chunks(project_folder, source, ref, location, text) VALUES(?1,'file',?2,?3,?4)",
+                params![folder, key, fname, chunk],
+            )
+            .is_ok()
+        {
+            let id = tx.last_insert_rowid();
+            let _ = tx.execute("INSERT INTO chunks_fts(rowid, text) VALUES(?1, ?2)", params![id, chunk]);
+            n += 1;
+        }
+    }
+    let _ = tx.execute("INSERT OR REPLACE INTO files_meta(path, mtime) VALUES(?1, ?2)", params![key, mtime]);
+    tx.commit().ok()?;
+    Some(n)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +480,50 @@ mod tests {
         assert_eq!(s2.files_indexed, 0);
         assert_eq!(s2.files_skipped, 1);
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extract_text_plain_and_unknown() {
+        let dir = std::env::temp_dir().join(format!("clbar_ext_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let md = dir.join("note.md");
+        std::fs::write(&md, "# Заметка\nконденсатор и подстроечник").unwrap();
+        assert!(extract_text(&md).unwrap().contains("подстроечник"));
+        let bin = dir.join("plan.mpp"); // бинарный, не поддержан -> None
+        std::fs::write(&bin, [0u8, 1, 2]).unwrap();
+        assert!(extract_text(&bin).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn strip_xml_text_keeps_text_nodes() {
+        assert_eq!(strip_xml_text("<w:t>Привет</w:t><w:t>мир</w:t>"), "Привет мир");
+        assert_eq!(strip_xml_text("<a><b>x</b> y</a>"), "x y");
+    }
+
+    #[test]
+    fn ensure_files_index_indexes_doc() {
+        let dir = std::env::temp_dir().join(format!("clbar_files_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("смета.txt");
+        std::fs::write(&f, "договор подряда и смета на фундамент").unwrap();
+        let dbs = dir.join("files.db").to_string_lossy().to_string();
+        let paths = vec![f.to_string_lossy().to_string()];
+
+        let s = ensure_files_index(&dbs, &paths);
+        assert_eq!(s.files_indexed, 1);
+        let conn = Connection::open(&dbs).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM chunks_fts WHERE chunks_fts MATCH 'смета'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+        let src: String = conn.query_row("SELECT source FROM chunks LIMIT 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(src, "file");
+        drop(conn);
+        assert_eq!(ensure_files_index(&dbs, &paths).files_indexed, 0); // инкремент
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
