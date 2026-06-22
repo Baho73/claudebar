@@ -1,5 +1,5 @@
 // FILE: src/icon.rs
-// VERSION: 1.1.0
+// VERSION: 1.2.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Иконка приложения для заголовка секции: взять у exe-файла приложения (SHGetFileInfo), кэшировать по приложению.
 //   SCOPE: полный путь exe по окну, извлечение HICON из exe, ленивый кэш по индексу приложения.
@@ -13,10 +13,12 @@
 //   section_icon  - HICON приложения по образцовому окну секции, с кэшем по app_idx
 //   exe_path      - полный путь exe процесса окна
 //   icon_from_path- иконка (small) из файла через SHGetFileInfo
+//   path_icon     - иконка по пути файла/папки с кэшем (строки «Найдено ещё») — Phase-12
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.1.0 - fix: иконки не отображались у Cursor/Word/Excel/MS Project. Источник переведён с иконки окна (WM_GETICON/class, кросс-процессно ненадёжен) на иконку exe-файла (SHGetFileInfo); негативный результат больше не кэшируется.
+//   LAST_CHANGE: v1.2.0 - Phase-12: path_icon — иконка по пути (папки в «Найдено ещё»), кэш по пути.
+//   v1.1.0 - fix: иконки не отображались у Cursor/Word/Excel/MS Project. Источник переведён с иконки окна (WM_GETICON/class, кросс-процессно ненадёжен) на иконку exe-файла (SHGetFileInfo); негативный результат больше не кэшируется.
 //   v1.0.0 - Phase-5 Step 1: иконки приложений в заголовках секций.
 // END_CHANGE_SUMMARY
 
@@ -35,6 +37,11 @@ use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, HICON};
 thread_local! {
     // app_idx -> raw HICON (isize). Кэшируем только успешный результат (негатив повторяем).
     static CACHE: RefCell<HashMap<usize, isize>> = RefCell::new(HashMap::new());
+}
+
+thread_local! {
+    // path -> raw HICON (isize): иконки по пути (папки в «Найдено ещё») — Phase-12
+    static PATH_CACHE: RefCell<HashMap<String, isize>> = RefCell::new(HashMap::new());
 }
 
 fn nonzero(h: isize) -> Option<HICON> {
@@ -64,6 +71,25 @@ pub fn section_icon(app_idx: usize, sample: HWND) -> Option<HICON> {
         });
     }
     // END_BLOCK_RESOLVE_ICON
+    nonzero(raw)
+}
+
+// START_CONTRACT: path_icon
+//   PURPOSE: Иконка по пути файла/папки (для строк «Найдено ещё»), с кэшем по пути.
+//   INPUTS: { path: &str }
+//   OUTPUTS: { Option<HICON> - иконка 16x16 или None }
+//   SIDE_EFFECTS: SHGetFileInfo; пишет в thread-local кэш (только успех)
+// END_CONTRACT: path_icon
+pub fn path_icon(path: &str) -> Option<HICON> {
+    if let Some(h) = PATH_CACHE.with(|c| c.borrow().get(path).copied()) {
+        return nonzero(h);
+    }
+    let raw = unsafe { icon_from_path(path) }.map(|i| i.0 as isize).unwrap_or(0);
+    if raw != 0 {
+        PATH_CACHE.with(|c| {
+            c.borrow_mut().insert(path.to_string(), raw);
+        });
+    }
     nonzero(raw)
 }
 

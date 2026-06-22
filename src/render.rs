@@ -1,5 +1,5 @@
 // FILE: src/render.rs
-// VERSION: 1.10.0
+// VERSION: 1.11.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Построение строк-секций и отрисовка панели (GDI, двойной буфер) с группировкой по приложению.
 //   SCOPE: геометрия/цвета, Row, build_rows, paint (секции+иконки+окна+недавние+подсветка звоночка), resize, row_at.
@@ -20,7 +20,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.10.0 - Phase-12 Step 4: глиф «🔍» в шапке; подсветка совпавших открытых папок цветной полосой (🟡 BM25 / 🔵 dense); Row::SearchHeader/SearchResult + блок «Найдено ещё»; чистые folder_project/search_color_for/search_result_rows.
+//   LAST_CHANGE: v1.11.0 - Phase-12 polish: поле поиска постоянно в шапке (не по клику 🔍); «≡» слева — ручка drag; индикатор совпадения = иконка в цветной рамке (draw_framed_icon, 🟡 BM25 / 🔵 dense) вместо тонкой полосы; иконки в «Найдено ещё» (icon::path_icon).
+//   v1.10.0 - Phase-12 Step 4: глиф «🔍» в шапке; подсветка совпавших открытых папок цветной полосой (🟡 BM25 / 🔵 dense); Row::SearchHeader/SearchResult + блок «Найдено ещё»; чистые folder_project/search_color_for/search_result_rows.
 //   v1.9.0 - Phase-9 Step 3: глиф «⚙» (настройки) в шапке слева от «✕»; pub HEAD_BTN_W — общая ширина кнопок шапки.
 //   v1.8.0 - fix: перетаскивание необнаружимо. В режиме reorder хватается вся строка (не только ручка), шапка показывает подсказку «↕ Порядок».
 //   v1.7.0 - Phase-8 Step 2: ручной порядок в build_rows, Zone::DragHandle, ручки и подсветка drag.
@@ -114,6 +115,13 @@ unsafe fn draw_handle(hdc: HDC, rx: i32, top: i32) {
             fill(hdc, RECT { left: x, top: y, right: x + 2, bottom: y + 2 }, C_DIM);
         }
     }
+}
+
+// иконка 16x16 в цветной рамке (2px) — индикатор совпадения поиска (🟡/🔵)
+unsafe fn draw_framed_icon(hdc: HDC, x: i32, top: i32, icon: HICON, c: (u8, u8, u8)) {
+    let fy = top + (ROW - 20) / 2;
+    fill(hdc, RECT { left: x, top: fy, right: x + 20, bottom: fy + 20 }, c);
+    let _ = DrawIconEx(hdc, x + 2, fy + 2, icon, 16, 16, 0, HBRUSH(std::ptr::null_mut()), DI_NORMAL);
 }
 
 // START_CONTRACT: build_rows
@@ -211,8 +219,8 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
         dt(mem, "↕ Порядок — тащите строки, ПКМ — выход", RECT { left: 10, top: 0, right: w - 8, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
     } else {
         SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
-        dt(mem, "≡ ClaudeBar", RECT { left: 10, top: 0, right: w - 3 * HEAD_BTN_W, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
-        dt(mem, "🔍", RECT { left: w - 3 * HEAD_BTN_W, top: 0, right: w - 2 * HEAD_BTN_W, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+        dt(mem, "≡", RECT { left: 4, top: 0, right: 18, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+        // окошко поиска (child EDIT) занимает середину шапки [18 .. w-2*HEAD_BTN_W]
         dt(mem, "⚙", RECT { left: w - 2 * HEAD_BTN_W, top: 0, right: w - HEAD_BTN_W, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
         dt(mem, "✕", RECT { left: w - HEAD_BTN_W, top: 0, right: w, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
     }
@@ -273,10 +281,14 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                     fill(mem, full, C_HOVER);
                 }
                 // END_BLOCK_ROW_BG_WINDOW
-                // подсветка поиска: совпавшая открытая папка — цветная левая полоса (🟡/🔵)
-                if let Some(col) = search_color_for(&app.search_hits, &it.name.to_lowercase()) {
-                    let bar = match col { Color::Bm25 => C_SRCH_BM25, Color::Dense => C_SRCH_DENSE };
-                    fill(mem, RECT { left: 0, top, right: 3, bottom: top + ROW }, bar);
+                // подсветка поиска: иконка приложения в цветной рамке слева (🟡/🔵)
+                if let Some(scol) = search_color_for(&app.search_hits, &it.name.to_lowercase()) {
+                    let fc = match scol { Color::Bm25 => C_SRCH_BM25, Color::Dense => C_SRCH_DENSE };
+                    if let Some(hicon) = icon::section_icon(it.app, it.hwnd) {
+                        draw_framed_icon(mem, 0, top, hicon, fc);
+                    } else {
+                        fill(mem, RECT { left: 0, top, right: 5, bottom: top + ROW }, fc);
+                    }
                 }
                 // цветная плашка (с отступом — окна вложены в секцию)
                 let cy = top + (ROW - SWATCH) / 2;
@@ -357,11 +369,18 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                     fill(mem, full, C_HOVER);
                 }
                 let h = &app.search_hits[*hit];
-                let bar = match h.color { Color::Bm25 => C_SRCH_BM25, Color::Dense => C_SRCH_DENSE };
-                fill(mem, RECT { left: 0, top, right: 3, bottom: top + ROW }, bar);
+                let fc = match h.color { Color::Bm25 => C_SRCH_BM25, Color::Dense => C_SRCH_DENSE };
+                // иконка папки/проекта в цветной рамке (вместо тонкой полосы)
+                match icon::path_icon(&h.folder) {
+                    Some(hicon) => draw_framed_icon(mem, 10, top, hicon, fc),
+                    None => {
+                        let fy = top + (ROW - 20) / 2;
+                        fill(mem, RECT { left: 10, top: fy, right: 30, bottom: fy + 20 }, fc);
+                    }
+                }
                 SelectObject(mem, app.font_main);
-                SetTextColor(mem, rgb(C_REC.0, C_REC.1, C_REC.2));
-                dt(mem, &folder_project(&h.folder), RECT { left: 12, top, right: w - 10, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+                SetTextColor(mem, rgb(C_TXT.0, C_TXT.1, C_TXT.2));
+                dt(mem, &folder_project(&h.folder), RECT { left: 36, top, right: w - 10, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
             }
         }
         // разделитель

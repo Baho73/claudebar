@@ -41,6 +41,7 @@ const ID_ABOUT: usize = 31; // меню настроек: о программе
 const ID_SEARCH: usize = 40; // EDIT-поле поиска в шапке (WM_COMMAND EN_CHANGE)
 const SEARCH_MIN: usize = 3; // живой BM25 начинается с N символов
 const WM_APP_SEARCH: u32 = WM_APP + 1; // dense-результаты из фонового потока
+const EM_SETCUEBANNER: u32 = 0x1501; // подсказка-заглушка в пустом EDIT
 
 // ---------- состояние ----------
 pub(crate) struct App {
@@ -289,10 +290,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                         let _ = DestroyWindow(hwnd);
                     } else if x >= w - 2 * render::HEAD_BTN_W {
                         show_settings_menu(hwnd);
-                    } else if x >= w - 3 * render::HEAD_BTN_W {
-                        toggle_search(hwnd);
                     } else {
-                        // тянем панель за шапку
+                        // тянем панель за шапку («≡» слева и зазоры; поле поиска ловит свои клики)
                         let _ = ReleaseCapture();
                         SendMessageW(hwnd, WM_NCLBUTTONDOWN, WPARAM(HTCAPTION as usize), LPARAM(0));
                     }
@@ -456,6 +455,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                             if let Some(a) = c.borrow_mut().as_mut() {
                                 a.reorder = !a.reorder;
                                 a.drag = None;
+                                // в режиме reorder прячем поле поиска (под ним подсказка)
+                                let _ = ShowWindow(a.search_edit, if a.reorder { SW_HIDE } else { SW_SHOW });
                             }
                         });
                         let _ = InvalidateRect(hwnd, None, BOOL(0));
@@ -546,24 +547,18 @@ fn rebuild_rows(app: &mut App) {
     }
 }
 
-// Открыть/закрыть окошко поиска (клик «🔍» в шапке).
-unsafe fn toggle_search(hwnd: HWND) {
-    let (edit, hinst, font) = APP.with(|c| {
-        c.borrow().as_ref().map(|a| (a.search_edit, a.hinst, a.font_small)).unwrap_or_default()
-    });
-    if !edit.0.is_null() {
-        close_search(hwnd);
-        return;
-    }
-    let w = client_w(hwnd);
-    let new = CreateWindowExW(
+// Создать постоянное окошко поиска в шапке (один раз при старте).
+unsafe fn create_search_box(hwnd: HWND) {
+    let (hinst, font) =
+        APP.with(|c| c.borrow().as_ref().map(|a| (a.hinst, a.font_small)).unwrap_or_default());
+    let edit = CreateWindowExW(
         WINDOW_EX_STYLE(0),
         w!("EDIT"),
         PCWSTR::null(),
         WS_CHILD | WS_VISIBLE | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
-        6,
+        18, // слева оставлен «≡» как ручка перетаскивания панели
         2,
-        w - 3 * render::HEAD_BTN_W - 10,
+        render::W - 2 * render::HEAD_BTN_W - 22,
         render::HEAD - 4,
         hwnd,
         HMENU(ID_SEARCH as *mut core::ffi::c_void),
@@ -571,36 +566,28 @@ unsafe fn toggle_search(hwnd: HWND) {
         None,
     )
     .unwrap_or_default();
-    if new.0.is_null() {
+    if edit.0.is_null() {
         return;
     }
-    SendMessageW(new, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
+    SendMessageW(edit, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
+    let cue: Vec<u16> = "Поиск по чатам…".encode_utf16().chain(std::iter::once(0)).collect();
+    SendMessageW(edit, EM_SETCUEBANNER, WPARAM(1), LPARAM(cue.as_ptr() as isize));
     // субкласс EDIT для перехвата Enter/Esc
-    let old = SetWindowLongPtrW(new, GWLP_WNDPROC, search_edit_proc as *const () as isize);
+    let old = SetWindowLongPtrW(edit, GWLP_WNDPROC, search_edit_proc as *const () as isize);
     SEARCH_OLDPROC.with(|p| p.set(old));
     APP.with(|c| {
         if let Some(a) = c.borrow_mut().as_mut() {
-            a.search_edit = new;
+            a.search_edit = edit;
         }
     });
-    let _ = SetFocus(new);
 }
 
-unsafe fn close_search(hwnd: HWND) {
+// Esc: очистить поиск (текст -> EN_CHANGE снимет подсветку); поле остаётся открытым.
+unsafe fn clear_search() {
     let edit = APP.with(|c| c.borrow().as_ref().map(|a| a.search_edit).unwrap_or_default());
     if !edit.0.is_null() {
-        let _ = DestroyWindow(edit);
+        let _ = SetWindowTextW(edit, w!(""));
     }
-    APP.with(|c| {
-        if let Some(a) = c.borrow_mut().as_mut() {
-            a.search_edit = HWND(std::ptr::null_mut());
-            a.search_hits.clear();
-            rebuild_rows(a);
-            render::resize(hwnd, a);
-        }
-    });
-    let _ = SetFocus(hwnd);
-    let _ = InvalidateRect(hwnd, None, BOOL(0));
 }
 
 // Субкласс EDIT: Enter -> dense, Esc -> закрыть; прочее в старый proc.
@@ -613,7 +600,7 @@ extern "system" fn search_edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 return LRESULT(0);
             }
             if vk == VK_ESCAPE.0 as u32 {
-                close_search(GetParent(hwnd).unwrap_or_default());
+                clear_search();
                 return LRESULT(0);
             }
         }
@@ -949,6 +936,7 @@ fn main() -> Result<()> {
         APP.with(|c| *c.borrow_mut() = Some(app));
 
         let _ = ShowWindow(hwnd, SW_SHOW);
+        create_search_box(hwnd);
         SetTimer(hwnd, 1, 1000, None);
 
         let mut msg = MSG::default();
