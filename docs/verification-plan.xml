@@ -183,7 +183,7 @@
         <check-2>Ручной smoke: поиск «telegram» подсвечивает папки жёлтым; на пустом BM25 поднимается демон и появляются синие</check-2>
       </module-checks>
       <scenarios>
-        <scenario-1 kind="success">fts_query: «telegr» -> «telegr*»; многословный -> точные + префикс последнего; кириллица сохраняется</scenario-1>
+        <scenario-1 kind="success">fts_query Google-синтаксис: пробел=И (a b*); a+b=фраза («a b»); a++b=NEAR(a b, 10); -w=исключить ((q) NOT w); OR=или; последнее слово — префикс; кириллица сохраняется. Тест fts_query_operators</scenario-1>
         <scenario-2 kind="failure">fts_query санитизирует спецсимволы FTS5 (инъекция невозможна): ввод с кавычками/операторами -> только \w+ токены</scenario-2>
         <scenario-3 kind="success">bm25_search против временной clfind.db (создать FTS5 в тесте через rusqlite, вставить чанки) -> верные папки по префиксу</scenario-3>
         <scenario-4 kind="success">aggregate_to_folders: чанки нескольких папок -> дедуп по папке, флаги bm25/dense, лучший чанк; color_of(bm25-only)=жёлтый, (dense-only)=синий</scenario-4>
