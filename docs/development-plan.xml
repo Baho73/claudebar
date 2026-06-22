@@ -576,7 +576,7 @@
       <step-5 module="M-MAIN" status="done" verification="V-M-MAIN">Win32-подсказки (задержка ~0.5с): полный путь на обрезанных строках; путь+сниппет для чат-результатов; правила синтаксиса над строкой поиска</step-5>
       <!-- Фаза C: индекс файлов -->
       <step-6 module="M-INDEX" status="done" verification="V-M-INDEX">Расширение: history (Recent) -&gt; извлечение текста (md/txt напрямую; xlsx=calamine; docx/pptx=zip+xml; pdf=pdf-extract; xer=текст) -&gt; claudebar_files.db. Зависимости calamine/zip/pdf-extract (обосновать перед step-6)</step-6>
-      <step-7 module="M-SEARCH" status="pending" verification="V-M-SEARCH">Параллельный запрос в обе базы (chats+files), слияние по папке</step-7>
+      <step-7 module="M-SEARCH" status="done" verification="V-M-SEARCH">search_bm25: запрос в обе базы (chats+files), слияние по папке; bm25_search фильтрует source по scope</step-7>
       <step-8 module="M-MAIN" status="pending" verification="V-M-MAIN">Кнопка «+Файлы»: scope chats|all</step-8>
       <checkpoint>
         <tests>cargo test зелёные (M-INDEX: parse_transcript/chunk_text, ensure_index на temp dir; M-SEARCH: snippet_for, параллельный запрос); cargo build --release под GNU (serde_json + Ф-C крейты)</tests>

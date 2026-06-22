@@ -151,6 +151,7 @@
         <fn-fts_query PURPOSE="Чистое: ввод -> FTS5 MATCH (токены \w+, последний как префикс term*); защита от инъекции" />
         <fn-bm25_search PURPOSE="rusqlite: открыть свою claudebar_chats.db (read-only), FTS5 MATCH -> чанки (folder, score)" />
         <fn-snippet_for PURPOSE="rusqlite: фраза-сниппет (FTS5 snippet) лучшего совпадения в папке — для тултипа чат-результата" />
+        <fn-search_bm25 PURPOSE="BM25 по chats_db + опц. files_db (source по scope), слияние по папке — Ф-C «+Файлы»" />
         <fn-aggregate_to_folders PURPOSE="Чистое: чанки -> папки с флагами bm25/dense и лучшим чанком (тестируемо)" />
         <fn-parse_dense_response PURPOSE="Чистое: JSON ответа демона -> папки с dense-скором (ручной разбор)" />
         <type-Color PURPOSE="Цвет подсветки папки: Bm25 (жёлтый) | Dense (синий) — модальность, без отдельной функции (dense только при пустом BM25)" />
