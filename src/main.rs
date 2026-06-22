@@ -801,7 +801,8 @@ unsafe fn show_tooltip(_hwnd: HWND) {
     let h = (rc.bottom - rc.top) + 8;
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
-    let _ = SetWindowPos(tip, HWND_TOPMOST, pt.x + 14, pt.y + 18, w, h, SWP_NOACTIVATE);
+    // вправо от курсора, по вертикали по центру подсказки
+    let _ = SetWindowPos(tip, HWND_TOPMOST, pt.x + 18, (pt.y - h / 2).max(0), w, h, SWP_NOACTIVATE);
     let _ = ShowWindow(tip, SW_SHOWNOACTIVATE);
     let _ = InvalidateRect(tip, None, BOOL(1));
 }
@@ -822,7 +823,15 @@ fn tip_text_for(app: &App, tip_row: i32) -> Option<String> {
         return None;
     }
     match app.rows.get(tip_row as usize)? {
-        render::Row::Window { idx } => app.items.get(*idx).map(|it| it.name.clone()),
+        render::Row::Window { idx } => app.items.get(*idx).map(|it| {
+            // совпавшее с поиском открытое окно -> полный путь папки из хита, иначе имя
+            let proj = it.name.to_lowercase();
+            app.search_hits
+                .iter()
+                .find(|h| tip_basename(&h.folder) == proj)
+                .map(|h| h.folder.clone())
+                .unwrap_or_else(|| it.name.clone())
+        }),
         render::Row::Recent { ridx } => app.recent.get(*ridx).map(recent_path),
         render::Row::SearchResult { hit } => app.search_hits.get(*hit).map(|h| {
             match search::snippet_for(&app.config.chats_db, &edit_text(app.search_edit), &h.folder) {
@@ -832,6 +841,11 @@ fn tip_text_for(app: &App, tip_row: i32) -> Option<String> {
         }),
         _ => None,
     }
+}
+
+// basename папки в нижнем регистре (для сопоставления окна с хитом поиска).
+fn tip_basename(p: &str) -> String {
+    p.rsplit(|c| c == '\\' || c == '/').next().unwrap_or(p).to_lowercase()
 }
 
 fn recent_path(d: &recent::RecentDoc) -> String {
