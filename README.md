@@ -143,8 +143,12 @@ cargo build --release
 # -> target\release\claudebar.exe
 ```
 
-Dependencies: the official [`windows`](https://crates.io/crates/windows) crate (Win32 bindings)
-and [`rusqlite`](https://crates.io/crates/rusqlite) (bundled SQLite/FTS5, for native chat search).
+Dependencies: [`windows`](https://crates.io/crates/windows) (Win32),
+[`rusqlite`](https://crates.io/crates/rusqlite) (bundled SQLite/FTS5),
+[`serde_json`](https://crates.io/crates/serde_json) (transcript parsing), and
+[`calamine`](https://crates.io/crates/calamine) / [`zip`](https://crates.io/crates/zip) /
+[`pdf-extract`](https://crates.io/crates/pdf-extract) (file-content extraction). All pure Rust
+except SQLite — builds under the GNU toolchain.
 
 > **C compiler for the GNU toolchain.** `rusqlite`'s bundled SQLite is C, so the build needs a
 > mingw-w64 **gcc on `PATH`** (the Rust GNU toolchain ships only a linker, not a C compiler).
@@ -152,10 +156,23 @@ and [`rusqlite`](https://crates.io/crates/rusqlite) (bundled SQLite/FTS5, for na
 > its `mingw64\bin` to `PATH` before `cargo build`. A gcc 14.x (matching Rust's bundled mingw) links
 > cleanly; a bleeding-edge gcc 16 needs `-C link-self-contained=yes`.
 
-### Chat search engine (`clfind`)
-The in-panel search (🔍) reads an index built by the companion Python tool **clfind**
-(`clfind index` → `~/.clfind/clfind.db`). The panel runs BM25 natively over that SQLite index;
-semantic (dense) fallback is served by the `clfind` daemon. See the clfind project for setup.
+### Search (native, no Python)
+The in-panel search box indexes and queries entirely in Rust — no external service.
+
+- **Self-indexing.** On startup (and every ~3 min) a background thread builds a local FTS5 index
+  from your Claude Code transcripts (`~/.claude/projects/**/*.jsonl`) into
+  `%APPDATA%\claudebar\claudebar_chats.db`. Incremental by mtime; fresh chats become searchable
+  on their own.
+- **Live BM25** as you type (from the 3rd character). Query syntax: space = AND, `a+b` = exact
+  phrase, `a++b` = NEAR, `-word` = exclude, `OR` = or; IP/path/date are matched as a phrase.
+- **`+Files` (⚙ menu).** Also indexes documents from Windows history (Recent) into
+  `claudebar_files.db` — text/markdown/code/`.xer` directly, `.xlsx/.xls` via calamine,
+  `.docx/.pptx` via zip+xml, `.pdf` via pdf-extract.
+- **Hover tooltips** (~0.5 s) show the full path, the matching snippet for chat results, and the
+  query-syntax rules over the search box.
+
+Semantic (dense / "by meaning") search is deferred to an optional future Python module; the
+companion `clfind` tool remains frozen for that.
 
 ## Limitations
 
