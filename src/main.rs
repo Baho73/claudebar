@@ -28,13 +28,29 @@ use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Controls::{
+    InitCommonControlsEx, ICC_BAR_CLASSES, INITCOMMONCONTROLSEX, TTF_ABSOLUTE, TTF_TRACK,
+    TTM_ADDTOOLW, TTM_SETMAXTIPWIDTH, TTM_TRACKACTIVATE, TTM_TRACKPOSITION, TTM_UPDATETIPTEXTW,
+    TTTOOLINFOW,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    EnableWindow, ReleaseCapture, SetCapture, SetFocus, VK_ESCAPE, VK_RETURN,
+    EnableWindow, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE,
+    TRACKMOUSEEVENT, VK_ESCAPE, VK_RETURN,
 };
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 const EM_SETSEL: u32 = 0x00B1;
+const WM_MOUSELEAVE: u32 = 0x02A3;
+const ID_TIP_TIMER: usize = 3; // dwell-таймер подсказки (~0.5с)
+const TIP_DELAY: u32 = 500; // мс выдержки перед показом подсказки
+const TIP_SEARCHBOX: i32 = -2; // tip_row: курсор над строкой поиска -> правила
+const SEARCH_RULES: &str = "Правила поиска:\r\n  пробел — И (оба слова)\r\n  a+b — точная фраза (подряд)\r\n  a++b — рядом (NEAR)\r\n  -слово — исключить\r\n  OR — или (заглавными)\r\nIP / путь / дата ищутся как фраза.";
+
+thread_local! {
+    // живой wide-буфер текста подсказки (TTM_UPDATETIPTEXT читает указатель)
+    static TIP_TEXT: RefCell<Vec<u16>> = const { RefCell::new(Vec::new()) };
+}
 
 // id команд меню
 const ID_COLOR_BASE: usize = 1; // 1..=8
@@ -64,6 +80,8 @@ pub(crate) struct App {
     pub(crate) bell: HashSet<String>, // имена проектов со «звоночком» (lower) — подсветка строк
     pub(crate) search_hits: Vec<search::FolderHit>, // папки-совпадения поиска (Phase-12)
     pub(crate) search_edit: HWND, // EDIT-поле поиска в шапке (null = скрыто)
+    pub(crate) tooltip: HWND, // tracking-подсказка (путь/сниппет/правила) — Phase-13 Ф-B
+    pub(crate) tip_row: i32, // под подсказкой: -1 нет, -2 строка поиска, >=0 индекс строки
     pub(crate) reorder: bool, // режим перетаскивания: ручки видны, ✕ скрыт
     pub(crate) drag: Option<i32>, // индекс перетаскиваемой строки во время drag
 }
@@ -254,6 +272,11 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
     unsafe {
         match msg {
             WM_TIMER => {
+                if wp.0 == ID_TIP_TIMER {
+                    let _ = KillTimer(hwnd, ID_TIP_TIMER);
+                    show_tooltip(hwnd);
+                    return LRESULT(0);
+                }
                 APP.with(|c| {
                     if let Some(app) = c.borrow_mut().as_mut() {
                         refresh_items(app);
@@ -294,6 +317,31 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     false
                 });
                 if changed {
+                    let _ = InvalidateRect(hwnd, None, BOOL(0));
+                }
+                arm_tip(hwnd, new);
+                let mut tme = TRACKMOUSEEVENT {
+                    cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                    dwFlags: TME_LEAVE,
+                    hwndTrack: hwnd,
+                    dwHoverTime: 0,
+                };
+                let _ = TrackMouseEvent(&mut tme);
+                LRESULT(0)
+            }
+            WM_MOUSELEAVE => {
+                arm_tip(hwnd, -1);
+                let was = APP.with(|c| {
+                    c.borrow_mut()
+                        .as_mut()
+                        .map(|a| {
+                            let w = a.hover != -1;
+                            a.hover = -1;
+                            w
+                        })
+                        .unwrap_or(false)
+                });
+                if was {
                     let _ = InvalidateRect(hwnd, None, BOOL(0));
                 }
                 LRESULT(0)
@@ -622,12 +670,158 @@ extern "system" fn search_edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 return LRESULT(0);
             }
         }
+        if msg == WM_MOUSEMOVE {
+            arm_tip(GetParent(hwnd).unwrap_or_default(), TIP_SEARCHBOX);
+            let mut tme = TRACKMOUSEEVENT {
+                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                dwFlags: TME_LEAVE,
+                hwndTrack: hwnd,
+                dwHoverTime: 0,
+            };
+            let _ = TrackMouseEvent(&mut tme);
+        } else if msg == WM_MOUSELEAVE {
+            arm_tip(GetParent(hwnd).unwrap_or_default(), -1);
+        }
         let old: WNDPROC = std::mem::transmute::<isize, WNDPROC>(SEARCH_OLDPROC.with(|p| p.get()));
         CallWindowProcW(old, hwnd, msg, wp, lp)
     }
 }
 
-// Живой BM25 по мере набора (синхронно, без демона).
+// ---------- подсказки (tooltip, Phase-13 Ф-B) ----------
+
+// Создать tracking-подсказку с одним инструментом (один раз при старте).
+unsafe fn create_tooltip(hwnd: HWND) {
+    let icc = INITCOMMONCONTROLSEX {
+        dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
+        dwICC: ICC_BAR_CLASSES,
+    };
+    let _ = InitCommonControlsEx(&icc);
+    let hinst = APP.with(|c| c.borrow().as_ref().map(|a| a.hinst).unwrap_or_default());
+    let tip = CreateWindowExW(
+        WINDOW_EX_STYLE(0),
+        w!("tooltips_class32"),
+        PCWSTR::null(),
+        WS_POPUP | WINDOW_STYLE(0x01 | 0x02), // TTS_ALWAYSTIP | TTS_NOPREFIX
+        0,
+        0,
+        0,
+        0,
+        hwnd,
+        None,
+        hinst,
+        None,
+    )
+    .unwrap_or_default();
+    if tip.0.is_null() {
+        return;
+    }
+    let mut ti = TTTOOLINFOW {
+        cbSize: std::mem::size_of::<TTTOOLINFOW>() as u32,
+        uFlags: TTF_TRACK | TTF_ABSOLUTE,
+        hwnd,
+        uId: 1,
+        ..Default::default()
+    };
+    SendMessageW(tip, TTM_ADDTOOLW, WPARAM(0), LPARAM(&mut ti as *mut _ as isize));
+    SendMessageW(tip, TTM_SETMAXTIPWIDTH, WPARAM(0), LPARAM(480));
+    APP.with(|c| {
+        if let Some(a) = c.borrow_mut().as_mut() {
+            a.tooltip = tip;
+        }
+    });
+}
+
+// Сменить цель подсказки: спрятать текущую, перезавести dwell-таймер.
+unsafe fn arm_tip(hwnd: HWND, row: i32) {
+    let changed = APP.with(|c| {
+        c.borrow_mut().as_mut().is_some_and(|a| {
+            let ch = a.tip_row != row;
+            a.tip_row = row;
+            ch
+        })
+    });
+    if changed {
+        hide_tooltip(hwnd);
+        let _ = KillTimer(hwnd, ID_TIP_TIMER);
+        if row != -1 {
+            let _ = SetTimer(hwnd, ID_TIP_TIMER, TIP_DELAY, None);
+        }
+    }
+}
+
+// Показать подсказку у курсора (по срабатыванию dwell-таймера).
+unsafe fn show_tooltip(hwnd: HWND) {
+    let tip = APP.with(|c| c.borrow().as_ref().map(|a| a.tooltip).unwrap_or_default());
+    if tip.0.is_null() {
+        return;
+    }
+    let text = APP.with(|c| {
+        let b = c.borrow();
+        b.as_ref().and_then(|a| tip_text_for(a, a.tip_row))
+    });
+    let Some(text) = text else {
+        return;
+    };
+    TIP_TEXT.with(|b| *b.borrow_mut() = text.encode_utf16().chain(std::iter::once(0)).collect());
+    let ptr = TIP_TEXT.with(|b| b.borrow().as_ptr() as *mut u16);
+    let mut ti = TTTOOLINFOW {
+        cbSize: std::mem::size_of::<TTTOOLINFOW>() as u32,
+        uFlags: TTF_TRACK | TTF_ABSOLUTE,
+        hwnd,
+        uId: 1,
+        lpszText: PWSTR(ptr),
+        ..Default::default()
+    };
+    SendMessageW(tip, TTM_UPDATETIPTEXTW, WPARAM(0), LPARAM(&mut ti as *mut _ as isize));
+    let mut pt = POINT::default();
+    let _ = GetCursorPos(&mut pt);
+    let pos = (((pt.x + 14) & 0xFFFF) | (((pt.y + 18) & 0xFFFF) << 16)) as isize;
+    SendMessageW(tip, TTM_TRACKPOSITION, WPARAM(0), LPARAM(pos));
+    SendMessageW(tip, TTM_TRACKACTIVATE, WPARAM(1), LPARAM(&mut ti as *mut _ as isize));
+}
+
+unsafe fn hide_tooltip(hwnd: HWND) {
+    let tip = APP.with(|c| c.borrow().as_ref().map(|a| a.tooltip).unwrap_or_default());
+    if tip.0.is_null() {
+        return;
+    }
+    let mut ti = TTTOOLINFOW {
+        cbSize: std::mem::size_of::<TTTOOLINFOW>() as u32,
+        hwnd,
+        uId: 1,
+        ..Default::default()
+    };
+    SendMessageW(tip, TTM_TRACKACTIVATE, WPARAM(0), LPARAM(&mut ti as *mut _ as isize));
+}
+
+// Текст подсказки для цели: правила / полный путь-имя / путь+сниппет.
+fn tip_text_for(app: &App, tip_row: i32) -> Option<String> {
+    if tip_row == TIP_SEARCHBOX {
+        return Some(SEARCH_RULES.to_string());
+    }
+    if tip_row < 0 {
+        return None;
+    }
+    match app.rows.get(tip_row as usize)? {
+        render::Row::Window { idx } => app.items.get(*idx).map(|it| it.name.clone()),
+        render::Row::Recent { ridx } => app.recent.get(*ridx).map(recent_path),
+        render::Row::SearchResult { hit } => app.search_hits.get(*hit).map(|h| {
+            match search::snippet_for(&app.config.chats_db, &edit_text(app.search_edit), &h.folder) {
+                Some(s) => format!("{}\r\n{}", h.folder, s),
+                None => h.folder.clone(),
+            }
+        }),
+        _ => None,
+    }
+}
+
+fn recent_path(d: &recent::RecentDoc) -> String {
+    match &d.open {
+        recent::OpenCmd::Lnk(p) => p.display().to_string(),
+        recent::OpenCmd::Editor { folder, .. } => folder.clone(),
+    }
+}
+
 // ---------- авто-индексация (Phase-13) ----------
 static INDEXING: AtomicBool = AtomicBool::new(false);
 static INDEX_TICKS: AtomicU32 = AtomicU32::new(0);
@@ -905,6 +1099,8 @@ fn main() -> Result<()> {
             bell: HashSet::new(),
             search_hits: Vec::new(),
             search_edit: HWND(std::ptr::null_mut()),
+            tooltip: HWND(std::ptr::null_mut()),
+            tip_row: -1,
             reorder: false,
             drag: None,
         };
@@ -958,6 +1154,7 @@ fn main() -> Result<()> {
 
         let _ = ShowWindow(hwnd, SW_SHOW);
         create_search_box(hwnd);
+        create_tooltip(hwnd);
         spawn_index(hwnd); // первичная индексация чатов в фоне
         SetTimer(hwnd, 1, 1000, None);
 
