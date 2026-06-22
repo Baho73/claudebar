@@ -1,0 +1,265 @@
+// FILE: src/search.rs
+// VERSION: 1.0.0
+// START_MODULE_CONTRACT
+//   PURPOSE: Поиск по чатам с подсветкой папок. Живой BM25 нативно (rusqlite поверх общего clfind.db FTS5, read-only) с агрегацией по project_folder; при пустом BM25 — fallback на dense через M-SDAEMON. Цвет: Bm25 (жёлтый) / Dense (синий).
+//   SCOPE: fts_query/aggregate_to_folders/parse_dense_response (чистые, тестируемые), bm25_search (rusqlite), search (оркестрация bm25 -> пусто -> dense).
+//   DEPENDS: M-CONFIG (путь clfind.db, команда/порт демона), M-SDAEMON (dense-fallback)
+//   LINKS: M-SEARCH
+//   ROLE: RUNTIME
+//   MAP_MODE: EXPORTS
+// END_MODULE_CONTRACT
+//
+// START_MODULE_MAP
+//   Color                - цвет подсветки папки: Bm25 (жёлтый) | Dense (синий)
+//   FolderHit            - папка-совпадение: folder, color, score
+//   fts_query            - чистое: ввод -> FTS5 MATCH (\w+ токены, последний как префикс term*); защита от инъекции
+//   bm25_search          - rusqlite: clfind.db (read-only) FTS5 MATCH -> чанки (folder, score)
+//   aggregate_to_folders - чистое: чанки -> папки (дедуп по folder, max score), с заданным цветом
+//   parse_dense_response - чистое: JSON демона -> папки с dense-скором (наивный разбор)
+//   search               - оркестрация: live BM25; пусто -> dense-fallback через M-SDAEMON
+//   json_unescape / parse_number_after_colon - приватные помощники разбора
+// END_MODULE_MAP
+//
+// START_CHANGE_SUMMARY
+//   LAST_CHANGE: v1.0.0 - Phase-12 Step 3: новый модуль поиска. Нативный BM25 (rusqlite по clfind.db) + чистые fts_query/aggregate/parse_dense + оркестрация с dense-fallback (M-SDAEMON).
+// END_CHANGE_SUMMARY
+
+use std::collections::HashMap;
+use std::time::Duration;
+
+use rusqlite::{params, Connection, OpenFlags};
+
+use crate::config::Config;
+use crate::sdaemon;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Color {
+    Bm25,  // жёлтый: нашли по точным словам
+    Dense, // синий: нашли по смыслу (fallback)
+}
+
+#[derive(Clone, Debug)]
+pub struct FolderHit {
+    pub folder: String,
+    pub color: Color,
+    pub score: f64,
+}
+
+// START_CONTRACT: fts_query
+//   PURPOSE: Преобразовать пользовательский ввод в безопасный FTS5 MATCH (последний токен как префикс).
+//   INPUTS: { input: &str }
+//   OUTPUTS: { Option<String> - MATCH-строка или None, если нет токенов }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: fts_query
+pub fn fts_query(input: &str) -> Option<String> {
+    let mut tokens: Vec<String> = input
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_lowercase())
+        .collect();
+    if tokens.is_empty() {
+        return None;
+    }
+    let last = tokens.len() - 1;
+    tokens[last] = format!("{}*", tokens[last]); // префикс последнего токена
+    Some(tokens.join(" "))
+}
+
+// START_CONTRACT: bm25_search
+//   PURPOSE: Нативный BM25 по общему индексу clfind.db (read-only).
+//   INPUTS: { db_path: &str; query: &str; scope: &str; limit: usize }
+//   OUTPUTS: { Vec<(String, f64)> - (project_folder, score), score выше = лучше }
+//   SIDE_EFFECTS: открывает clfind.db read-only (FTS5 MATCH); ошибки -> пустой результат
+// END_CONTRACT: bm25_search
+pub fn bm25_search(db_path: &str, query: &str, scope: &str, limit: usize) -> Vec<(String, f64)> {
+    let Some(fts) = fts_query(query) else {
+        return Vec::new();
+    };
+    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY;
+    let Ok(conn) = Connection::open_with_flags(db_path, flags) else {
+        return Vec::new();
+    };
+    // MVP: только чаты (source='chat'); scope=all — Фаза 2.
+    let _ = scope;
+    let sql = "SELECT c.project_folder, -bm25(chunks_fts) AS score \
+               FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid \
+               WHERE chunks_fts MATCH ?1 AND c.source = 'chat' \
+               ORDER BY bm25(chunks_fts) LIMIT ?2";
+    let Ok(mut stmt) = conn.prepare(sql) else {
+        return Vec::new();
+    };
+    let rows = stmt.query_map(params![fts, limit as i64], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+    });
+    match rows {
+        Ok(it) => it.filter_map(|r| r.ok()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+// START_CONTRACT: aggregate_to_folders
+//   PURPOSE: Свести чанки-совпадения к папкам (дедуп, лучший скор), с заданным цветом.
+//   INPUTS: { chunks: &[(String, f64)]; color: Color }
+//   OUTPUTS: { Vec<FolderHit> - по убыванию скора }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: aggregate_to_folders
+pub fn aggregate_to_folders(chunks: &[(String, f64)], color: Color) -> Vec<FolderHit> {
+    let mut best: HashMap<&str, f64> = HashMap::new();
+    for (folder, score) in chunks {
+        let e = best.entry(folder.as_str()).or_insert(f64::NEG_INFINITY);
+        if *score > *e {
+            *e = *score;
+        }
+    }
+    let mut out: Vec<FolderHit> = best
+        .into_iter()
+        .map(|(folder, score)| FolderHit { folder: folder.to_string(), color, score })
+        .collect();
+    out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    out
+}
+
+fn json_unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars();
+    while let Some(c) = it.next() {
+        if c == '\\' {
+            match it.next() {
+                Some('\\') => out.push('\\'),
+                Some('"') => out.push('"'),
+                Some('/') => out.push('/'),
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('r') => out.push('\r'),
+                Some(o) => {
+                    out.push('\\');
+                    out.push(o);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn parse_number_after_colon(s: &str) -> Option<f64> {
+    let s = s.trim_start().strip_prefix(':')?.trim_start();
+    let end = s.find(|c: char| c == ',' || c == '}').unwrap_or(s.len());
+    s[..end].trim().parse::<f64>().ok() // "null" -> None
+}
+
+// START_CONTRACT: parse_dense_response
+//   PURPOSE: Достать из JSON-ответа демона папки с непустым dense-скором.
+//   INPUTS: { json: &str - {results:[{folder,bm25,dense,best}...]} }
+//   OUTPUTS: { Vec<(String, f64)> - (folder, dense_score) для папок с dense != null }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: parse_dense_response
+pub fn parse_dense_response(json: &str) -> Vec<(String, f64)> {
+    let mut out = Vec::new();
+    let mut rest = json;
+    // START_BLOCK_SCAN_RESULTS
+    while let Some(fi) = rest.find("\"folder\"") {
+        let after_key = &rest[fi + "\"folder\"".len()..];
+        let Some(q1) = after_key.find('"') else { break };
+        let val = &after_key[q1 + 1..];
+        let Some(q2) = val.find('"') else { break };
+        let folder = json_unescape(&val[..q2]);
+        rest = &val[q2 + 1..];
+        // dense этого результата — до следующего "folder"
+        let next = rest.find("\"folder\"").unwrap_or(rest.len());
+        let seg = &rest[..next];
+        if let Some(di) = seg.find("\"dense\"") {
+            if let Some(score) = parse_number_after_colon(&seg[di + "\"dense\"".len()..]) {
+                out.push((folder, score));
+            }
+        }
+    }
+    // END_BLOCK_SCAN_RESULTS
+    out
+}
+
+// START_CONTRACT: search
+//   PURPOSE: Поиск: живой BM25; при пустом результате — dense-fallback через демон.
+//   INPUTS: { cfg: &Config; query: &str }
+//   OUTPUTS: { Vec<FolderHit> - папки (Bm25 или Dense) }
+//   SIDE_EFFECTS: чтение clfind.db; при fallback — спавн/опрос демона (M-SDAEMON)
+// END_CONTRACT: search
+pub fn search(cfg: &Config, query: &str) -> Vec<FolderHit> {
+    // START_BLOCK_LIVE_BM25
+    let bm = bm25_search(&cfg.search_db, query, "chats", 200);
+    if !bm.is_empty() {
+        return aggregate_to_folders(&bm, Color::Bm25);
+    }
+    // END_BLOCK_LIVE_BM25
+    // START_BLOCK_DENSE_FALLBACK
+    if sdaemon::ensure_running(&cfg.search_cmd, cfg.search_port, Duration::from_secs(60)) {
+        if let Some(json) = sdaemon::dense_search(cfg.search_port, query, "chats", 50) {
+            return aggregate_to_folders(&parse_dense_response(&json), Color::Dense);
+        }
+    }
+    // END_BLOCK_DENSE_FALLBACK
+    Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fts_query_prefixes_last_and_sanitizes() {
+        assert_eq!(fts_query("telegr").as_deref(), Some("telegr*"));
+        assert_eq!(fts_query("окно за экраном").as_deref(), Some("окно за экраном*"));
+        // спецсимволы FTS5 не проходят — только \w+ токены
+        assert_eq!(fts_query("a\" OR b").as_deref(), Some("a or b*"));
+        assert_eq!(fts_query("   ").as_deref(), None);
+    }
+
+    #[test]
+    fn aggregate_dedups_and_colors() {
+        let chunks = vec![
+            ("A".to_string(), 1.0),
+            ("A".to_string(), 3.0),
+            ("B".to_string(), 2.0),
+        ];
+        let hits = aggregate_to_folders(&chunks, Color::Bm25);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].folder, "A"); // max score 3.0 первым
+        assert_eq!(hits[0].score, 3.0);
+        assert!(hits.iter().all(|h| h.color == Color::Bm25));
+    }
+
+    #[test]
+    fn parse_dense_skips_null_and_unescapes() {
+        let json = r#"{"results":[{"folder":"D:\\Python\\A","bm25":null,"dense":0.7,"best":null},{"folder":"D:\\Python\\B","bm25":null,"dense":null,"best":null}],"model":"ready"}"#;
+        let v = parse_dense_response(json);
+        assert_eq!(v.len(), 1); // B (dense=null) отброшен
+        assert_eq!(v[0].0, "D:\\Python\\A"); // backslashes раз-экранированы
+        assert!((v[0].1 - 0.7).abs() < 1e-9);
+    }
+
+    #[test]
+    fn bm25_search_on_temp_clfind_db() {
+        let path = std::env::temp_dir().join("clfind_bm25_test.db");
+        let _ = std::fs::remove_file(&path);
+        let p = path.to_str().unwrap();
+        {
+            let conn = Connection::open(p).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE chunks(id INTEGER PRIMARY KEY, project_folder TEXT, source TEXT, ref TEXT, location TEXT, text TEXT);
+                 CREATE VIRTUAL TABLE chunks_fts USING fts5(text, content='chunks', content_rowid='id', tokenize='unicode61');
+                 CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN INSERT INTO chunks_fts(rowid,text) VALUES(new.id,new.text); END;",
+            ).unwrap();
+            conn.execute("INSERT INTO chunks(project_folder,source,ref,location,text) VALUES (?1,'chat','s','0',?2)",
+                params!["D:\\Python\\hh", "обсуждали telegram лайки кандидата"]).unwrap();
+            conn.execute("INSERT INTO chunks(project_folder,source,ref,location,text) VALUES (?1,'chat','s','0',?2)",
+                params!["D:\\Python\\claudebar", "правим окно за экраном"]).unwrap();
+        }
+        let hits = bm25_search(p, "telegr", "chats", 10);
+        assert!(!hits.is_empty());
+        assert_eq!(hits[0].0, "D:\\Python\\hh");
+        assert_eq!(bm25_search(p, "экран", "chats", 10)[0].0, "D:\\Python\\claudebar");
+        let _ = std::fs::remove_file(&path);
+    }
+}

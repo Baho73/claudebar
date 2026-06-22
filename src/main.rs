@@ -8,8 +8,10 @@ mod config;
 mod icon;
 mod recent;
 mod render;
-#[allow(dead_code)] // интеграционные fns подключает step-3 (M-SEARCH)
+#[allow(dead_code)] // M-SEARCH/M-SDAEMON подключает step-5 (M-MAIN: окошко поиска)
 mod sdaemon;
+#[allow(dead_code)]
+mod search;
 mod settings;
 mod signal;
 mod win_enum;
