@@ -1,5 +1,5 @@
 // FILE: src/search.rs
-// VERSION: 1.0.0
+// VERSION: 1.1.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Поиск по чатам с подсветкой папок. Живой BM25 нативно (rusqlite поверх общего clfind.db FTS5, read-only) с агрегацией по project_folder; при пустом BM25 — fallback на dense через M-SDAEMON. Цвет: Bm25 (жёлтый) / Dense (синий).
 //   SCOPE: fts_query/aggregate_to_folders/parse_dense_response (чистые, тестируемые), bm25_search (rusqlite), search (оркестрация bm25 -> пусто -> dense).
@@ -21,7 +21,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.0.0 - Phase-12 Step 3: новый модуль поиска. Нативный BM25 (rusqlite по clfind.db) + чистые fts_query/aggregate/parse_dense + оркестрация с dense-fallback (M-SDAEMON).
+//   LAST_CHANGE: v1.1.0 - Phase-12: синтаксис запросов (Google-style) в fts_query — пробел=И, a+b=фраза, a++b=NEAR, -w=исключить, OR=или; sanitize_word против инъекции.
+//   v1.0.0 - Phase-12 Step 3: новый модуль поиска. Нативный BM25 (rusqlite по clfind.db) + чистые fts_query/aggregate/parse_dense + оркестрация с dense-fallback (M-SDAEMON).
 // END_CHANGE_SUMMARY
 
 use std::collections::HashMap;
@@ -44,24 +45,63 @@ pub struct FolderHit {
     pub score: f64,
 }
 
+// Оставить только \w-символы (защита от инъекции в FTS5), нижний регистр.
+fn sanitize_word(s: &str) -> String {
+    s.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase()
+}
+
 // START_CONTRACT: fts_query
-//   PURPOSE: Преобразовать пользовательский ввод в безопасный FTS5 MATCH (последний токен как префикс).
-//   INPUTS: { input: &str }
-//   OUTPUTS: { Option<String> - MATCH-строка или None, если нет токенов }
+//   PURPOSE: Преобразовать пользовательский ввод (Google-синтаксис) в безопасный FTS5 MATCH.
+//   INPUTS: { input: &str }  // пробел=И; a+b=фраза; a++b=NEAR; -w=исключить; OR=или; последний токен — префикс
+//   OUTPUTS: { Option<String> - MATCH-строка или None, если нет позитивных термов }
 //   SIDE_EFFECTS: none
 // END_CONTRACT: fts_query
 pub fn fts_query(input: &str) -> Option<String> {
-    let mut tokens: Vec<String> = input
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|t| !t.is_empty())
-        .map(|t| t.to_lowercase())
-        .collect();
-    if tokens.is_empty() {
+    let toks: Vec<&str> = input.split_whitespace().collect();
+    let n = toks.len();
+    let mut pos: Vec<String> = Vec::new(); // позитивные атомы + операторы OR
+    let mut excl: Vec<String> = Vec::new(); // исключения (-слово)
+    for (i, tok) in toks.iter().enumerate() {
+        if *tok == "OR" {
+            if !pos.is_empty() {
+                pos.push("OR".into());
+            }
+        } else if let Some(rest) = tok.strip_prefix('-') {
+            let w = sanitize_word(rest);
+            if !w.is_empty() {
+                excl.push(w);
+            }
+        } else if tok.contains("++") {
+            let ws: Vec<String> = tok.split('+').map(sanitize_word).filter(|w| !w.is_empty()).collect();
+            match ws.len() {
+                0 => {}
+                1 => pos.push(ws.into_iter().next().unwrap()),
+                _ => pos.push(format!("NEAR({}, 10)", ws.join(" "))),
+            }
+        } else if tok.contains('+') {
+            let ws: Vec<String> = tok.split('+').map(sanitize_word).filter(|w| !w.is_empty()).collect();
+            if !ws.is_empty() {
+                pos.push(format!("\"{}\"", ws.join(" ")));
+            }
+        } else {
+            let w = sanitize_word(tok);
+            if !w.is_empty() {
+                // последнее слово — префикс (живой набор)
+                pos.push(if i == n - 1 { format!("{w}*") } else { w });
+            }
+        }
+    }
+    while pos.last().map(|s| s == "OR").unwrap_or(false) {
+        pos.pop();
+    }
+    if pos.is_empty() {
         return None;
     }
-    let last = tokens.len() - 1;
-    tokens[last] = format!("{}*", tokens[last]); // префикс последнего токена
-    Some(tokens.join(" "))
+    let mut q = pos.join(" ");
+    for e in &excl {
+        q = format!("({q}) NOT {e}");
+    }
+    Some(q)
 }
 
 // START_CONTRACT: bm25_search
@@ -207,12 +247,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fts_query_prefixes_last_and_sanitizes() {
+    fn fts_query_operators() {
+        // И + префикс последнего слова (живой набор)
         assert_eq!(fts_query("telegr").as_deref(), Some("telegr*"));
         assert_eq!(fts_query("окно за экраном").as_deref(), Some("окно за экраном*"));
-        // спецсимволы FTS5 не проходят — только \w+ токены
-        assert_eq!(fts_query("a\" OR b").as_deref(), Some("a or b*"));
+        // фраза через +
+        assert_eq!(fts_query("договор+смета").as_deref(), Some("\"договор смета\""));
+        // NEAR через ++
+        assert_eq!(fts_query("договор++смета").as_deref(), Some("NEAR(договор смета, 10)"));
+        // исключение через -
+        assert_eq!(fts_query("смета -черновик").as_deref(), Some("(смета) NOT черновик"));
+        // OR
+        assert_eq!(fts_query("смета OR накладная").as_deref(), Some("смета OR накладная*"));
+        // санитизация: спецсимволы FTS5 срезаются
+        assert_eq!(fts_query("a\" b").as_deref(), Some("a b*"));
+        // пусто / только исключение -> None
         assert_eq!(fts_query("   ").as_deref(), None);
+        assert_eq!(fts_query("-только").as_deref(), None);
     }
 
     #[test]
