@@ -125,6 +125,7 @@
       <verification-ref>V-M-ICON</verification-ref>
       <annotations>
         <fn-section_icon PURPOSE="HICON приложения по образцовому окну секции (через exe), с кэшем по app_idx" />
+        <fn-path_icon PURPOSE="HICON по пути файла/папки (строки «Найдено ещё»), с кэшем по пути — Phase-12" />
       </annotations>
     </M-ICON>
 
