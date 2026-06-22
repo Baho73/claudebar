@@ -3,6 +3,7 @@
     <objective>Превратить монолитный src/main.rs (v0.1) в модульную структуру и реализовать этап A+B+C: мультиприложения, сворачиваемые секции, недавние документы.</objective>
     <objective-v03>Этап v0.3: «звоночек» завершения ИИ (подсветка строки проекта по сигналу из Claude Code), иконки приложений в заголовках секций, кнопка ✕ для штатного закрытия окна, под-кат «показать все» недавних сверх 6, drag-reorder секций и окон.</objective-v03>
     <objective-v04>Этап v0.4: настройка шрифта панели из UI (нативный ChooseFontW, персист в ini, дефолт Iosevka Fixed); поддержка терминалов (Windows Terminal, Командная строка, PowerShell, Git Bash) и окон Проводника отдельными секциями — распознавание по процессу И классу окна; cmd/PowerShell в классической консоли различаются по дереву процессов через conhost.</objective-v04>
+    <objective-v05>Этап v0.5 (Phase-13): поиск целиком на Rust — ClaudeBar сам строит BM25-индекс (FTS5) из транскриптов Claude Code (~/.claude/projects) и доков history, авто-освежает (старт + таймер, инкремент по mtime); запрос по своим базам без Python. Тултипы (путь/сниппет/правила синтаксиса). Смысловой (dense) поиск — отложенный Python-модуль (clfind замораживается, не удаляется).</objective-v05>
     <non-goal>Вкладки внутри одного окна; кроссплатформенность; цветные эмодзи (нужен DirectWrite).</non-goal>
     <risk-1>Сопоставление окно-файл по basename (заголовки Office без пути) — держать терпимым к коллизиям.</risk-1>
     <risk-2>Поведенческий антивирус на SetForegroundWindow — функция активации изолирована в M-ACTIVATE.</risk-2>
@@ -19,6 +20,11 @@
     <risk-13 phase="Phase-12">Связка схемы: ClaudeBar читает схему clfind.db (chunks + chunks_fts). Изменение схемы в clfind ломает чтение — общая схема фиксируется как контракт в обоих репо.</risk-13>
     <risk-14 phase="Phase-12">FTS5-инъекция: строка MATCH строится из пользовательского ввода. fts_query пропускает только токены \w+ (последний + префикс *), спецсимволы/операторы FTS5 не попадают.</risk-14>
     <risk-15 phase="Phase-12">Конкурентный доступ: индексатор (Python) пишет clfind.db, ClaudeBar читает. Митигация — WAL + открытие read-only; чтение устаревших данных между инкрементами допустимо.</risk-15>
+    <risk-16 phase="Phase-13">Дрейф формата jsonl-транскриптов Claude Code: схема сообщений может меняться. Митигация — устойчивый serde_json-парс с пропуском битых/незнакомых строк (skip, не паника); извлекаем только текстовые куски user/assistant и cwd.</risk-16>
+    <risk-17 phase="Phase-13">Первая индексация ~30к чанков может занять время. Митигация — фоновый поток, инкремент по mtime после первого прохода; UI не блокируется.</risk-17>
+    <risk-18 phase="Phase-13">FTS5 запись+чтение своей базы из одного процесса (поток-индексатор пишет, UI читает). Митигация — WAL, отдельные соединения; устаревшее чтение между тиками допустимо.</risk-18>
+    <risk-19 phase="Phase-13">pdf-extract/calamine (Ф-C) капризны на части файлов. Митигация — пер-файл try, битый файл пропускается (skip + log), не валит индексацию.</risk-19>
+    <risk-20 phase="Phase-13">Дублирование логики чанкинга/парсинга с clfind (Python). Принято осознанно: clfind держит dense, Rust — BM25; пересечение в извлечении текста терпимо, схема индекса общая.</risk-20>
   </ArchitectureNotes>
 
   <DependencyRationale>
@@ -41,6 +47,20 @@
       <blast-radius>Импортируется только в M-SEARCH — изолировано</blast-radius>
       <note>HTTP-клиент демона (M-SDAEMON) НОВОГО крейта не требует: localhost POST через std::net::TcpStream вручную; JSON ответа парсится вручную (как M-RECENT workspace.json)</note>
     </dep-rusqlite>
+    <dep-serde_json crate="serde_json" version="1" phase="Phase-13">
+      <duplicate>Нет: ручной разбор вложенного JSON транскриптов (content-массивы, tool-блоки) хрупок; для сигнал-файлов/dense хватало ручного, для транскриптов — нет (grace module find — совпадений нет)</duplicate>
+      <size>Малый, чистый Rust без C-зависимостей, быстрая сборка</size>
+      <maintenance>serde/serde_json — де-факто стандарт Rust, активнейшая поддержка (dtolnay)</maintenance>
+      <license>MIT / Apache-2.0 — совместимо с MIT проекта</license>
+      <security>Чистый Rust-парсер; известных критичных CVE нет</security>
+      <blast-radius>Импортируется только в M-INDEX (парс транскриптов) — изолировано</blast-radius>
+    </dep-serde_json>
+    <dep-files-extract phase="Phase-13" status="Ф-C (отложено до step-6)">
+      <crate-calamine>xlsx/xls/ods на чистом Rust; обоснование детально перед step-6</crate-calamine>
+      <crate-zip>docx/pptx = zip + xml; снятие тегов</crate-zip>
+      <crate-pdf-extract>pdf -&gt; текст (чистый Rust, капризен — risk-19)</crate-pdf-extract>
+      <note>Полная dependency-discipline по каждому — отдельными блоками перед началом Ф-C, не сейчас</note>
+    </dep-files-extract>
     <new-features-v04>Этап v0.4 новых внешних крейтов НЕ добавляет. Новые features уже подключённого windows 0.58: Win32_UI_Controls_Dialogs (ChooseFontW для M-SETTINGS) и Win32_System_Diagnostics_ToolHelp (CreateToolhelp32Snapshot / PROCESSENTRY32W / Process32FirstW/NextW для разрешения shell-клиента консоли в M-WINENUM). GetClassNameW — уже в Win32_UI_WindowsAndMessaging. Хранение шрифта — std::fs (ключ font= в ini), без новых вызовов. duplicate-check: snapshot процессов делается раз на опрос (не на окно), дешево; ChooseFontW — стандартный нативный диалог, лицензия/размер/CVE без изменений.</new-features-v04>
   </DependencyRationale>
 
@@ -263,9 +283,38 @@
       <target><source>src/sdaemon.rs</source><tests>src/sdaemon.rs (#[cfg(test)] на parse_health/build_dense_request)</tests></target>
       <verification-ref>V-M-SDAEMON</verification-ref>
     </M-SDAEMON>
+
+    <M-INDEX NAME="Index" TYPE="DATA_LAYER" LAYER="2" ORDER="7" STATUS="planned">
+      <contract>
+        <purpose>Rust-индексатор: строит/освежает локальный BM25-индекс (SQLite FTS5) из транскриптов Claude Code (~/.claude/projects/**/*.jsonl), позже — из доков history. Инкремент по mtime; авто-запуск при старте + по таймеру (фон). Заменяет Python-сборку BM25 (clfind остаётся для отложенного dense). Phase-13.</purpose>
+        <inputs><param name="chats_db" type="&amp;str" /><param name="projects_root" type="&amp;str" /></inputs>
+        <outputs><param name="IndexStats" type="добавлено/пропущено файлов и чанков" /></outputs>
+        <errors><error code="DB_OPEN_FAILED" /><error code="TRANSCRIPT_PARSE_SKIP" /></errors>
+      </contract>
+      <interface>
+        <export-ensure_index PURPOSE="Инкрементально проиндексировать новые/изменённые транскрипты (по mtime) в claudebar_chats.db (FTS5)" />
+        <export-parse_transcript PURPOSE="Чистое: jsonl транскрипта -&gt; (project_folder из cwd, тексты user/assistant без шума)" />
+        <export-chunk_text PURPOSE="Чистое: длинный текст -&gt; чанки ~512 слов" />
+        <export-init_schema PURPOSE="DDL: chunks + chunks_fts(unicode61) + files_meta(mtime) — совместимо с читателем M-SEARCH" />
+      </interface>
+      <depends>M-CONFIG</depends>
+      <target><source>src/index.rs</source><tests>src/index.rs (#[cfg(test)] на parse_transcript/chunk_text + ensure_index на temp dir с фейковыми jsonl)</tests></target>
+      <verification-ref>V-M-INDEX</verification-ref>
+    </M-INDEX>
   </Modules>
 
   <DataFlow>
+    <DF-INDEX-CHATS NAME="Индексация чатов (Rust)" TRIGGER="Старт + таймер (фоновый поток)">
+      <step-1>M-INDEX.ensure_index обходит ~/.claude/projects/**/*.jsonl, берёт новые/изменённые по mtime</step-1>
+      <step-2>parse_transcript -&gt; (project_folder из cwd, тексты user/assistant); chunk_text -&gt; чанки ~512 слов</step-2>
+      <step-3>Запись в claudebar_chats.db (chunks + chunks_fts, FTS5 unicode61); files_meta фиксирует mtime</step-3>
+      <evidence>Свежий проект (run-pig: «подстроечник») находится после авто-индекса без ручной переиндексации</evidence>
+    </DF-INDEX-CHATS>
+    <DF-SEARCH-OWN NAME="Поиск по своим базам (Rust)" TRIGGER="Ввод в строке поиска">
+      <step-1>M-SEARCH.bm25_search по claudebar_chats.db (и claudebar_files.db в Ф-C), параллельно</step-1>
+      <step-2>aggregate_to_folders -&gt; папки (жёлтый BM25); snippet_for даёт фразу-сниппет для тултипа</step-2>
+      <evidence>Подсветка папок вживую; тултип чат-результата показывает сниппет; Python не задействован</evidence>
+    </DF-SEARCH-OWN>
     <DF-SWITCH NAME="Переключение на окно" TRIGGER="ЛКМ по строке окна">
       <step-1>hit_test определяет строку окна и её HWND</step-1>
       <step-2>M-ACTIVATE.activate выводит окно на передний план</step-2>
@@ -495,6 +544,28 @@
         <on-fail>grace-fix; откат коммитом; если rusqlite не собирается под GNU — фолбэк на системный sqlite/линковку (см. risk)</on-fail>
       </checkpoint>
     </Phase-12>
+
+    <Phase-13 name="Поиск целиком на Rust (свой индекс)" status="pending">
+      <goal>ClaudeBar сам строит BM25-индекс (FTS5) на Rust из транскриптов Claude Code и доков history, авто-освежает; запрос по своим базам, без Python. Dense (смысл) — отложенный Python-модуль. Утверждён пользователем (gg).</goal>
+      <!-- Фаза A: индексатор чатов + авто-refresh -->
+      <step-1 module="M-INDEX" status="pending" verification="V-M-INDEX">Rust-индексатор чатов: ensure_index (обход ~/.claude/projects/*.jsonl, инкремент по mtime) + чистые parse_transcript/chunk_text + init_schema -&gt; FTS5 claudebar_chats.db. Зависимость serde_json</step-1>
+      <step-2 module="M-CONFIG" status="pending" verification="V-M-CONFIG">Пути своих баз (chats_db, files_db) + корень индексации (projects_root, дефолт %USERPROFILE%\.claude\projects); search_cmd/port остаются dormant (отложенный dense)</step-2>
+      <step-3 module="M-SEARCH" status="pending" verification="V-M-SEARCH">bm25_search читает свою claudebar_chats.db; + snippet_for (FTS5 snippet для тултипа); dense-путь (M-SDAEMON) усыплён -&gt; search() = BM25-only</step-3>
+      <step-4 module="M-MAIN" status="pending" verification="V-M-MAIN">Авто-индекс: ensure_index в фоновом потоке при старте + по таймеру (инкремент); UI не морозим</step-4>
+      <!-- Фаза B: тултипы -->
+      <step-5 module="M-MAIN" status="pending" verification="V-M-MAIN">Win32-подсказки (задержка ~0.5с): полный путь на обрезанных строках; путь+сниппет для чат-результатов; правила синтаксиса над строкой поиска</step-5>
+      <!-- Фаза C: индекс файлов -->
+      <step-6 module="M-INDEX" status="pending" verification="V-M-INDEX">Расширение: history (Recent) -&gt; извлечение текста (md/txt напрямую; xlsx=calamine; docx/pptx=zip+xml; pdf=pdf-extract; xer=текст) -&gt; claudebar_files.db. Зависимости calamine/zip/pdf-extract (обосновать перед step-6)</step-6>
+      <step-7 module="M-SEARCH" status="pending" verification="V-M-SEARCH">Параллельный запрос в обе базы (chats+files), слияние по папке</step-7>
+      <step-8 module="M-MAIN" status="pending" verification="V-M-MAIN">Кнопка «+Файлы»: scope chats|all</step-8>
+      <checkpoint>
+        <tests>cargo test зелёные (M-INDEX: parse_transcript/chunk_text, ensure_index на temp dir; M-SEARCH: snippet_for, параллельный запрос); cargo build --release под GNU (serde_json + Ф-C крейты)</tests>
+        <smoke>После старта (авто-индекс) свежий проект (run-pig: «подстроечник») находится БЕЗ ручной переиндексации; тултип показывает путь/сниппет/правила; «+Файлы» добавляет доки из history</smoke>
+        <flows>DF-INDEX-CHATS, DF-SEARCH-OWN end-to-end; DF-INDEX-FILES (Ф-C)</flows>
+        <artifacts>graph/plan/verification синхронны; grace lint = 0</artifacts>
+        <on-fail>grace-fix; откат коммитом; крейт извлечения не собирается -&gt; формат пропускается (skip), не блокирует фазу</on-fail>
+      </checkpoint>
+    </Phase-13>
   </ImplementationOrder>
 
   <ExecutionPolicy>

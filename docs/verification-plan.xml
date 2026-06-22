@@ -204,6 +204,20 @@
         <scenario-3 kind="failure">Демон недоступен/таймаут -> dense пропускается без краха панели (только BM25)</scenario-3>
       </scenarios>
     </V-M-SDAEMON>
+    <V-M-INDEX MODULE="M-INDEX" PRIORITY="high">
+      <test-files><file>src/index.rs (#[cfg(test)])</file></test-files>
+      <module-checks>
+        <check-1>cargo test index</check-1>
+        <check-2>Ручной smoke: после старта (авто-индекс) свежий проект (run-pig: «подстроечник») находится без ручной переиндексации</check-2>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">parse_transcript: jsonl -&gt; тексты user/assistant + project_folder из cwd; служебный/tool-шум отсеян</scenario-1>
+        <scenario-2 kind="success">chunk_text: длинный текст -&gt; чанки ~512 слов (границы корректны, хвост не теряется)</scenario-2>
+        <scenario-3 kind="success">ensure_index на temp dir с фейковыми jsonl -&gt; claudebar_chats.db (chunks+chunks_fts) заполнена; FTS5 MATCH находит слово</scenario-3>
+        <scenario-4 kind="success">Инкремент по mtime: повторный ensure_index без изменений не переиндексирует (files_meta); изменённый файл — переиндексирует</scenario-4>
+        <scenario-5 kind="failure">Битая/незнакомая строка jsonl -&gt; пропуск (skip), не паника; индексация продолжается</scenario-5>
+      </scenarios>
+    </V-M-INDEX>
   </ModuleVerification>
 
   <PhaseGates>
@@ -297,6 +311,17 @@
         <evidence-4>graph/plan/verification синхронны; grace lint = 0</evidence-4>
       </required-evidence>
     </Gate-Phase-12>
+    <Gate-Phase-13 PHASE="Phase-13">
+      <goal>Поиск целиком на Rust: ClaudeBar сам строит BM25-индекс (FTS5) из транскриптов (и доков history), авто-освежает; запрос по своим базам без Python; тултипы путь/сниппет/правила</goal>
+      <commands><command-1>cargo test</command-1><command-2>cargo build --release</command-2></commands>
+      <required-evidence>
+        <evidence-1>Юнит-тесты M-INDEX (parse_transcript, chunk_text, ensure_index на temp dir, инкремент по mtime) и M-SEARCH (snippet_for) проходят</evidence-1>
+        <evidence-2>Smoke: после старта авто-индекс подхватывает свежий проект (run-pig: «подстроечник» находится) БЕЗ ручной переиндексации; Python не запущен</evidence-2>
+        <evidence-3>Тултипы (задержка ~0.5с): полный путь на обрезанных строках, путь+сниппет для чат-результатов, правила синтаксиса над строкой поиска</evidence-3>
+        <evidence-4>cargo build --release под GNU (serde_json; Ф-C: calamine/zip/pdf-extract) проходит; «+Файлы» добавляет доки history (Ф-C)</evidence-4>
+        <evidence-5>graph/plan/verification синхронны; grace lint = 0</evidence-5>
+      </required-evidence>
+    </Gate-Phase-13>
   </PhaseGates>
 
   <FailurePackets>
