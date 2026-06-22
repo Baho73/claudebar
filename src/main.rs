@@ -11,6 +11,7 @@ mod recent;
 mod render;
 #[allow(dead_code)] // dormant: dense отложен (Phase-13); M-SDAEMON оживёт с Python-модулем смысла
 mod sdaemon;
+#[allow(dead_code)] // dense-помощники dormant + snippet_for ждёт Ф-B (тултипы)
 mod search;
 mod settings;
 mod signal;
