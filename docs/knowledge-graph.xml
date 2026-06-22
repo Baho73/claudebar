@@ -72,7 +72,8 @@
         <fn-section_of_row PURPOSE="Индекс приложения секции, к которой относится строка" />
         <fn-section_blocks PURPOSE="Блоки секций в видимом порядке (drag-reorder секций)" />
         <fn-window_names PURPOSE="Имена окон секции в видимом порядке (drag-reorder окон)" />
-        <type-Row PURPOSE="Типизированная строка: Section | Window | RecentHeader | Recent | RecentMore" />
+        <fn-search_render PURPOSE="Поиск (Phase-12): folder_project (имя проекта из пути), search_color_for (цвет открытой совпавшей папки), search_result_rows (строки «Найдено ещё» по закрытым)" />
+        <type-Row PURPOSE="Типизированная строка: Section | Window | RecentHeader | Recent | RecentMore | SearchHeader | SearchResult" />
         <type-Zone PURPOSE="Зона клика в строке: Body | Close | DragHandle" />
       </annotations>
     </M-RENDER>

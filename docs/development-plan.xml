@@ -485,7 +485,7 @@
       <step-1 module="M-CONFIG" status="done" verification="V-M-CONFIG">Конфиг поиска: search_daemon_cmd, путь clfind.db, порт демона (ключи в claudebar.ini)</step-1>
       <step-2 module="M-SDAEMON" status="done" verification="V-M-SDAEMON">Клиент демона: ensure_running (спавн+поллинг /health), dense_search (HTTP POST через std::net), чистые parse_health/build_dense_request. Демон недоступен -&gt; BM25-only без краха</step-2>
       <step-3 module="M-SEARCH" status="done" verification="V-M-SEARCH">rusqlite BM25 по clfind.db (WAL ro) + чистые fts_query (санитизация)/aggregate_to_folders/color/parse_dense_response + оркестрация (bm25 -&gt; пусто -&gt; dense). NB: первым делом проверить сборку rusqlite bundled под GNU</step-3>
-      <step-4 module="M-RENDER" status="pending" verification="V-M-RENDER">Окошко поиска в шапке (Win32 EDIT); подсветка search-hit полосой (жёлтый/синий); блок «Найдено ещё» для закрытых совпадений</step-4>
+      <step-4 module="M-RENDER" status="done" verification="V-M-RENDER">Окошко поиска в шапке (Win32 EDIT); подсветка search-hit полосой (жёлтый/синий); блок «Найдено ещё» для закрытых совпадений</step-4>
       <step-5 module="M-MAIN" status="pending" verification="V-M-MAIN">🔍/горячая клавиша открывает поле; ввод -&gt; debounce live BM25; Enter; Esc сброс; спавн-на-пустом через M-SDAEMON</step-5>
       <checkpoint>
         <tests>cargo test (M-SEARCH: fts_query/санитизация, bm25 на temp clfind.db, aggregate/color, parse_dense_response; M-SDAEMON: parse_health, build_dense_request) зелёные; cargo build --release с rusqlite под GNU</tests>
