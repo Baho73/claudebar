@@ -51,6 +51,7 @@ pub(crate) struct App {
     pub(crate) menu_target: usize, // индекс строки, по которой открыли меню
     pub(crate) last_h: i32,
     pub(crate) bell: HashSet<String>, // имена проектов со «звоночком» (lower) — подсветка строк
+    pub(crate) search_hits: Vec<search::FolderHit>, // папки-совпадения поиска (Phase-12)
     pub(crate) reorder: bool, // режим перетаскивания: ручки видны, ✕ скрыт
     pub(crate) drag: Option<i32>, // индекс перетаскиваемой строки во время drag
 }
@@ -340,6 +341,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                         render::Row::RecentHeader { app } => Some(Act::ToggleRecent(app)),
                         render::Row::Recent { ridx } => Some(Act::Open(ridx)),
                         render::Row::RecentMore { app } => Some(Act::ToggleShowall(app)),
+                        render::Row::SearchHeader => None,
+                        render::Row::SearchResult { .. } => None, // открытие — step-5 (M-MAIN)
                     }
                 });
                 #[derive(Clone, Copy)]
@@ -696,6 +699,7 @@ fn main() -> Result<()> {
             menu_target: 0,
             last_h: 0,
             bell: HashSet::new(),
+            search_hits: Vec::new(),
             reorder: false,
             drag: None,
         };

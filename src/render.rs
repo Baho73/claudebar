@@ -1,5 +1,5 @@
 // FILE: src/render.rs
-// VERSION: 1.9.0
+// VERSION: 1.10.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Построение строк-секций и отрисовка панели (GDI, двойной буфер) с группировкой по приложению.
 //   SCOPE: геометрия/цвета, Row, build_rows, paint (секции+иконки+окна+недавние+подсветка звоночка), resize, row_at.
@@ -16,10 +16,12 @@
 //   resize            - подогнать высоту окна под число строк
 //   row_at            - индекс строки по координате Y
 //   hit_test          - (строка, Zone) по координатам клика (с учётом режима reorder)
+//   folder_project / search_color_for / search_result_rows - поиск (Phase-12): имя проекта из пути, цвет открытой совпавшей папки, строки «Найдено ещё» по закрытым
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.9.0 - Phase-9 Step 3: глиф «⚙» (настройки) в шапке слева от «✕»; pub HEAD_BTN_W — общая ширина кнопок шапки.
+//   LAST_CHANGE: v1.10.0 - Phase-12 Step 4: глиф «🔍» в шапке; подсветка совпавших открытых папок цветной полосой (🟡 BM25 / 🔵 dense); Row::SearchHeader/SearchResult + блок «Найдено ещё»; чистые folder_project/search_color_for/search_result_rows.
+//   v1.9.0 - Phase-9 Step 3: глиф «⚙» (настройки) в шапке слева от «✕»; pub HEAD_BTN_W — общая ширина кнопок шапки.
 //   v1.8.0 - fix: перетаскивание необнаружимо. В режиме reorder хватается вся строка (не только ручка), шапка показывает подсказку «↕ Порядок».
 //   v1.7.0 - Phase-8 Step 2: ручной порядок в build_rows, Zone::DragHandle, ручки и подсветка drag.
 //   v1.6.0 - Phase-7 Step 3: Row::RecentMore — «показать все» недавних сверх 6 (VISIBLE_RECENT).
@@ -37,8 +39,10 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use crate::config::{AppDef, Config, PALETTE};
 use crate::icon;
 use crate::recent::RecentDoc;
+use crate::search::{Color, FolderHit};
 use crate::win_enum::WinItem;
 use crate::App;
+use std::collections::HashSet;
 
 // геометрия
 pub const W: i32 = 252;
@@ -57,6 +61,8 @@ pub enum Row {
     RecentHeader { app: usize }, // под-заголовок «Недавние»
     Recent { ridx: usize }, // индекс в App.recent
     RecentMore { app: usize }, // строка «показать все / свернуть» недавних
+    SearchHeader, // под-заголовок «Найдено ещё» (закрытые совпадения поиска) — Phase-12
+    SearchResult { hit: usize }, // индекс в App.search_hits (закрытая папка-совпадение) — Phase-12
 }
 
 // Зона клика внутри строки.
@@ -81,6 +87,8 @@ const C_BORDER: (u8, u8, u8) = (40, 54, 90);
 const C_REC: (u8, u8, u8) = (170, 182, 206);
 const C_BELL: (u8, u8, u8) = (70, 56, 22); // фон строки со «звоночком» — тёплое тёмное золото
 const C_BELL_BAR: (u8, u8, u8) = (246, 189, 22); // левая полоса-индикатор «звоночка»
+const C_SRCH_BM25: (u8, u8, u8) = (245, 200, 40); // жёлтая полоса поиска: совпадение по словам (BM25)
+const C_SRCH_DENSE: (u8, u8, u8) = (91, 143, 249); // синяя полоса поиска: совпадение по смыслу (dense)
 
 unsafe fn dt(hdc: HDC, s: &str, mut r: RECT, fmt: DRAW_TEXT_FORMAT) {
     if s.is_empty() {
@@ -203,7 +211,8 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
         dt(mem, "↕ Порядок — тащите строки, ПКМ — выход", RECT { left: 10, top: 0, right: w - 8, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
     } else {
         SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
-        dt(mem, "≡ ClaudeBar", RECT { left: 10, top: 0, right: w - 2 * HEAD_BTN_W, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+        dt(mem, "≡ ClaudeBar", RECT { left: 10, top: 0, right: w - 3 * HEAD_BTN_W, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+        dt(mem, "🔍", RECT { left: w - 3 * HEAD_BTN_W, top: 0, right: w - 2 * HEAD_BTN_W, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
         dt(mem, "⚙", RECT { left: w - 2 * HEAD_BTN_W, top: 0, right: w - HEAD_BTN_W, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
         dt(mem, "✕", RECT { left: w - HEAD_BTN_W, top: 0, right: w, bottom: HEAD }, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
     }
@@ -264,6 +273,11 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                     fill(mem, full, C_HOVER);
                 }
                 // END_BLOCK_ROW_BG_WINDOW
+                // подсветка поиска: совпавшая открытая папка — цветная левая полоса (🟡/🔵)
+                if let Some(col) = search_color_for(&app.search_hits, &it.name.to_lowercase()) {
+                    let bar = match col { Color::Bm25 => C_SRCH_BM25, Color::Dense => C_SRCH_DENSE };
+                    fill(mem, RECT { left: 0, top, right: 3, bottom: top + ROW }, bar);
+                }
                 // цветная плашка (с отступом — окна вложены в секцию)
                 let cy = top + (ROW - SWATCH) / 2;
                 let (_, r, g, b) = PALETTE[app.config.color_idx(&it.name)];
@@ -331,6 +345,23 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 SelectObject(mem, app.font_small);
                 SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
                 dt(mem, &txt, RECT { left: 58, top, right: w - 10, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+            }
+            Row::SearchHeader => {
+                fill(mem, full, C_SECTION);
+                SelectObject(mem, app.font_small);
+                SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
+                dt(mem, "🔍 Найдено ещё", RECT { left: 10, top, right: w - 10, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+            }
+            Row::SearchResult { hit } => {
+                if app.hover == i as i32 {
+                    fill(mem, full, C_HOVER);
+                }
+                let h = &app.search_hits[*hit];
+                let bar = match h.color { Color::Bm25 => C_SRCH_BM25, Color::Dense => C_SRCH_DENSE };
+                fill(mem, RECT { left: 0, top, right: 3, bottom: top + ROW }, bar);
+                SelectObject(mem, app.font_main);
+                SetTextColor(mem, rgb(C_REC.0, C_REC.1, C_REC.2));
+                dt(mem, &folder_project(&h.folder), RECT { left: 12, top, right: w - 10, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
             }
         }
         // разделитель
@@ -474,6 +505,47 @@ pub fn window_names(rows: &[Row], items: &[WinItem], app: usize) -> Vec<String> 
         .collect()
 }
 
+// START_CONTRACT: folder_project
+//   PURPOSE: Имя проекта = последний сегмент пути папки (нижний регистр).
+//   INPUTS: { folder: &str }
+//   OUTPUTS: { String }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: folder_project
+pub fn folder_project(folder: &str) -> String {
+    folder.trim_end_matches(['\\', '/']).rsplit(['\\', '/']).next().unwrap_or(folder).to_lowercase()
+}
+
+// START_CONTRACT: search_color_for
+//   PURPOSE: Цвет подсветки для проекта, если он среди совпадений поиска.
+//   INPUTS: { hits: &[FolderHit]; project_lower: &str }
+//   OUTPUTS: { Option<Color> }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: search_color_for
+pub fn search_color_for(hits: &[FolderHit], project_lower: &str) -> Option<Color> {
+    hits.iter().find(|h| folder_project(&h.folder) == project_lower).map(|h| h.color)
+}
+
+// START_CONTRACT: search_result_rows
+//   PURPOSE: Строки блока «Найдено ещё» — совпадения поиска, чей проект НЕ открыт.
+//   INPUTS: { hits: &[FolderHit]; open_projects: &HashSet<String> - открытые проекты (lower) }
+//   OUTPUTS: { Vec<Row> - SearchHeader + SearchResult по закрытым; пусто, если закрытых нет }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: search_result_rows
+pub fn search_result_rows(hits: &[FolderHit], open_projects: &HashSet<String>) -> Vec<Row> {
+    let closed: Vec<usize> = hits
+        .iter()
+        .enumerate()
+        .filter(|(_, h)| !open_projects.contains(&folder_project(&h.folder)))
+        .map(|(i, _)| i)
+        .collect();
+    if closed.is_empty() {
+        return Vec::new();
+    }
+    let mut rows = vec![Row::SearchHeader];
+    rows.extend(closed.into_iter().map(|hit| Row::SearchResult { hit }));
+    rows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -583,5 +655,29 @@ mod tests {
         // только заголовок, тело скрыто
         assert_eq!(rows.len(), 1);
         assert!(matches!(rows[0], Row::Section { app: 0 }));
+    }
+
+    #[test]
+    fn folder_project_basename_lower() {
+        assert_eq!(folder_project("D:\\Python\\hh_answer"), "hh_answer");
+        assert_eq!(folder_project("D:/Python/ClaudeBar/"), "claudebar");
+    }
+
+    #[test]
+    fn search_color_and_result_rows() {
+        let hits = vec![
+            FolderHit { folder: "D:\\Python\\hh_answer".into(), color: Color::Bm25, score: 4.0 },
+            FolderHit { folder: "D:\\Python\\margo".into(), color: Color::Dense, score: 0.7 },
+        ];
+        // открытый проект hh_answer -> его цвет; неизвестный -> None
+        assert_eq!(search_color_for(&hits, "hh_answer"), Some(Color::Bm25));
+        assert_eq!(search_color_for(&hits, "unknown"), None);
+        // «Найдено ещё»: открыт только hh_answer -> margo в закрытых
+        let mut open = HashSet::new();
+        open.insert("hh_answer".to_string());
+        let rows = search_result_rows(&hits, &open);
+        assert_eq!(rows.len(), 2); // header + margo
+        assert!(matches!(rows[0], Row::SearchHeader));
+        assert!(matches!(rows[1], Row::SearchResult { hit: 1 }));
     }
 }
