@@ -1,5 +1,5 @@
 // FILE: src/search.rs
-// VERSION: 1.3.0
+// VERSION: 1.3.1
 // START_MODULE_CONTRACT
 //   PURPOSE: Поиск по чатам: живой BM25 нативно (rusqlite поверх своей claudebar_chats.db FTS5, read-only) с агрегацией по project_folder; цвет Bm25 (жёлтый). snippet_for даёт фразу-сниппет для тултипа. Dense отложен (M-SDAEMON dormant). Phase-13.
 //   SCOPE: fts_query/aggregate_to_folders/parse_dense_response (чистые), bm25_search/snippet_for (rusqlite), search (BM25-only оркестрация).
@@ -23,7 +23,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.3.0 - Phase-13 Ф-C step-7: bm25_search фильтрует source по scope (chats/files); +search_bm25 (chats + опц. files, слияние по папке) для «+Файлы».
+//   LAST_CHANGE: v1.3.1 - Phase-13 доводка: snippet_for без фильтра source -> работает и по files_db (сниппет для файловых результатов).
+//   v1.3.0 - Phase-13 Ф-C step-7: bm25_search фильтрует source по scope (chats/files); +search_bm25 (chats + опц. files, слияние по папке) для «+Файлы».
 //   v1.2.0 - Phase-13 Ф-A step-3: bm25 по своей claudebar_chats.db; +snippet_for (FTS5 snippet для тултипа); search() = BM25-only (dense отложен, M-SDAEMON dormant, импорт sdaemon/Duration убран).
 //   v1.1.1 - fix(grace-fix): токен с пунктуацией (IP «187.124.242.233», url, дата) больше не схлопывается в один — words() дробит как unicode61, atom() ищет соседние под-слова фразой. Тест fts_query_operators (IP).
 //   v1.1.0 - Phase-12: синтаксис запросов (Google-style) в fts_query — пробел=И, a+b=фраза, a++b=NEAR, -w=исключить, OR=или; sanitize_word против инъекции.
@@ -275,9 +276,10 @@ pub fn search_bm25(chats_db: &str, files_db: Option<&str>, query: &str, limit: u
 pub fn snippet_for(db: &str, query: &str, folder: &str) -> Option<String> {
     let fts = fts_query(query)?;
     let conn = Connection::open_with_flags(db, OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+    // без фильтра source: каждая база односорсная (chats=chat, files=file), хватает folder
     let sql = "SELECT snippet(chunks_fts, -1, '', '', '…', 12) \
                FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid \
-               WHERE chunks_fts MATCH ?1 AND c.source='chat' AND c.project_folder = ?2 \
+               WHERE chunks_fts MATCH ?1 AND c.project_folder = ?2 \
                ORDER BY bm25(chunks_fts) LIMIT 1";
     conn.query_row(sql, params![fts, folder], |r| r.get::<_, String>(0)).ok()
 }
