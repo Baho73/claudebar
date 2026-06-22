@@ -1,5 +1,5 @@
 // FILE: src/search.rs
-// VERSION: 1.2.0
+// VERSION: 1.3.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Поиск по чатам: живой BM25 нативно (rusqlite поверх своей claudebar_chats.db FTS5, read-only) с агрегацией по project_folder; цвет Bm25 (жёлтый). snippet_for даёт фразу-сниппет для тултипа. Dense отложен (M-SDAEMON dormant). Phase-13.
 //   SCOPE: fts_query/aggregate_to_folders/parse_dense_response (чистые), bm25_search/snippet_for (rusqlite), search (BM25-only оркестрация).
@@ -18,11 +18,13 @@
 //   parse_dense_response - чистое: JSON демона -> папки с dense-скором (наивный разбор; для отложенного dense)
 //   snippet_for          - rusqlite: фраза-сниппет (FTS5 snippet) лучшего совпадения в папке (тултип)
 //   search               - BM25-only оркестрация (dense отложен)
+//   search_bm25          - BM25 по chats_db + (опц.) files_db, слияние по папке (Ф-C «+Файлы»)
 //   json_unescape / parse_number_after_colon - приватные помощники разбора
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.2.0 - Phase-13 Ф-A step-3: bm25 по своей claudebar_chats.db; +snippet_for (FTS5 snippet для тултипа); search() = BM25-only (dense отложен, M-SDAEMON dormant, импорт sdaemon/Duration убран).
+//   LAST_CHANGE: v1.3.0 - Phase-13 Ф-C step-7: bm25_search фильтрует source по scope (chats/files); +search_bm25 (chats + опц. files, слияние по папке) для «+Файлы».
+//   v1.2.0 - Phase-13 Ф-A step-3: bm25 по своей claudebar_chats.db; +snippet_for (FTS5 snippet для тултипа); search() = BM25-only (dense отложен, M-SDAEMON dormant, импорт sdaemon/Duration убран).
 //   v1.1.1 - fix(grace-fix): токен с пунктуацией (IP «187.124.242.233», url, дата) больше не схлопывается в один — words() дробит как unicode61, atom() ищет соседние под-слова фразой. Тест fts_query_operators (IP).
 //   v1.1.0 - Phase-12: синтаксис запросов (Google-style) в fts_query — пробел=И, a+b=фраза, a++b=NEAR, -w=исключить, OR=или; sanitize_word против инъекции.
 //   v1.0.0 - Phase-12 Step 3: новый модуль поиска. Нативный BM25 (rusqlite по clfind.db) + чистые fts_query/aggregate/parse_dense + оркестрация с dense-fallback (M-SDAEMON).
@@ -132,13 +134,19 @@ pub fn bm25_search(db_path: &str, query: &str, scope: &str, limit: usize) -> Vec
     let Ok(conn) = Connection::open_with_flags(db_path, flags) else {
         return Vec::new();
     };
-    // MVP: только чаты (source='chat'); scope=all — Фаза 2.
-    let _ = scope;
-    let sql = "SELECT c.project_folder, -bm25(chunks_fts) AS score \
-               FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid \
-               WHERE chunks_fts MATCH ?1 AND c.source = 'chat' \
-               ORDER BY bm25(chunks_fts) LIMIT ?2";
-    let Ok(mut stmt) = conn.prepare(sql) else {
+    // фильтр источника по scope (контролируемое значение, не пользовательский ввод)
+    let src = match scope {
+        "files" => " AND c.source='file'",
+        "chats" => " AND c.source='chat'",
+        _ => "",
+    };
+    let sql = format!(
+        "SELECT c.project_folder, -bm25(chunks_fts) AS score \
+         FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid \
+         WHERE chunks_fts MATCH ?1{src} \
+         ORDER BY bm25(chunks_fts) LIMIT ?2"
+    );
+    let Ok(mut stmt) = conn.prepare(&sql) else {
         return Vec::new();
     };
     let rows = stmt.query_map(params![fts, limit as i64], |r| {
@@ -242,6 +250,20 @@ pub fn parse_dense_response(json: &str) -> Vec<(String, f64)> {
 pub fn search(db: &str, cmd: &str, port: u16, query: &str) -> Vec<FolderHit> {
     let _ = (cmd, port); // dormant: dense отложен (Phase-13 Ф-A)
     aggregate_to_folders(&bm25_search(db, query, "chats", 200), Color::Bm25)
+}
+
+// START_CONTRACT: search_bm25
+//   PURPOSE: BM25 по базе чатов + (опц.) базе файлов, слияние по папке (Ф-C «+Файлы»).
+//   INPUTS: { chats_db: &str; files_db: Option<&str>; query: &str; limit: usize }
+//   OUTPUTS: { Vec<FolderHit> - папки (Bm25), по убыванию }
+//   SIDE_EFFECTS: чтение баз read-only
+// END_CONTRACT: search_bm25
+pub fn search_bm25(chats_db: &str, files_db: Option<&str>, query: &str, limit: usize) -> Vec<FolderHit> {
+    let mut chunks = bm25_search(chats_db, query, "chats", limit);
+    if let Some(fdb) = files_db {
+        chunks.extend(bm25_search(fdb, query, "files", limit));
+    }
+    aggregate_to_folders(&chunks, Color::Bm25)
 }
 
 // START_CONTRACT: snippet_for
@@ -358,5 +380,33 @@ mod tests {
         assert!(s.contains("подстроечник"));
         assert!(snippet_for(p, "подстроечник", "D:\\Python\\other").is_none()); // другая папка
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn search_bm25_merges_chats_and_files() {
+        let mk = |name: &str, src: &str, folder: &str, text: &str| -> String {
+            let path = std::env::temp_dir().join(name);
+            let _ = std::fs::remove_file(&path);
+            let p = path.to_str().unwrap().to_string();
+            let conn = Connection::open(&p).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE chunks(id INTEGER PRIMARY KEY, project_folder TEXT, source TEXT, ref TEXT, location TEXT, text TEXT);
+                 CREATE VIRTUAL TABLE chunks_fts USING fts5(text, content='chunks', content_rowid='id', tokenize='unicode61');
+                 CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN INSERT INTO chunks_fts(rowid,text) VALUES(new.id,new.text); END;",
+            ).unwrap();
+            conn.execute("INSERT INTO chunks(project_folder,source,ref,location,text) VALUES (?1,?2,'r','0',?3)",
+                params![folder, src, text]).unwrap();
+            p
+        };
+        let cdb = mk("clbar_sb_chats.db", "chat", "D:\\A", "смета в чате");
+        let fdb = mk("clbar_sb_files.db", "file", "D:\\B", "смета в файле");
+        // только чаты -> одна папка
+        let only = search_bm25(&cdb, None, "смета", 10);
+        assert_eq!(only.len(), 1);
+        assert_eq!(only[0].folder, "D:\\A");
+        // чаты + файлы -> две папки
+        assert_eq!(search_bm25(&cdb, Some(&fdb), "смета", 10).len(), 2);
+        let _ = std::fs::remove_file(&cdb);
+        let _ = std::fs::remove_file(&fdb);
     }
 }
