@@ -246,7 +246,7 @@
       <verification-ref>V-M-SEARCH</verification-ref>
     </M-SEARCH>
 
-    <M-SDAEMON NAME="SearchDaemon" TYPE="INTEGRATION" LAYER="2" ORDER="6" STATUS="planned">
+    <M-SDAEMON NAME="SearchDaemon" TYPE="INTEGRATION" LAYER="2" ORDER="6" STATUS="implemented">
       <contract>
         <purpose>Клиент Python-демона clfind (только dense): спавн `clfind serve` при молчащем /health (команда из M-CONFIG.search_daemon_cmd, pythonw без консоли), поллинг /health до ready, dense-запрос HTTP POST /search через std::net (без HTTP-крейта). Phase-12.</purpose>
         <inputs><param name="cmd" type="&amp;str" /><param name="port" type="u16" /><param name="query" type="&amp;str" /></inputs>
@@ -482,8 +482,8 @@
 
     <Phase-12 name="Поиск по чатам (M-SEARCH)" status="pending">
       <goal>Окошко поиска в шапке: живой нативный BM25 (rusqlite по clfind.db) подсвечивает папки жёлтым; при пустом результате поднимается Python-демон и даёт dense (синие). Дизайн: docs/superpowers/specs/2026-06-20-chat-folder-search-design.md (v2).</goal>
-      <step-1 module="M-CONFIG" status="pending" verification="V-M-CONFIG">Конфиг поиска: search_daemon_cmd, путь clfind.db, порт демона (ключи в claudebar.ini)</step-1>
-      <step-2 module="M-SDAEMON" status="pending" verification="V-M-SDAEMON">Клиент демона: ensure_running (спавн+поллинг /health), dense_search (HTTP POST через std::net), чистые parse_health/build_dense_request. Демон недоступен -&gt; BM25-only без краха</step-2>
+      <step-1 module="M-CONFIG" status="done" verification="V-M-CONFIG">Конфиг поиска: search_daemon_cmd, путь clfind.db, порт демона (ключи в claudebar.ini)</step-1>
+      <step-2 module="M-SDAEMON" status="done" verification="V-M-SDAEMON">Клиент демона: ensure_running (спавн+поллинг /health), dense_search (HTTP POST через std::net), чистые parse_health/build_dense_request. Демон недоступен -&gt; BM25-only без краха</step-2>
       <step-3 module="M-SEARCH" status="pending" verification="V-M-SEARCH">rusqlite BM25 по clfind.db (WAL ro) + чистые fts_query (санитизация)/aggregate_to_folders/color/parse_dense_response + оркестрация (bm25 -&gt; пусто -&gt; dense). NB: первым делом проверить сборку rusqlite bundled под GNU</step-3>
       <step-4 module="M-RENDER" status="pending" verification="V-M-RENDER">Окошко поиска в шапке (Win32 EDIT); подсветка search-hit полосой (жёлтый/синий); блок «Найдено ещё» для закрытых совпадений</step-4>
       <step-5 module="M-MAIN" status="pending" verification="V-M-MAIN">🔍/горячая клавиша открывает поле; ввод -&gt; debounce live BM25; Enter; Esc сброс; спавн-на-пустом через M-SDAEMON</step-5>

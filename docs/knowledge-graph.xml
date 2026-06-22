@@ -156,7 +156,7 @@
       </annotations>
     </M-SEARCH>
 
-    <M-SDAEMON NAME="SearchDaemon" TYPE="INTEGRATION" STATUS="planned">
+    <M-SDAEMON NAME="SearchDaemon" TYPE="INTEGRATION" STATUS="implemented">
       <purpose>Клиент Python-демона clfind (только dense): спавн `clfind serve` при молчащем /health (команда из M-CONFIG.search_daemon_cmd, pythonw без консоли), поллинг /health до ready, dense-запрос HTTP POST /search через std::net (без HTTP-крейта). Phase-12.</purpose>
       <path>src/sdaemon.rs</path>
       <depends>M-CONFIG</depends>
