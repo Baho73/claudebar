@@ -293,7 +293,7 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 // цветная плашка (с отступом — окна вложены в секцию)
                 let cy = top + (ROW - SWATCH) / 2;
                 let (_, r, g, b) = PALETTE[app.config.color_idx(&it.name)];
-                fill(mem, RECT { left: 20, top: cy, right: 20 + SWATCH, bottom: cy + SWATCH }, (r, g, b));
+                fill(mem, RECT { left: 22, top: cy, right: 22 + SWATCH, bottom: cy + SWATCH }, (r, g, b)); // +2px зазор от иконки-рамки поиска
                 // имя
                 SelectObject(mem, app.font_main);
                 SetTextColor(mem, rgb(C_TXT.0, C_TXT.1, C_TXT.2));
