@@ -42,7 +42,7 @@ const ID_SEARCH: usize = 40; // EDIT-поле поиска в шапке (WM_COM
 const SEARCH_MIN: usize = 3; // живой BM25 начинается с N символов
 const WM_APP_SEARCH: u32 = WM_APP + 1; // dense-результаты из фонового потока
 const EM_SETCUEBANNER: u32 = 0x1501; // подсказка-заглушка в пустом EDIT
-const C_SEARCH_BG: u32 = 0x00F8E0C8; // светло-голубой фон поля поиска (RGB 200,224,248)
+const C_SEARCH_BG: u32 = 0x00ECC86D; // фон поля поиска = палитра «Голубой» (RGB 109,200,236), как квадратик voice-smeta
 const C_SEARCH_TXT: u32 = 0x003C2319; // тёмный текст поля (RGB 25,35,60)
 
 // ---------- состояние ----------
