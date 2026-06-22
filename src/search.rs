@@ -381,6 +381,13 @@ mod tests {
         let s = snippet_for(p, "подстроечник", "D:\\Python\\run-pig").unwrap();
         assert!(s.contains("подстроечник"));
         assert!(snippet_for(p, "подстроечник", "D:\\Python\\other").is_none()); // другая папка
+        // source='file' тоже находится (фильтра source нет — база односорсная)
+        {
+            let conn = Connection::open(p).unwrap();
+            conn.execute("INSERT INTO chunks(project_folder,source,ref,location,text) VALUES (?1,'file','f','смета.xlsx',?2)",
+                params!["D:\\Docs", "смета по фундаменту"]).unwrap();
+        }
+        assert!(snippet_for(p, "смета", "D:\\Docs").unwrap().contains("смета"));
         let _ = std::fs::remove_file(&path);
     }
 

@@ -1,9 +1,9 @@
 // FILE: src/index.rs
-// VERSION: 1.1.0
+// VERSION: 1.1.1
 // START_MODULE_CONTRACT
-//   PURPOSE: Rust-индексатор BM25: транскрипты Claude Code (~/.claude/projects/**/*.jsonl) -> чанки -> FTS5 claudebar_chats.db. Инкремент по mtime. Своя база (заменяет Python-сборку BM25; clfind остаётся для отложенного dense). Phase-13.
-//   SCOPE: init_schema (DDL), parse_transcript/chunk_text (чистые, тестируемые), ensure_index (инкрементальный обход + запись).
-//   DEPENDS: M-CONFIG (пути базы и корень индексации приходят параметрами через M-MAIN)
+//   PURPOSE: Rust-индексатор BM25. Чаты: транскрипты Claude Code (~/.claude/projects/**/*.jsonl) -> FTS5 claudebar_chats.db. Файлы (Ф-C): доки history (txt/md/xer/код/xlsx/docx/pptx/pdf) -> FTS5 claudebar_files.db. Инкремент по mtime. Свои базы (заменяют Python-сборку BM25; clfind остаётся для отложенного dense). Phase-13.
+//   SCOPE: init_schema (DDL), parse_transcript/chunk_text/extract_text/strip_xml_text (чистые/тестируемые), ensure_index (чаты) и ensure_files_index (файлы) — инкрементальный обход + запись.
+//   DEPENDS: none (пути базы и корень индексации приходят параметрами через M-MAIN из M-CONFIG; внешние крейты не GRACE-модули)
 //   LINKS: M-INDEX
 //   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS
@@ -23,7 +23,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.1.0 - Phase-13 Ф-C step-6: индекс файлов history. extract_text (txt/md/xer/код напрямую; xlsx=calamine; docx/pptx=zip+xml; pdf=pdf-extract) + ensure_files_index (source='file', инкремент по mtime). Крейты calamine/zip/pdf-extract.
+//   LAST_CHANGE: v1.1.1 - grace-reviewer: контракт-в-коде выровнен с графом (DEPENDS none; PURPOSE/SCOPE учитывают Ф-C файлы).
+//   v1.1.0 - Phase-13 Ф-C step-6: индекс файлов history. extract_text (txt/md/xer/код напрямую; xlsx=calamine; docx/pptx=zip+xml; pdf=pdf-extract) + ensure_files_index (source='file', инкремент по mtime). Крейты calamine/zip/pdf-extract.
 //   v1.0.0 - Phase-13 Ф-A step-1: новый Rust-индексатор. Транскрипты -> FTS5 claudebar_chats.db, инкремент по mtime; чистые parse_transcript/chunk_text + ensure_index (serde_json для парса).
 // END_CHANGE_SUMMARY
 
