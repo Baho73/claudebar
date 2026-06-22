@@ -1,5 +1,5 @@
 // FILE: src/config.rs
-// VERSION: 1.11.0
+// VERSION: 1.12.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Конфигурация: приложения (по процессу и классу окна), настройки проектов (цвет, метка), свёрнутость секций, «показать все» недавних, позиция, шрифт панели.
 //   SCOPE: палитра, авто-цвет, AppDef (proc/proc_alts/class)/NameMode (вкл. Whole), дефолтный набор приложений (редакторы, Office, терминалы, Проводник), свёрнутость секций, раскрытие/showall недавних, шрифт (font_face/font_size/font_weight), парсинг/сериализация ini.
@@ -26,7 +26,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.11.0 - Phase-13 Ф-A step-2: свои базы (chats_db/files_db, дефолт %APPDATA%\claudebar) + projects_root (дефолт %USERPROFILE%\.claude\projects); ключи chatsdb=/filesdb=/projectsroot=. search_* остаются dormant (dense отложен).
+//   LAST_CHANGE: v1.12.0 - Phase-13 доводка: персист scope «+Файлы» (search_files, ключ searchfiles=).
+//   v1.11.0 - Phase-13 Ф-A step-2: свои базы (chats_db/files_db, дефолт %APPDATA%\claudebar) + projects_root (дефолт %USERPROFILE%\.claude\projects); ключи chatsdb=/filesdb=/projectsroot=. search_* остаются dormant (dense отложен).
 //   v1.10.0 - Phase-12 Step 1: конфиг поиска (search_db/search_cmd/search_port; ключи searchdb=/searchcmd=/searchport=) для M-SEARCH/M-SDAEMON.
 //   v1.9.0 - fix(grace-fix): visible_start_pos — стартовая позиция с учётом мониторов. После смены конфигурации мониторов сохранённая pos= оказывалась вне виртуального экрана, окно создавалось за экраном (видно лишь в панели задач). M-MAIN теперь клампит через SM_*VIRTUALSCREEN.
 //   v1.8.0 - fix(grace-fix): вес шрифта (font_weight, 3-е поле font=); set_font(face,size,weight). Без веса панель была всегда 600 (жирная) и диалог не предзаполнял стиль.
@@ -137,6 +138,7 @@ pub struct Config {
     pub chats_db: String, // своя FTS5-база чатов (нативный BM25 на Rust) — Phase-13
     pub files_db: String, // своя FTS5-база файлов (Ф-C) — Phase-13
     pub projects_root: String, // корень транскриптов Claude Code для индексации — Phase-13
+    pub search_files: bool, // scope «+Файлы»: искать и в claudebar_files.db (ключ searchfiles=) — Phase-13
     pub cfg_path: PathBuf,
 }
 
@@ -257,6 +259,7 @@ struct ParsedIni {
     chats_db: String,
     files_db: String,
     projects_root: String,
+    search_files: bool,
 }
 
 fn parse_ini(text: &str) -> ParsedIni {
@@ -276,6 +279,7 @@ fn parse_ini(text: &str) -> ParsedIni {
     let mut chats_db: String = default_chats_db();
     let mut files_db: String = default_files_db();
     let mut projects_root: String = default_projects_root();
+    let mut search_files = false;
     // START_BLOCK_PARSE_LINES
     for line in text.lines() {
         if let Some(v) = line.strip_prefix("pos=") {
@@ -334,6 +338,8 @@ fn parse_ini(text: &str) -> ParsedIni {
             if !v.trim().is_empty() {
                 projects_root = v.to_string();
             }
+        } else if let Some(v) = line.strip_prefix("searchfiles=") {
+            search_files = v.trim() == "1";
         } else if let Some(v) = line.strip_prefix("os=") {
             section_order = v.split('\t').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
         } else if let Some(v) = line.strip_prefix("o=") {
@@ -367,7 +373,7 @@ fn parse_ini(text: &str) -> ParsedIni {
         }
     }
     // END_BLOCK_PARSE_LINES
-    ParsedIni { projects, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, search_port, chats_db, files_db, projects_root }
+    ParsedIni { projects, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, search_port, chats_db, files_db, projects_root, search_files }
 }
 
 impl Config {
@@ -392,6 +398,7 @@ impl Config {
             chats_db: p.chats_db,
             files_db: p.files_db,
             projects_root: p.projects_root,
+            search_files: p.search_files,
             cfg_path,
         }
     }
@@ -408,6 +415,7 @@ impl Config {
         out += &format!("chatsdb={}\n", self.chats_db);
         out += &format!("filesdb={}\n", self.files_db);
         out += &format!("projectsroot={}\n", self.projects_root);
+        out += &format!("searchfiles={}\n", if self.search_files { 1 } else { 0 });
         for block in &self.collapsed {
             out += &format!("c={}\n", block);
         }
@@ -566,6 +574,7 @@ mod tests {
             chats_db: String::new(),
             files_db: String::new(),
             projects_root: String::new(),
+            search_files: false,
             cfg_path: PathBuf::new(),
         }
     }
@@ -770,6 +779,11 @@ mod tests {
         let p3 = parse_ini(&c.serialize(None));
         assert_eq!(p3.chats_db, "D:\\idx\\chats.db");
         assert_eq!(p3.projects_root, "D:\\proj");
+        // search_files: дефолт false, round-trip
+        assert!(!p.search_files);
+        c.search_files = true;
+        let p4 = parse_ini(&c.serialize(None));
+        assert!(p4.search_files);
     }
 
     #[test]
