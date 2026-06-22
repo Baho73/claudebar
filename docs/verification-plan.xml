@@ -69,6 +69,7 @@
         <scenario-6 kind="success">v0.4 Phase-10: default_apps содержит Windows Terminal, cmd (class ConsoleWindowClass), PowerShell (powershell/pwsh), Git Bash, Проводник (explorer + CabinetWClass) с верными proc_alts/class/NameMode::Whole</scenario-6>
         <scenario-7 kind="regression">Вес шрифта не сохранялся -> панель всегда жирная (600), диалог не предзаполнял начертание. Фикс: font_weight (3-е поле font=), set_font(face,size,weight). Тест font_weight_persisted_and_honored (вкл. обратную совместимость 2-польного font=)</scenario-7>
         <scenario-8 kind="regression">После смены конфигурации мониторов сохранённая pos= оказывается вне виртуального экрана -> окно создаётся за экраном (видно лишь в панели задач). Фикс: visible_start_pos(saved, default, win_w/h, virtual screen rect) -> дефолт на первичном экране, если видимой площади &lt; MIN_VISIBLE; M-MAIN вызывает её с SM_*VIRTUALSCREEN при CreateWindow. Тест offscreen_pos_falls_back_to_default (за правым/левым/нижним краем -> дефолт; частично видимое и валидное -> сохраняется)</scenario-8>
+        <scenario-9 kind="success">v0.5 Phase-12: конфиг поиска round-trip — search_db/search_cmd/search_port через ключи searchdb=/searchcmd=/searchport= (serialize -> parse сохраняет); без ключей -> дефолты (порт 8799, db оканчивается clfind.db, cmd содержит clfind). Тест search_config_roundtrip_and_defaults</scenario-9>
       </scenarios>
     </V-M-CONFIG>
     <V-M-WINENUM MODULE="M-WINENUM" PRIORITY="high">

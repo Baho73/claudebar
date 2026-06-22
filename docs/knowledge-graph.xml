@@ -50,6 +50,7 @@
         <fn-order PURPOSE="Ручной порядок секций (os=) и окон (o=): применение и перемещение — v0.3" />
         <fn-font PURPOSE="font_face/font_size: чтение и set_font; персист ключом font=face⇥size (деф. Iosevka Fixed, 16) — v0.4" />
         <fn-visible_start_pos PURPOSE="Чистое: стартовая позиция окна с учётом мониторов — saved, если видно на виртуальном экране, иначе default (фикс «окно за экраном» после смены мониторов)" />
+        <fn-search PURPOSE="search_db/search_cmd/search_port: конфиг поиска по чатам (ключи searchdb=/searchcmd=/searchport=) для M-SEARCH/M-SDAEMON — Phase-12" />
         <fn-default_apps PURPOSE="Встроенный набор: редакторы, Office + Windows Terminal, cmd, PowerShell, Git Bash, Проводник — v0.4" />
         <type-Config PURPOSE="Корень конфигурации: apps, проекты, секции, недавние, порядок, позиция, шрифт" />
         <type-AppDef PURPOSE="Определение приложения: proc + proc_alts, class (фильтр окна), имя блока, NameMode, расширения" />
