@@ -801,8 +801,8 @@ unsafe fn show_tooltip(_hwnd: HWND) {
     let h = (rc.bottom - rc.top) + 8;
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
-    // вправо от курсора, по вертикали по центру подсказки
-    let _ = SetWindowPos(tip, HWND_TOPMOST, pt.x + 18, (pt.y - h / 2).max(0), w, h, SWP_NOACTIVATE);
+    // вправо от курсора, верх подсказки на уровне курсора (фикс. сдвиг, не зависит от высоты)
+    let _ = SetWindowPos(tip, HWND_TOPMOST, pt.x + 18, (pt.y - 10).max(0), w, h, SWP_NOACTIVATE);
     let _ = ShowWindow(tip, SW_SHOWNOACTIVATE);
     let _ = InvalidateRect(tip, None, BOOL(1));
 }
