@@ -549,7 +549,7 @@
       <goal>ClaudeBar сам строит BM25-индекс (FTS5) на Rust из транскриптов Claude Code и доков history, авто-освежает; запрос по своим базам, без Python. Dense (смысл) — отложенный Python-модуль. Утверждён пользователем (gg).</goal>
       <!-- Фаза A: индексатор чатов + авто-refresh -->
       <step-1 module="M-INDEX" status="done" verification="V-M-INDEX">Rust-индексатор чатов: ensure_index (обход ~/.claude/projects/*.jsonl, инкремент по mtime) + чистые parse_transcript/chunk_text + init_schema -&gt; FTS5 claudebar_chats.db. Зависимость serde_json</step-1>
-      <step-2 module="M-CONFIG" status="pending" verification="V-M-CONFIG">Пути своих баз (chats_db, files_db) + корень индексации (projects_root, дефолт %USERPROFILE%\.claude\projects); search_cmd/port остаются dormant (отложенный dense)</step-2>
+      <step-2 module="M-CONFIG" status="done" verification="V-M-CONFIG">Пути своих баз (chats_db, files_db) + корень индексации (projects_root, дефолт %USERPROFILE%\.claude\projects); search_cmd/port остаются dormant (отложенный dense)</step-2>
       <step-3 module="M-SEARCH" status="pending" verification="V-M-SEARCH">bm25_search читает свою claudebar_chats.db; + snippet_for (FTS5 snippet для тултипа); dense-путь (M-SDAEMON) усыплён -&gt; search() = BM25-only</step-3>
       <step-4 module="M-MAIN" status="pending" verification="V-M-MAIN">Авто-индекс: ensure_index в фоновом потоке при старте + по таймеру (инкремент); UI не морозим</step-4>
       <!-- Фаза B: тултипы -->
