@@ -601,6 +601,9 @@ mod tests {
             search_db: String::new(),
             search_cmd: String::new(),
             search_port: crate::config::DEFAULT_SEARCH_PORT,
+            chats_db: String::new(),
+            files_db: String::new(),
+            projects_root: String::new(),
             cfg_path: std::path::PathBuf::new(),
         };
         // 2 окна VS Code (app 0) + 1 окно Word (app 2)
@@ -666,6 +669,9 @@ mod tests {
             search_db: String::new(),
             search_cmd: String::new(),
             search_port: crate::config::DEFAULT_SEARCH_PORT,
+            chats_db: String::new(),
+            files_db: String::new(),
+            projects_root: String::new(),
             cfg_path: std::path::PathBuf::new(),
         };
         cfg.toggle_collapsed("VS Code");

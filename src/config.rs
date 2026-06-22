@@ -1,5 +1,5 @@
 // FILE: src/config.rs
-// VERSION: 1.10.0
+// VERSION: 1.11.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Конфигурация: приложения (по процессу и классу окна), настройки проектов (цвет, метка), свёрнутость секций, «показать все» недавних, позиция, шрифт панели.
 //   SCOPE: палитра, авто-цвет, AppDef (proc/proc_alts/class)/NameMode (вкл. Whole), дефолтный набор приложений (редакторы, Office, терминалы, Проводник), свёрнутость секций, раскрытие/showall недавних, шрифт (font_face/font_size/font_weight), парсинг/сериализация ini.
@@ -15,7 +15,8 @@
 //   NameMode      - извлечение имени: Project{suffix} | Document | DocumentLast | Whole
 //   set_font / font_face / font_size / font_weight - шрифт панели (ключ font=face⇥size⇥weight), дефолт Iosevka Fixed/16/600
 //   visible_start_pos - стартовая позиция окна с учётом конфигурации мониторов: дефолт, если saved вне виртуального экрана
-//   search_db / search_cmd / search_port - конфиг поиска по чатам: путь clfind.db, команда dense-демона, порт (ключи searchdb=/searchcmd=/searchport=) — Phase-12
+//   search_db / search_cmd / search_port - конфиг поиска по чатам: путь clfind.db, команда dense-демона, порт (ключи searchdb=/searchcmd=/searchport=) — Phase-12 (dormant: dense отложен)
+//   chats_db / files_db / projects_root - Phase-13: свои FTS5-базы (BM25 на Rust) и корень транскриптов (ключи chatsdb=/filesdb=/projectsroot=)
 //   ProjConf      - настройки проекта: индекс цвета (-1 = авто), метка
 //   PALETTE       - палитра из 8 цветов
 //   auto_color    - детерминированный цвет по имени
@@ -25,7 +26,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.10.0 - Phase-12 Step 1: конфиг поиска (search_db/search_cmd/search_port; ключи searchdb=/searchcmd=/searchport=) для M-SEARCH/M-SDAEMON.
+//   LAST_CHANGE: v1.11.0 - Phase-13 Ф-A step-2: свои базы (chats_db/files_db, дефолт %APPDATA%\claudebar) + projects_root (дефолт %USERPROFILE%\.claude\projects); ключи chatsdb=/filesdb=/projectsroot=. search_* остаются dormant (dense отложен).
+//   v1.10.0 - Phase-12 Step 1: конфиг поиска (search_db/search_cmd/search_port; ключи searchdb=/searchcmd=/searchport=) для M-SEARCH/M-SDAEMON.
 //   v1.9.0 - fix(grace-fix): visible_start_pos — стартовая позиция с учётом мониторов. После смены конфигурации мониторов сохранённая pos= оказывалась вне виртуального экрана, окно создавалось за экраном (видно лишь в панели задач). M-MAIN теперь клампит через SM_*VIRTUALSCREEN.
 //   v1.8.0 - fix(grace-fix): вес шрифта (font_weight, 3-е поле font=); set_font(face,size,weight). Без веса панель была всегда 600 (жирная) и диалог не предзаполнял стиль.
 //   v1.7.0 - Phase-10 Step 1: AppDef + proc_alts/class; NameMode::Whole; default_apps += терминалы (Windows Terminal, cmd, PowerShell, Git Bash) и Проводник.
@@ -58,6 +60,23 @@ pub const DEFAULT_SEARCH_PORT: u16 = 8799;
 fn default_search_db() -> String {
     let base = std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_default();
     base.join(".clfind").join("clfind.db").to_string_lossy().into_owned()
+}
+
+// Phase-13: свои базы (BM25 на Rust) в %APPDATA%\claudebar и корень транскриптов.
+fn appdata_db(name: &str) -> String {
+    let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_default();
+    base.join("claudebar").join(name).to_string_lossy().into_owned()
+}
+fn default_chats_db() -> String {
+    appdata_db("claudebar_chats.db")
+}
+fn default_files_db() -> String {
+    appdata_db("claudebar_files.db")
+}
+// Корень транскриптов Claude Code: %USERPROFILE%\.claude\projects.
+fn default_projects_root() -> String {
+    let base = std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_default();
+    base.join(".claude").join("projects").to_string_lossy().into_owned()
 }
 
 pub const PALETTE: [(&str, u8, u8, u8); 8] = [
@@ -115,6 +134,9 @@ pub struct Config {
     pub search_db: String, // путь к индексу clfind.db (нативный BM25 через rusqlite) — Phase-12
     pub search_cmd: String, // команда запуска dense-демона (clfind serve) — Phase-12
     pub search_port: u16, // порт HTTP-демона dense — Phase-12
+    pub chats_db: String, // своя FTS5-база чатов (нативный BM25 на Rust) — Phase-13
+    pub files_db: String, // своя FTS5-база файлов (Ф-C) — Phase-13
+    pub projects_root: String, // корень транскриптов Claude Code для индексации — Phase-13
     pub cfg_path: PathBuf,
 }
 
@@ -232,6 +254,9 @@ struct ParsedIni {
     search_db: String,
     search_cmd: String,
     search_port: u16,
+    chats_db: String,
+    files_db: String,
+    projects_root: String,
 }
 
 fn parse_ini(text: &str) -> ParsedIni {
@@ -248,6 +273,9 @@ fn parse_ini(text: &str) -> ParsedIni {
     let mut search_db: String = default_search_db();
     let mut search_cmd: String = DEFAULT_SEARCH_CMD.to_string();
     let mut search_port: u16 = DEFAULT_SEARCH_PORT;
+    let mut chats_db: String = default_chats_db();
+    let mut files_db: String = default_files_db();
+    let mut projects_root: String = default_projects_root();
     // START_BLOCK_PARSE_LINES
     for line in text.lines() {
         if let Some(v) = line.strip_prefix("pos=") {
@@ -294,6 +322,18 @@ fn parse_ini(text: &str) -> ParsedIni {
                     search_port = n;
                 }
             }
+        } else if let Some(v) = line.strip_prefix("chatsdb=") {
+            if !v.trim().is_empty() {
+                chats_db = v.to_string();
+            }
+        } else if let Some(v) = line.strip_prefix("filesdb=") {
+            if !v.trim().is_empty() {
+                files_db = v.to_string();
+            }
+        } else if let Some(v) = line.strip_prefix("projectsroot=") {
+            if !v.trim().is_empty() {
+                projects_root = v.to_string();
+            }
         } else if let Some(v) = line.strip_prefix("os=") {
             section_order = v.split('\t').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
         } else if let Some(v) = line.strip_prefix("o=") {
@@ -327,7 +367,7 @@ fn parse_ini(text: &str) -> ParsedIni {
         }
     }
     // END_BLOCK_PARSE_LINES
-    ParsedIni { projects, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, search_port }
+    ParsedIni { projects, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, search_port, chats_db, files_db, projects_root }
 }
 
 impl Config {
@@ -349,6 +389,9 @@ impl Config {
             search_db: p.search_db,
             search_cmd: p.search_cmd,
             search_port: p.search_port,
+            chats_db: p.chats_db,
+            files_db: p.files_db,
+            projects_root: p.projects_root,
             cfg_path,
         }
     }
@@ -362,6 +405,9 @@ impl Config {
         out += &format!("searchdb={}\n", self.search_db);
         out += &format!("searchcmd={}\n", self.search_cmd);
         out += &format!("searchport={}\n", self.search_port);
+        out += &format!("chatsdb={}\n", self.chats_db);
+        out += &format!("filesdb={}\n", self.files_db);
+        out += &format!("projectsroot={}\n", self.projects_root);
         for block in &self.collapsed {
             out += &format!("c={}\n", block);
         }
@@ -517,6 +563,9 @@ mod tests {
             search_db: String::new(),
             search_cmd: String::new(),
             search_port: DEFAULT_SEARCH_PORT,
+            chats_db: String::new(),
+            files_db: String::new(),
+            projects_root: String::new(),
             cfg_path: PathBuf::new(),
         }
     }
@@ -713,6 +762,14 @@ mod tests {
         assert_eq!(p2.search_db, "D:\\idx\\clfind.db");
         assert_eq!(p2.search_cmd, "pythonw.exe -m clfind.cli serve");
         assert_eq!(p2.search_port, 9100);
+        // Phase-13: свои базы + корень индексации — дефолты и round-trip
+        assert!(p.chats_db.ends_with("claudebar_chats.db"));
+        assert!(p.projects_root.ends_with("projects"));
+        c.chats_db = "D:\\idx\\chats.db".into();
+        c.projects_root = "D:\\proj".into();
+        let p3 = parse_ini(&c.serialize(None));
+        assert_eq!(p3.chats_db, "D:\\idx\\chats.db");
+        assert_eq!(p3.projects_root, "D:\\proj");
     }
 
     #[test]
