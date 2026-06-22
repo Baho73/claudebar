@@ -171,10 +171,10 @@
       </annotations>
     </M-SDAEMON>
 
-    <M-INDEX NAME="Index" TYPE="DATA_LAYER" STATUS="planned">
+    <M-INDEX NAME="Index" TYPE="DATA_LAYER" STATUS="implemented">
       <purpose>Rust-индексатор BM25: транскрипты Claude Code (~/.claude/projects/**/*.jsonl) -> чанки -> FTS5 claudebar_chats.db; позже доки history -> claudebar_files.db. Инкремент по mtime; авто-запуск при старте + по таймеру (фон). Заменяет Python-сборку BM25; clfind остаётся для отложенного dense. Phase-13.</purpose>
       <path>src/index.rs</path>
-      <depends>M-CONFIG</depends>
+      <depends>none</depends>
       <verification-ref>V-M-INDEX</verification-ref>
       <annotations>
         <fn-ensure_index PURPOSE="Инкрементально проиндексировать новые/изменённые транскрипты (по mtime) в claudebar_chats.db (FTS5)" />
@@ -202,7 +202,6 @@
     <CrossLink from="M-SEARCH" to="M-SDAEMON" relation="при пустом BM25 запрашивает dense-поиск" />
     <CrossLink from="M-MAIN" to="M-SEARCH" relation="окошко поиска в шапке: ввод/Enter/Esc запускают поиск, debounce live BM25" />
     <CrossLink from="M-RENDER" to="M-SEARCH" relation="читает результаты поиска для подсветки папок (жёлтый/синий) и блока «Найдено ещё»" />
-    <CrossLink from="M-MAIN" to="M-INDEX" relation="запускает авто-индексацию в фоновом потоке при старте и по таймеру" />
-    <CrossLink from="M-INDEX" to="M-CONFIG" relation="берёт пути своих баз (chats/files) и корень индексации (projects_root)" />
+    <CrossLink from="M-MAIN" to="M-INDEX" relation="запускает авто-индексацию в фоне при старте и по таймеру; пути баз/корень индексации передаёт параметрами из M-CONFIG" />
   </Project>
 </KnowledgeGraph>
