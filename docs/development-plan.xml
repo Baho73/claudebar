@@ -565,7 +565,7 @@
       </checkpoint>
     </Phase-12>
 
-    <Phase-13 name="Поиск целиком на Rust (свой индекс)" status="pending">
+    <Phase-13 name="Поиск целиком на Rust (свой индекс)" status="done">
       <goal>ClaudeBar сам строит BM25-индекс (FTS5) на Rust из транскриптов Claude Code и доков history, авто-освежает; запрос по своим базам, без Python. Dense (смысл) — отложенный Python-модуль. Утверждён пользователем (gg).</goal>
       <!-- Фаза A: индексатор чатов + авто-refresh -->
       <step-1 module="M-INDEX" status="done" verification="V-M-INDEX">Rust-индексатор чатов: ensure_index (обход ~/.claude/projects/*.jsonl, инкремент по mtime) + чистые parse_transcript/chunk_text + init_schema -&gt; FTS5 claudebar_chats.db. Зависимость serde_json</step-1>
@@ -577,7 +577,7 @@
       <!-- Фаза C: индекс файлов -->
       <step-6 module="M-INDEX" status="done" verification="V-M-INDEX">Расширение: history (Recent) -&gt; извлечение текста (md/txt напрямую; xlsx=calamine; docx/pptx=zip+xml; pdf=pdf-extract; xer=текст) -&gt; claudebar_files.db. Зависимости calamine/zip/pdf-extract (обосновать перед step-6)</step-6>
       <step-7 module="M-SEARCH" status="done" verification="V-M-SEARCH">search_bm25: запрос в обе базы (chats+files), слияние по папке; bm25_search фильтрует source по scope</step-7>
-      <step-8 module="M-MAIN" status="pending" verification="V-M-MAIN">Кнопка «+Файлы»: scope chats|all</step-8>
+      <step-8 module="M-MAIN" status="done" verification="V-M-MAIN">Меню «Искать в файлах (history)» (checkable): scope chats|all; spawn_files_index (COM IShellLinkW резолв .lnk -> ensure_files_index); run_live_search через search_bm25</step-8>
       <checkpoint>
         <tests>cargo test зелёные (M-INDEX: parse_transcript/chunk_text, ensure_index на temp dir; M-SEARCH: snippet_for, параллельный запрос); cargo build --release под GNU (serde_json + Ф-C крейты)</tests>
         <smoke>После старта (авто-индекс) свежий проект (run-pig: «подстроечник») находится БЕЗ ручной переиндексации; тултип показывает путь/сниппет/правила; «+Файлы» добавляет доки из history</smoke>

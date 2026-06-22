@@ -176,6 +176,7 @@
         <scenario-3 kind="success">v0.4: шрифт читается из конфига (make_font(face,…)); клик «⚙» открывает меню «Шрифт…»; после choose_font — rebuild_fonts удаляет старые HFONT и перерисовывает без утечки/краха</scenario-3>
         <scenario-4 kind="success">Phase-13 Ф-A: ensure_index в фоновом потоке при старте + по таймеру (~3 мин, INDEXING-guard); live BM25 читает chats_db; свежий проект находится без ручной переиндексации</scenario-4>
         <scenario-5 kind="success">Phase-13 Ф-B: tracking-подсказка (dwell ~0.5с) — полный путь/имя на строках окон/недавних, путь+сниппет (snippet_for) для чат-результатов, правила синтаксиса над строкой поиска; уход курсора прячет (WM_MOUSELEAVE)</scenario-5>
+        <scenario-6 kind="success">Phase-13 Ф-C: меню «Искать в файлах» включает scope -> spawn_files_index (COM-резолв .lnk из Recent в фоновом потоке с CoInitializeEx, ensure_files_index) -> поиск через search_bm25 находит и в файлах; выключение возвращает только чаты</scenario-6>
       </scenarios>
     </V-M-MAIN>
     <V-M-SEARCH MODULE="M-SEARCH" PRIORITY="high">
