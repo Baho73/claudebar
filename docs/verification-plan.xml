@@ -174,6 +174,8 @@
         <scenario-1 kind="success">Старт без краха, панель отображает текущие окна</scenario-1>
         <scenario-2 kind="success">v0.3: на тике опрашивает M-SIGNAL (bell_keys + reconcile) и пробрасывает набор bell в paint; диспетчеризация зон (Close/RecentMore/DragHandle) и режим reorder по ПКМ не ломают активацию/меню</scenario-2>
         <scenario-3 kind="success">v0.4: шрифт читается из конфига (make_font(face,…)); клик «⚙» открывает меню «Шрифт…»; после choose_font — rebuild_fonts удаляет старые HFONT и перерисовывает без утечки/краха</scenario-3>
+        <scenario-4 kind="success">Phase-13 Ф-A: ensure_index в фоновом потоке при старте + по таймеру (~3 мин, INDEXING-guard); live BM25 читает chats_db; свежий проект находится без ручной переиндексации</scenario-4>
+        <scenario-5 kind="success">Phase-13 Ф-B: tracking-подсказка (dwell ~0.5с) — полный путь/имя на строках окон/недавних, путь+сниппет (snippet_for) для чат-результатов, правила синтаксиса над строкой поиска; уход курсора прячет (WM_MOUSELEAVE)</scenario-5>
       </scenarios>
     </V-M-MAIN>
     <V-M-SEARCH MODULE="M-SEARCH" PRIORITY="high">
