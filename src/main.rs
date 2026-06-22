@@ -747,7 +747,7 @@ extern "system" fn tip_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRE
             SetTextColor(hdc, COLORREF(C_TIP_TXT));
             let mut tr = RECT { left: 7, top: 4, right: rc.right - 4, bottom: rc.bottom - 2 };
             let mut wide: Vec<u16> = TIP_SHOW.with(|t| t.borrow().encode_utf16().collect());
-            DrawTextW(hdc, &mut wide, &mut tr, DT_LEFT | DT_TOP | DT_NOPREFIX);
+            DrawTextW(hdc, &mut wide, &mut tr, DT_LEFT | DT_TOP | DT_NOPREFIX | DT_WORDBREAK);
             SelectObject(hdc, old);
             let _ = EndPaint(hwnd, &ps);
             return LRESULT(0);
@@ -789,20 +789,35 @@ unsafe fn show_tooltip(_hwnd: HWND) {
         return;
     };
     TIP_SHOW.with(|t| *t.borrow_mut() = text.clone());
-    // измерить текст панельным шрифтом
+    // измерить текст панельным шрифтом, с переносом длинных строк по словам
+    const TIP_MAXW: i32 = 480;
     let hdc = GetDC(tip);
     let old = SelectObject(hdc, font);
     let mut wide: Vec<u16> = text.encode_utf16().collect();
-    let mut rc = RECT { left: 0, top: 0, right: 600, bottom: 0 };
-    DrawTextW(hdc, &mut wide, &mut rc, DT_CALCRECT | DT_LEFT | DT_TOP | DT_NOPREFIX);
+    let mut rc = RECT { left: 0, top: 0, right: TIP_MAXW, bottom: 0 };
+    DrawTextW(hdc, &mut wide, &mut rc, DT_CALCRECT | DT_LEFT | DT_TOP | DT_NOPREFIX | DT_WORDBREAK);
     SelectObject(hdc, old);
     ReleaseDC(tip, hdc);
-    let w = (rc.right - rc.left) + 14;
-    let h = (rc.bottom - rc.top) + 8;
+    let w = (rc.right - rc.left + 14).clamp(40, TIP_MAXW + 14);
+    let h = (rc.bottom - rc.top + 8).clamp(20, 400);
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
-    // вправо от курсора, верх подсказки на уровне курсора (фикс. сдвиг, не зависит от высоты)
-    let _ = SetWindowPos(tip, HWND_TOPMOST, pt.x + 18, (pt.y - 10).max(0), w, h, SWP_NOACTIVATE);
+    // рабочая область монитора под курсором -> привязка к границам экрана
+    let mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+    let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+    let _ = GetMonitorInfoW(mon, &mut mi);
+    let wa = mi.rcWork;
+    // по умолчанию справа от курсора; у правого края — влево от курсора
+    let flip_left = pt.x + 18 + w > wa.right;
+    let mut x = if flip_left { pt.x - 18 - w } else { pt.x + 18 };
+    x = x.clamp(wa.left, (wa.right - w).max(wa.left));
+    // верх у курсора; если ушли влево (под мышь) или вниз не лезет — выше курсора
+    let mut y = if flip_left { pt.y - h - 14 } else { pt.y - 10 };
+    if y + h > wa.bottom {
+        y = pt.y - h - 14;
+    }
+    y = y.clamp(wa.top, (wa.bottom - h).max(wa.top));
+    let _ = SetWindowPos(tip, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
     let _ = ShowWindow(tip, SW_SHOWNOACTIVATE);
     let _ = InvalidateRect(tip, None, BOOL(1));
 }
