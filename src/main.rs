@@ -86,7 +86,6 @@ pub(crate) struct App {
     pub(crate) search_edit: HWND, // EDIT-поле поиска в шапке (null = скрыто)
     pub(crate) tooltip: HWND, // tracking-подсказка (путь/сниппет/правила) — Phase-13 Ф-B
     pub(crate) tip_row: i32, // под подсказкой: -1 нет, -2 строка поиска, >=0 индекс строки
-    pub(crate) search_files: bool, // scope «+Файлы»: искать и в claudebar_files.db — Ф-C
     pub(crate) reorder: bool, // режим перетаскивания: ручки видны, ✕ скрыт
     pub(crate) drag: Option<i32>, // индекс перетаскиваемой строки во время drag
 }
@@ -570,7 +569,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 LRESULT(b)
             }
             m if m == WM_APP_SEARCH => {
-                // авто-индекс обновил базу -> перезапросить активный поиск
+                // индекс готов -> вернуть обычную подсказку и перезапросить поиск
+                set_search_cue(w!("Поиск по чатам…"));
                 run_live_search(hwnd);
                 LRESULT(0)
             }
@@ -651,6 +651,14 @@ unsafe fn create_search_box(hwnd: HWND) {
             a.search_edit = edit;
         }
     });
+}
+
+// Подсказка-заглушка поля поиска (используется как лёгкий индикатор индексации).
+unsafe fn set_search_cue(text: PCWSTR) {
+    let edit = APP.with(|c| c.borrow().as_ref().map(|a| a.search_edit).unwrap_or_default());
+    if !edit.0.is_null() {
+        SendMessageW(edit, EM_SETCUEBANNER, WPARAM(1), LPARAM(text.0 as isize));
+    }
 }
 
 // Esc: очистить поиск (текст -> EN_CHANGE снимет подсветку); поле остаётся открытым.
@@ -849,7 +857,15 @@ fn tip_text_for(app: &App, tip_row: i32) -> Option<String> {
         }),
         render::Row::Recent { ridx } => app.recent.get(*ridx).map(recent_path),
         render::Row::SearchResult { hit } => app.search_hits.get(*hit).map(|h| {
-            match search::snippet_for(&app.config.chats_db, &edit_text(app.search_edit), &h.folder) {
+            let q = edit_text(app.search_edit);
+            // сниппет: сперва из чатов, иначе (если scope «+Файлы») из файлов
+            let snip = search::snippet_for(&app.config.chats_db, &q, &h.folder).or_else(|| {
+                app.config
+                    .search_files
+                    .then(|| search::snippet_for(&app.config.files_db, &q, &h.folder))
+                    .flatten()
+            });
+            match snip {
                 Some(s) => format!("{}\r\n{}", h.folder, s),
                 None => h.folder.clone(),
             }
@@ -973,7 +989,7 @@ fn run_live_search(hwnd: HWND) {
     APP.with(|c| {
         if let Some(a) = c.borrow_mut().as_mut() {
             if q.chars().count() >= SEARCH_MIN {
-                let files_db = a.search_files.then(|| a.config.files_db.clone());
+                let files_db = a.config.search_files.then(|| a.config.files_db.clone());
                 a.search_hits = search::search_bm25(&a.config.chats_db, files_db.as_deref(), &q, 200);
             } else {
                 a.search_hits.clear();
@@ -1065,7 +1081,7 @@ unsafe fn show_menu(hwnd: HWND) {
 unsafe fn show_settings_menu(hwnd: HWND) {
     let menu = CreatePopupMenu().unwrap_or_default();
     let _ = AppendMenuW(menu, MF_STRING, ID_SET_FONT, w!("Шрифт…"));
-    let files_on = APP.with(|c| c.borrow().as_ref().map(|a| a.search_files).unwrap_or(false));
+    let files_on = APP.with(|c| c.borrow().as_ref().map(|a| a.config.search_files).unwrap_or(false));
     let fflag = if files_on { MF_STRING | MF_CHECKED } else { MF_STRING };
     let _ = AppendMenuW(menu, fflag, ID_TOGGLE_FILES, w!("Искать в файлах (history)"));
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
@@ -1109,13 +1125,15 @@ fn handle_command(hwnd: HWND, id: usize) {
             c.borrow_mut()
                 .as_mut()
                 .map(|a| {
-                    a.search_files = !a.search_files;
-                    a.search_files
+                    a.config.search_files = !a.config.search_files;
+                    a.config.save(hwnd); // персист scope
+                    a.config.search_files
                 })
                 .unwrap_or(false)
         });
         if on {
             spawn_files_index(hwnd); // построить индекс файлов в фоне
+            unsafe { set_search_cue(w!("⏳ Индексирую файлы…")) };
         }
         run_live_search(hwnd); // пересчитать выдачу с учётом нового scope
         return;
@@ -1235,7 +1253,6 @@ fn main() -> Result<()> {
             search_edit: HWND(std::ptr::null_mut()),
             tooltip: HWND(std::ptr::null_mut()),
             tip_row: -1,
-            search_files: false,
             reorder: false,
             drag: None,
         };
@@ -1291,6 +1308,10 @@ fn main() -> Result<()> {
         create_search_box(hwnd);
         create_tooltip(hwnd);
         spawn_index(hwnd); // первичная индексация чатов в фоне
+        let files_on = APP.with(|c| c.borrow().as_ref().map(|a| a.config.search_files).unwrap_or(false));
+        if files_on {
+            spawn_files_index(hwnd); // scope «+Файлы» сохранён -> построить индекс файлов
+        }
         SetTimer(hwnd, 1, 1000, None);
 
         let mut msg = MSG::default();
