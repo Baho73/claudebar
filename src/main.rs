@@ -30,7 +30,7 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     EnableWindow, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE,
-    TRACKMOUSEEVENT, VK_ESCAPE, VK_RETURN,
+    TRACKMOUSEEVENT, VK_DOWN, VK_ESCAPE, VK_RETURN, VK_UP,
 };
 use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
 use windows::Win32::System::Com::{
@@ -69,8 +69,19 @@ const EM_SETCUEBANNER: u32 = 0x1501; // подсказка-заглушка в �
 const EM_SETMARGINS: u32 = 0x00D3;
 const EC_RIGHTMARGIN: u32 = 0x0002;
 const CLEAR_W: i32 = 18; // зона значка справа в поле поиска (✕ очистка / ▾ история)
-const ID_HIST_BASE: usize = 200; // база id пунктов меню истории поиска
 const HIST_MAX: usize = 15; // лимит истории поисков
+const ID_HIST_LIST: usize = 41; // id child-LISTBOX выпадающей истории
+// сообщения/стиль LISTBOX
+const LBS_NOTIFY: u32 = 0x0001;
+const LB_ADDSTRING: u32 = 0x0180;
+const LB_RESETCONTENT: u32 = 0x0184;
+const LB_SETCURSEL: u32 = 0x0186;
+const LB_GETCURSEL: u32 = 0x0188;
+const LB_GETTEXT: u32 = 0x0189;
+const LB_GETTEXTLEN: u32 = 0x018A;
+const LB_GETCOUNT: u32 = 0x018B;
+const LB_GETITEMHEIGHT: u32 = 0x01A1;
+const LBN_SELCHANGE: u32 = 1;
 const C_SEARCH_BG: u32 = 0x00ECC86D; // фон поля поиска = палитра «Голубой» (RGB 109,200,236), как квадратик voice-smeta
 const C_SEARCH_TXT: u32 = 0x003C2319; // тёмный текст поля (RGB 25,35,60)
 
@@ -92,6 +103,7 @@ pub(crate) struct App {
     pub(crate) tooltip: HWND, // tracking-подсказка (путь/сниппет/правила) — Phase-13 Ф-B
     pub(crate) tip_row: i32, // под подсказкой: -1 нет, -2 строка поиска, >=0 индекс строки
     pub(crate) search_history: Vec<String>, // недавние запросы (свежие первыми) — Phase-13
+    pub(crate) hist_list: HWND, // выпадающий список истории (child LISTBOX, скрыт)
     pub(crate) reorder: bool, // режим перетаскивания: ручки видны, ✕ скрыт
     pub(crate) drag: Option<i32>, // индекс перетаскиваемой строки во время drag
 }
@@ -546,6 +558,14 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     if notif == EN_CHANGE {
                         run_live_search(hwnd);
                     }
+                } else if id == ID_HIST_LIST {
+                    if notif == LBN_SELCHANGE {
+                        let (edit, list) = APP.with(|c| {
+                            c.borrow().as_ref().map(|a| (a.search_edit, a.hist_list)).unwrap_or_default()
+                        });
+                        let sel = SendMessageW(list, LB_GETCURSEL, WPARAM(0), LPARAM(0)).0 as i32;
+                        pick_history(edit, list, sel);
+                    }
                 } else {
                     handle_command(hwnd, id);
                 }
@@ -654,9 +674,29 @@ unsafe fn create_search_box(hwnd: HWND) {
     // субкласс EDIT для перехвата Enter/Esc
     let old = SetWindowLongPtrW(edit, GWLP_WNDPROC, search_edit_proc as *const () as isize);
     SEARCH_OLDPROC.with(|p| p.set(old));
+    // выпадающий список истории (child LISTBOX, скрыт до клика по полю)
+    let list = CreateWindowExW(
+        WINDOW_EX_STYLE(0),
+        w!("LISTBOX"),
+        PCWSTR::null(),
+        WS_CHILD | WS_BORDER | WS_VSCROLL | WINDOW_STYLE(LBS_NOTIFY),
+        0,
+        0,
+        0,
+        0,
+        hwnd,
+        HMENU(ID_HIST_LIST as *mut core::ffi::c_void),
+        hinst,
+        None,
+    )
+    .unwrap_or_default();
+    if !list.0.is_null() {
+        SendMessageW(list, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
+    }
     APP.with(|c| {
         if let Some(a) = c.borrow_mut().as_mut() {
             a.search_edit = edit;
+            a.hist_list = list;
         }
     });
 }
@@ -682,11 +722,31 @@ extern "system" fn search_edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
     unsafe {
         if msg == WM_KEYDOWN {
             let vk = wp.0 as u32;
+            let list = APP.with(|c| c.borrow().as_ref().map(|a| a.hist_list).unwrap_or_default());
+            let drop_open = !list.0.is_null() && IsWindowVisible(list).as_bool();
+            if drop_open && (vk == VK_DOWN.0 as u32 || vk == VK_UP.0 as u32) {
+                let cnt = SendMessageW(list, LB_GETCOUNT, WPARAM(0), LPARAM(0)).0 as i32;
+                let cur = SendMessageW(list, LB_GETCURSEL, WPARAM(0), LPARAM(0)).0 as i32;
+                let next = if vk == VK_DOWN.0 as u32 { (cur + 1).min(cnt - 1) } else { (cur - 1).max(0) };
+                SendMessageW(list, LB_SETCURSEL, WPARAM(next as usize), LPARAM(0));
+                return LRESULT(0);
+            }
             if vk == VK_RETURN.0 as u32 {
+                if drop_open {
+                    let sel = SendMessageW(list, LB_GETCURSEL, WPARAM(0), LPARAM(0)).0 as i32;
+                    if sel >= 0 {
+                        pick_history(hwnd, list, sel);
+                        return LRESULT(0);
+                    }
+                }
                 commit_search_enter(GetParent(hwnd).unwrap_or_default());
                 return LRESULT(0);
             }
             if vk == VK_ESCAPE.0 as u32 {
+                if drop_open {
+                    hide_history_dropdown();
+                    return LRESULT(0);
+                }
                 clear_search();
                 return LRESULT(0);
             }
@@ -717,19 +777,19 @@ extern "system" fn search_edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 return LRESULT(1);
             }
         }
-        // клик по значку справа: есть текст -> очистить; пусто -> меню истории
+        // клик: ✕ (есть текст) очистить; пустое поле -> выпадающая история
         if msg == WM_LBUTTONDOWN {
             let x = (lp.0 & 0xFFFF) as i16 as i32;
             let mut rc = RECT::default();
             let _ = GetClientRect(hwnd, &mut rc);
-            if x >= rc.right - CLEAR_W {
-                if GetWindowTextLengthW(hwnd) > 0 {
+            if GetWindowTextLengthW(hwnd) > 0 {
+                if x >= rc.right - CLEAR_W {
                     clear_search();
                     let _ = SetFocus(hwnd);
-                } else {
-                    show_history_menu(hwnd);
+                    return LRESULT(0);
                 }
-                return LRESULT(0);
+            } else {
+                show_history_dropdown(hwnd); // не return — дефолт поставит курсор
             }
         }
         // дорисовать значок поверх поля (✕ / ▾)
@@ -738,6 +798,14 @@ extern "system" fn search_edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             let r = CallWindowProcW(oldp, hwnd, msg, wp, lp);
             draw_field_icon(hwnd);
             return r;
+        }
+        // потеря фокуса (но не на список истории) -> скрыть dropdown
+        if msg == WM_KILLFOCUS {
+            let gaining = HWND(wp.0 as *mut core::ffi::c_void);
+            let list = APP.with(|c| c.borrow().as_ref().map(|a| a.hist_list).unwrap_or_default());
+            if gaining.0 != list.0 {
+                hide_history_dropdown();
+            }
         }
         let old: WNDPROC = std::mem::transmute::<isize, WNDPROC>(SEARCH_OLDPROC.with(|p| p.get()));
         CallWindowProcW(old, hwnd, msg, wp, lp)
@@ -812,31 +880,52 @@ fn record_history(query: &str) {
     });
 }
 
-// Меню истории под полем (▾): выбор -> подставить запрос и искать.
-unsafe fn show_history_menu(edit: HWND) {
-    let hist = APP.with(|c| c.borrow().as_ref().map(|a| a.search_history.clone()).unwrap_or_default());
-    if hist.is_empty() {
+// Показать выпадающий список истории под полем (немодальный child LISTBOX).
+unsafe fn show_history_dropdown(edit: HWND) {
+    let (list, hist) = APP.with(|c| {
+        c.borrow().as_ref().map(|a| (a.hist_list, a.search_history.clone())).unwrap_or_default()
+    });
+    if list.0.is_null() || hist.is_empty() {
         return;
     }
-    let parent = GetParent(edit).unwrap_or_default();
-    let menu = CreatePopupMenu().unwrap_or_default();
-    for (i, q) in hist.iter().enumerate() {
+    SendMessageW(list, LB_RESETCONTENT, WPARAM(0), LPARAM(0));
+    for q in &hist {
         let w: Vec<u16> = q.encode_utf16().chain(std::iter::once(0)).collect();
-        let _ = AppendMenuW(menu, MF_STRING, ID_HIST_BASE + i, PCWSTR(w.as_ptr()));
+        SendMessageW(list, LB_ADDSTRING, WPARAM(0), LPARAM(w.as_ptr() as isize));
     }
-    let mut rc = RECT::default();
-    let _ = GetWindowRect(edit, &mut rc);
-    let _ = SetForegroundWindow(parent);
-    let cmd = TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_RETURNCMD, rc.left, rc.bottom, 0, parent, None);
-    let _ = DestroyMenu(menu);
-    let id = cmd.0 as usize;
-    if id >= ID_HIST_BASE {
-        if let Some(q) = hist.get(id - ID_HIST_BASE) {
-            let wq: Vec<u16> = q.encode_utf16().chain(std::iter::once(0)).collect();
-            let _ = SetWindowTextW(edit, PCWSTR(wq.as_ptr())); // -> EN_CHANGE -> поиск
-            let _ = SetFocus(edit);
-        }
+    let parent = GetParent(edit).unwrap_or_default();
+    let mut er = RECT::default();
+    let _ = GetWindowRect(edit, &mut er);
+    let mut pt = POINT { x: er.left, y: er.bottom };
+    let _ = ScreenToClient(parent, &mut pt);
+    let w = er.right - er.left;
+    let ih = SendMessageW(list, LB_GETITEMHEIGHT, WPARAM(0), LPARAM(0)).0 as i32;
+    let ih = if ih > 0 { ih } else { 18 };
+    let n = hist.len().min(8) as i32;
+    let _ = SetWindowPos(list, HWND_TOP, pt.x, pt.y, w, n * ih + 4, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+}
+
+unsafe fn hide_history_dropdown() {
+    let list = APP.with(|c| c.borrow().as_ref().map(|a| a.hist_list).unwrap_or_default());
+    if !list.0.is_null() {
+        let _ = ShowWindow(list, SW_HIDE);
     }
+}
+
+// Подставить элемент истории (sel) в поле -> EN_CHANGE запустит поиск; вернуть фокус, скрыть.
+unsafe fn pick_history(edit: HWND, list: HWND, sel: i32) {
+    if sel < 0 {
+        return;
+    }
+    let len = SendMessageW(list, LB_GETTEXTLEN, WPARAM(sel as usize), LPARAM(0)).0;
+    if len <= 0 {
+        return;
+    }
+    let mut buf = vec![0u16; len as usize + 1];
+    SendMessageW(list, LB_GETTEXT, WPARAM(sel as usize), LPARAM(buf.as_mut_ptr() as isize));
+    let _ = SetWindowTextW(edit, PCWSTR(buf.as_ptr()));
+    let _ = SetFocus(edit);
+    hide_history_dropdown();
 }
 
 // ---------- подсказки (tooltip, Phase-13 Ф-B) ----------
@@ -1123,6 +1212,7 @@ unsafe fn resolve_lnk(lnk: &std::path::Path) -> Option<String> {
 }
 
 fn run_live_search(hwnd: HWND) {
+    unsafe { hide_history_dropdown() }; // изменение текста закрывает историю
     let q = APP.with(|c| c.borrow().as_ref().map(|a| edit_text(a.search_edit)).unwrap_or_default());
     let q = q.trim().to_string();
     APP.with(|c| {
@@ -1395,6 +1485,7 @@ fn main() -> Result<()> {
             tooltip: HWND(std::ptr::null_mut()),
             tip_row: -1,
             search_history: load_history(),
+            hist_list: HWND(std::ptr::null_mut()),
             reorder: false,
             drag: None,
         };
