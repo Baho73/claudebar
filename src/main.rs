@@ -66,6 +66,9 @@ const ID_SEARCH: usize = 40; // EDIT-поле поиска в шапке (WM_COM
 const SEARCH_MIN: usize = 3; // живой BM25 начинается с N символов
 const WM_APP_SEARCH: u32 = WM_APP + 1; // dense-результаты из фонового потока
 const EM_SETCUEBANNER: u32 = 0x1501; // подсказка-заглушка в пустом EDIT
+const EM_SETMARGINS: u32 = 0x00D3;
+const EC_RIGHTMARGIN: u32 = 0x0002;
+const CLEAR_W: i32 = 18; // зона крестика очистки справа в поле поиска
 const C_SEARCH_BG: u32 = 0x00ECC86D; // фон поля поиска = палитра «Голубой» (RGB 109,200,236), как квадратик voice-smeta
 const C_SEARCH_TXT: u32 = 0x003C2319; // тёмный текст поля (RGB 25,35,60)
 
@@ -641,6 +644,8 @@ unsafe fn create_search_box(hwnd: HWND) {
         return;
     }
     SendMessageW(edit, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
+    // правый отступ под крестик очистки (текст не залезает под ✕)
+    SendMessageW(edit, EM_SETMARGINS, WPARAM(EC_RIGHTMARGIN as usize), LPARAM((CLEAR_W << 16) as isize));
     let cue: Vec<u16> = "Поиск по чатам…".encode_utf16().chain(std::iter::once(0)).collect();
     SendMessageW(edit, EM_SETCUEBANNER, WPARAM(1), LPARAM(cue.as_ptr() as isize));
     // субкласс EDIT для перехвата Enter/Esc
@@ -695,9 +700,48 @@ extern "system" fn search_edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         } else if msg == WM_MOUSELEAVE {
             arm_tip(GetParent(hwnd).unwrap_or_default(), -1);
         }
+        // клик по крестику справа -> очистить поле
+        if msg == WM_LBUTTONDOWN {
+            let x = (lp.0 & 0xFFFF) as i16 as i32;
+            let mut rc = RECT::default();
+            let _ = GetClientRect(hwnd, &mut rc);
+            if GetWindowTextLengthW(hwnd) > 0 && x >= rc.right - CLEAR_W {
+                clear_search();
+                let _ = SetFocus(hwnd);
+                return LRESULT(0);
+            }
+        }
+        // дорисовать крестик поверх поля, если есть текст
+        if msg == WM_PAINT {
+            let oldp: WNDPROC = std::mem::transmute::<isize, WNDPROC>(SEARCH_OLDPROC.with(|p| p.get()));
+            let r = CallWindowProcW(oldp, hwnd, msg, wp, lp);
+            if GetWindowTextLengthW(hwnd) > 0 {
+                draw_clear_x(hwnd);
+            }
+            return r;
+        }
         let old: WNDPROC = std::mem::transmute::<isize, WNDPROC>(SEARCH_OLDPROC.with(|p| p.get()));
         CallWindowProcW(old, hwnd, msg, wp, lp)
     }
+}
+
+// Нарисовать крестик очистки в правом отступе поля (две линии, без зависимости от шрифта).
+unsafe fn draw_clear_x(edit: HWND) {
+    let mut rc = RECT::default();
+    let _ = GetClientRect(edit, &mut rc);
+    let hdc = GetDC(edit);
+    let cx = rc.right - CLEAR_W / 2;
+    let cy = rc.bottom / 2;
+    let s = 4;
+    let pen = CreatePen(PS_SOLID, 1, COLORREF(C_SEARCH_TXT));
+    let old = SelectObject(hdc, pen);
+    let _ = MoveToEx(hdc, cx - s, cy - s, None);
+    let _ = LineTo(hdc, cx + s + 1, cy + s + 1);
+    let _ = MoveToEx(hdc, cx - s, cy + s, None);
+    let _ = LineTo(hdc, cx + s + 1, cy - s - 1);
+    SelectObject(hdc, old);
+    let _ = DeleteObject(pen);
+    ReleaseDC(edit, hdc);
 }
 
 // ---------- подсказки (tooltip, Phase-13 Ф-B) ----------
