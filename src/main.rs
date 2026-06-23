@@ -703,6 +703,20 @@ extern "system" fn search_edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         } else if msg == WM_MOUSELEAVE {
             arm_tip(GetParent(hwnd).unwrap_or_default(), -1);
         }
+        // над значком ✕/▾ — курсор-стрелка вместо I-beam
+        if msg == WM_SETCURSOR {
+            let mut pt = POINT::default();
+            let _ = GetCursorPos(&mut pt);
+            let _ = ScreenToClient(hwnd, &mut pt);
+            let mut rc = RECT::default();
+            let _ = GetClientRect(hwnd, &mut rc);
+            let has_icon = GetWindowTextLengthW(hwnd) > 0
+                || APP.with(|c| c.borrow().as_ref().map(|a| !a.search_history.is_empty()).unwrap_or(false));
+            if has_icon && pt.x >= rc.right - CLEAR_W {
+                let _ = SetCursor(LoadCursorW(None, IDC_ARROW).unwrap_or_default());
+                return LRESULT(1);
+            }
+        }
         // клик по значку справа: есть текст -> очистить; пусто -> меню истории
         if msg == WM_LBUTTONDOWN {
             let x = (lp.0 & 0xFFFF) as i16 as i32;
