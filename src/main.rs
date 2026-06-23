@@ -713,6 +713,7 @@ unsafe fn set_search_cue(text: PCWSTR) {
 unsafe fn clear_search() {
     let edit = APP.with(|c| c.borrow().as_ref().map(|a| a.search_edit).unwrap_or_default());
     if !edit.0.is_null() {
+        record_history(&edit_text(edit)); // запомнить завершённый запрос перед очисткой
         let _ = SetWindowTextW(edit, w!(""));
     }
 }
@@ -799,11 +800,13 @@ extern "system" fn search_edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             draw_field_icon(hwnd);
             return r;
         }
-        // потеря фокуса (но не на список истории) -> скрыть dropdown
+        // потеря фокуса (но не на список истории): запомнить запрос + скрыть dropdown.
+        // Клик по результату/окну забирает фокус с поля — это и есть «завершение поиска».
         if msg == WM_KILLFOCUS {
             let gaining = HWND(wp.0 as *mut core::ffi::c_void);
             let list = APP.with(|c| c.borrow().as_ref().map(|a| a.hist_list).unwrap_or_default());
             if gaining.0 != list.0 {
+                record_history(&edit_text(hwnd));
                 hide_history_dropdown();
             }
         }
