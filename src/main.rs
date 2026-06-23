@@ -68,7 +68,9 @@ const WM_APP_SEARCH: u32 = WM_APP + 1; // dense-результаты из фон
 const EM_SETCUEBANNER: u32 = 0x1501; // подсказка-заглушка в пустом EDIT
 const EM_SETMARGINS: u32 = 0x00D3;
 const EC_RIGHTMARGIN: u32 = 0x0002;
-const CLEAR_W: i32 = 18; // зона крестика очистки справа в поле поиска
+const CLEAR_W: i32 = 18; // зона значка справа в поле поиска (✕ очистка / ▾ история)
+const ID_HIST_BASE: usize = 200; // база id пунктов меню истории поиска
+const HIST_MAX: usize = 15; // лимит истории поисков
 const C_SEARCH_BG: u32 = 0x00ECC86D; // фон поля поиска = палитра «Голубой» (RGB 109,200,236), как квадратик voice-smeta
 const C_SEARCH_TXT: u32 = 0x003C2319; // тёмный текст поля (RGB 25,35,60)
 
@@ -89,6 +91,7 @@ pub(crate) struct App {
     pub(crate) search_edit: HWND, // EDIT-поле поиска в шапке (null = скрыто)
     pub(crate) tooltip: HWND, // tracking-подсказка (путь/сниппет/правила) — Phase-13 Ф-B
     pub(crate) tip_row: i32, // под подсказкой: -1 нет, -2 строка поиска, >=0 индекс строки
+    pub(crate) search_history: Vec<String>, // недавние запросы (свежие первыми) — Phase-13
     pub(crate) reorder: bool, // режим перетаскивания: ручки видны, ✕ скрыт
     pub(crate) drag: Option<i32>, // индекс перетаскиваемой строки во время drag
 }
@@ -700,24 +703,26 @@ extern "system" fn search_edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         } else if msg == WM_MOUSELEAVE {
             arm_tip(GetParent(hwnd).unwrap_or_default(), -1);
         }
-        // клик по крестику справа -> очистить поле
+        // клик по значку справа: есть текст -> очистить; пусто -> меню истории
         if msg == WM_LBUTTONDOWN {
             let x = (lp.0 & 0xFFFF) as i16 as i32;
             let mut rc = RECT::default();
             let _ = GetClientRect(hwnd, &mut rc);
-            if GetWindowTextLengthW(hwnd) > 0 && x >= rc.right - CLEAR_W {
-                clear_search();
-                let _ = SetFocus(hwnd);
+            if x >= rc.right - CLEAR_W {
+                if GetWindowTextLengthW(hwnd) > 0 {
+                    clear_search();
+                    let _ = SetFocus(hwnd);
+                } else {
+                    show_history_menu(hwnd);
+                }
                 return LRESULT(0);
             }
         }
-        // дорисовать крестик поверх поля, если есть текст
+        // дорисовать значок поверх поля (✕ / ▾)
         if msg == WM_PAINT {
             let oldp: WNDPROC = std::mem::transmute::<isize, WNDPROC>(SEARCH_OLDPROC.with(|p| p.get()));
             let r = CallWindowProcW(oldp, hwnd, msg, wp, lp);
-            if GetWindowTextLengthW(hwnd) > 0 {
-                draw_clear_x(hwnd);
-            }
+            draw_field_icon(hwnd);
             return r;
         }
         let old: WNDPROC = std::mem::transmute::<isize, WNDPROC>(SEARCH_OLDPROC.with(|p| p.get()));
@@ -725,23 +730,99 @@ extern "system" fn search_edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
     }
 }
 
-// Нарисовать крестик очистки в правом отступе поля (две линии, без зависимости от шрифта).
-unsafe fn draw_clear_x(edit: HWND) {
+// Значок в правом отступе поля: ✕ (есть текст -> очистить) или ▾ (пусто -> история). Две линии.
+unsafe fn draw_field_icon(edit: HWND) {
+    let has_text = GetWindowTextLengthW(edit) > 0;
+    let has_hist = APP.with(|c| c.borrow().as_ref().map(|a| !a.search_history.is_empty()).unwrap_or(false));
+    if !has_text && !has_hist {
+        return; // пусто и истории нет — ничего не рисуем
+    }
     let mut rc = RECT::default();
     let _ = GetClientRect(edit, &mut rc);
     let hdc = GetDC(edit);
     let cx = rc.right - CLEAR_W / 2;
     let cy = rc.bottom / 2;
-    let s = 4;
     let pen = CreatePen(PS_SOLID, 1, COLORREF(C_SEARCH_TXT));
     let old = SelectObject(hdc, pen);
-    let _ = MoveToEx(hdc, cx - s, cy - s, None);
-    let _ = LineTo(hdc, cx + s + 1, cy + s + 1);
-    let _ = MoveToEx(hdc, cx - s, cy + s, None);
-    let _ = LineTo(hdc, cx + s + 1, cy - s - 1);
+    if has_text {
+        let s = 4; // ✕
+        let _ = MoveToEx(hdc, cx - s, cy - s, None);
+        let _ = LineTo(hdc, cx + s + 1, cy + s + 1);
+        let _ = MoveToEx(hdc, cx - s, cy + s, None);
+        let _ = LineTo(hdc, cx + s + 1, cy - s - 1);
+    } else {
+        let s = 4; // ▾ (шеврон вниз)
+        let _ = MoveToEx(hdc, cx - s, cy - 2, None);
+        let _ = LineTo(hdc, cx, cy + 3);
+        let _ = MoveToEx(hdc, cx + s + 1, cy - 2, None);
+        let _ = LineTo(hdc, cx, cy + 3);
+    }
     SelectObject(hdc, old);
     let _ = DeleteObject(pen);
     ReleaseDC(edit, hdc);
+}
+
+// ---------- история поисков (Phase-13) ----------
+fn history_file() -> std::path::PathBuf {
+    let base = std::env::var_os("APPDATA").map(std::path::PathBuf::from).unwrap_or_default();
+    base.join("claudebar").join("search_history.txt")
+}
+
+fn load_history() -> Vec<String> {
+    std::fs::read_to_string(history_file())
+        .map(|s| s.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect())
+        .unwrap_or_default()
+}
+
+fn save_history(h: &[String]) {
+    let p = history_file();
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(p, h.join("\n"));
+}
+
+// Записать запрос в историю (дедуп, свежие первыми, лимит), сохранить.
+fn record_history(query: &str) {
+    let q = query.trim().to_string();
+    if q.chars().count() < SEARCH_MIN {
+        return;
+    }
+    APP.with(|c| {
+        if let Some(a) = c.borrow_mut().as_mut() {
+            a.search_history.retain(|h| h != &q);
+            a.search_history.insert(0, q);
+            a.search_history.truncate(HIST_MAX);
+            save_history(&a.search_history);
+        }
+    });
+}
+
+// Меню истории под полем (▾): выбор -> подставить запрос и искать.
+unsafe fn show_history_menu(edit: HWND) {
+    let hist = APP.with(|c| c.borrow().as_ref().map(|a| a.search_history.clone()).unwrap_or_default());
+    if hist.is_empty() {
+        return;
+    }
+    let parent = GetParent(edit).unwrap_or_default();
+    let menu = CreatePopupMenu().unwrap_or_default();
+    for (i, q) in hist.iter().enumerate() {
+        let w: Vec<u16> = q.encode_utf16().chain(std::iter::once(0)).collect();
+        let _ = AppendMenuW(menu, MF_STRING, ID_HIST_BASE + i, PCWSTR(w.as_ptr()));
+    }
+    let mut rc = RECT::default();
+    let _ = GetWindowRect(edit, &mut rc);
+    let _ = SetForegroundWindow(parent);
+    let cmd = TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_RETURNCMD, rc.left, rc.bottom, 0, parent, None);
+    let _ = DestroyMenu(menu);
+    let id = cmd.0 as usize;
+    if id >= ID_HIST_BASE {
+        if let Some(q) = hist.get(id - ID_HIST_BASE) {
+            let wq: Vec<u16> = q.encode_utf16().chain(std::iter::once(0)).collect();
+            let _ = SetWindowTextW(edit, PCWSTR(wq.as_ptr())); // -> EN_CHANGE -> поиск
+            let _ = SetFocus(edit);
+        }
+    }
 }
 
 // ---------- подсказки (tooltip, Phase-13 Ф-B) ----------
@@ -1047,8 +1128,10 @@ fn run_live_search(hwnd: HWND) {
     }
 }
 
-// Enter: перезапросить BM25 (подхватит свежий авто-индекс). Dense отложен (Phase-13).
+// Enter: записать запрос в историю + перезапросить BM25 (подхватит свежий авто-индекс).
 fn commit_search_enter(hwnd: HWND) {
+    let q = APP.with(|c| c.borrow().as_ref().map(|a| edit_text(a.search_edit)).unwrap_or_default());
+    record_history(&q);
     run_live_search(hwnd);
 }
 
@@ -1297,6 +1380,7 @@ fn main() -> Result<()> {
             search_edit: HWND(std::ptr::null_mut()),
             tooltip: HWND(std::ptr::null_mut()),
             tip_row: -1,
+            search_history: load_history(),
             reorder: false,
             drag: None,
         };
