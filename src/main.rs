@@ -1306,6 +1306,9 @@ unsafe fn show_menu(hwnd: HWND) {
     let _ = AppendMenuW(menu, MF_STRING, ID_LABEL_CLEAR, w!("Убрать метку"));
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
+    // меню модальное: гасим dwell-таймер и прячем тултип, иначе он всплывёт поверх меню
+    let _ = KillTimer(hwnd, ID_TIP_TIMER);
+    hide_tooltip(hwnd);
     let _ = SetForegroundWindow(hwnd);
     let _ = TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, None);
     let _ = DestroyMenu(menu);
@@ -1322,6 +1325,9 @@ unsafe fn show_settings_menu(hwnd: HWND) {
     let _ = AppendMenuW(menu, MF_STRING, ID_ABOUT, w!("О программе…"));
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
+    // меню модальное: гасим dwell-таймер и прячем тултип, иначе он всплывёт поверх меню
+    let _ = KillTimer(hwnd, ID_TIP_TIMER);
+    hide_tooltip(hwnd);
     let _ = SetForegroundWindow(hwnd);
     let _ = TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, None);
     let _ = DestroyMenu(menu);
