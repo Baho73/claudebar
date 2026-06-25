@@ -547,6 +547,20 @@ pub fn folder_project(folder: &str) -> String {
     folder.trim_end_matches(['\\', '/']).rsplit(['\\', '/']).next().unwrap_or(folder).to_lowercase()
 }
 
+// START_CONTRACT: dots_for_frame
+//   PURPOSE: Кадр анимации индикатора работы -> «.»/«..»/«...» (цикл) — Phase-17.
+//   INPUTS: { frame: u32 - счётчик кадров }
+//   OUTPUTS: { &'static str }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: dots_for_frame
+pub fn dots_for_frame(frame: u32) -> &'static str {
+    match frame % 3 {
+        0 => ".",
+        1 => "..",
+        _ => "...",
+    }
+}
+
 // START_CONTRACT: display_name
 //   PURPOSE: Имя строки окна с нумерацией дублей по-Windows: «name» или «name (N)» при N>=2 — Phase-15.
 //   INPUTS: { name: &str; number: Option<i32> - стабильный № из M-CONFIG (None = нет пути/не присвоен) }
@@ -649,6 +663,15 @@ mod tests {
         assert_eq!(names(&c), vec!["Alpha", "Bravo"]);
         c.set_sort_recent(true); // recent: по ordinal (позже -> ниже)
         assert_eq!(names(&c), vec!["Bravo", "Alpha"]);
+    }
+
+    #[test]
+    fn dots_for_frame_cycles() {
+        assert_eq!(dots_for_frame(0), ".");
+        assert_eq!(dots_for_frame(1), "..");
+        assert_eq!(dots_for_frame(2), "...");
+        assert_eq!(dots_for_frame(3), "."); // цикл
+        assert_eq!(dots_for_frame(7), "..");
     }
 
     #[test]
