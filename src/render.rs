@@ -589,6 +589,7 @@ mod tests {
         let cfg = Config {
             apps: default_apps(),
             projects: Default::default(),
+            proj_numbers: Default::default(),
             collapsed: Default::default(),
             recent_expanded: Default::default(),
             recent_showall: Default::default(),
@@ -658,6 +659,7 @@ mod tests {
         let mut cfg = Config {
             apps: default_apps(),
             projects: Default::default(),
+            proj_numbers: Default::default(),
             collapsed: Default::default(),
             recent_expanded: Default::default(),
             recent_showall: Default::default(),

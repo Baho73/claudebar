@@ -123,6 +123,7 @@ pub struct AppDef {
 pub struct Config {
     pub apps: Vec<AppDef>,
     pub projects: HashMap<String, ProjConf>,
+    pub proj_numbers: HashMap<String, i32>, // полный путь проекта -> стабильный № дубля (ключ pn=) — Phase-15
     pub collapsed: HashSet<String>, // имена свёрнутых секций (block)
     pub recent_expanded: HashSet<String>, // секции с раскрытым под-блоком «недавние»
     pub recent_showall: HashSet<String>, // секции с раскрытым полным списком недавних (сверх 6)
@@ -244,6 +245,7 @@ pub fn default_apps() -> Vec<AppDef> {
 
 struct ParsedIni {
     projects: HashMap<String, ProjConf>,
+    proj_numbers: HashMap<String, i32>,
     collapsed: HashSet<String>,
     recent_expanded: HashSet<String>,
     recent_showall: HashSet<String>,
@@ -264,6 +266,7 @@ struct ParsedIni {
 
 fn parse_ini(text: &str) -> ParsedIni {
     let mut projects: HashMap<String, ProjConf> = HashMap::new();
+    let mut proj_numbers: HashMap<String, i32> = HashMap::new();
     let mut collapsed: HashSet<String> = HashSet::new();
     let mut recent_expanded: HashSet<String> = HashSet::new();
     let mut recent_showall: HashSet<String> = HashSet::new();
@@ -362,6 +365,15 @@ fn parse_ini(text: &str) -> ParsedIni {
             if !v.is_empty() {
                 collapsed.insert(v.to_string());
             }
+        } else if let Some(v) = line.strip_prefix("pn=") {
+            let mut it = v.splitn(2, '\t');
+            if let (Some(path), Some(n)) = (it.next(), it.next()) {
+                if let Ok(n) = n.trim().parse::<i32>() {
+                    if !path.is_empty() && n >= 1 {
+                        proj_numbers.insert(path.to_string(), n);
+                    }
+                }
+            }
         } else if let Some(v) = line.strip_prefix("p=") {
             let parts: Vec<&str> = v.splitn(3, '\t').collect();
             if parts.len() >= 2 {
@@ -373,7 +385,7 @@ fn parse_ini(text: &str) -> ParsedIni {
         }
     }
     // END_BLOCK_PARSE_LINES
-    ParsedIni { projects, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, search_port, chats_db, files_db, projects_root, search_files }
+    ParsedIni { projects, proj_numbers, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, search_port, chats_db, files_db, projects_root, search_files }
 }
 
 impl Config {
@@ -383,6 +395,7 @@ impl Config {
         Config {
             apps: default_apps(),
             projects: p.projects,
+            proj_numbers: p.proj_numbers,
             collapsed: p.collapsed,
             recent_expanded: p.recent_expanded,
             recent_showall: p.recent_showall,
@@ -438,6 +451,9 @@ impl Config {
                 continue;
             }
             out += &format!("p={}\t{}\t{}\n", project, c.color, c.label);
+        }
+        for (path, n) in &self.proj_numbers {
+            out += &format!("pn={}\t{}\n", path, n);
         }
         out
     }
@@ -545,6 +561,46 @@ impl Config {
     pub fn set_label(&mut self, project: &str, label: String) {
         self.projects.entry(project.to_string()).or_default().label = label;
     }
+
+    // Стабильный № дубля для полного пути проекта: первый среди одноимённых basename = 1, далее +1.
+    // Persisted (pn=), НИКОГДА не переназначается: повторный вызов для того же пути вернёт тот же №.
+    pub fn assign_number(&mut self, path: &str) -> i32 {
+        if let Some(&n) = self.proj_numbers.get(path) {
+            return n;
+        }
+        let base = base_key(path);
+        let next = self.proj_numbers.iter().filter(|(p, _)| base_key(p) == base).map(|(_, n)| *n).max().unwrap_or(0) + 1;
+        self.proj_numbers.insert(path.to_string(), next);
+        next
+    }
+
+    pub fn number_for(&self, path: &str) -> Option<i32> {
+        self.proj_numbers.get(path).copied()
+    }
+
+    // Цвет по ключу-идентичности (полный путь), с откатом на fallback (имя) — back-compat со старым конфигом.
+    pub fn color_idx_for(&self, key: &str, fallback: &str) -> usize {
+        if self.projects.contains_key(key) {
+            self.color_idx(key)
+        } else if self.projects.contains_key(fallback) {
+            self.color_idx(fallback)
+        } else {
+            auto_color(fallback)
+        }
+    }
+
+    pub fn label_for(&self, key: &str, fallback: &str) -> String {
+        if self.projects.contains_key(key) {
+            self.label(key)
+        } else {
+            self.label(fallback)
+        }
+    }
+}
+
+// basename проекта в нижнем регистре — группировка одноимённых путей для нумерации.
+fn base_key(path: &str) -> String {
+    path.trim_end_matches(['\\', '/']).rsplit(['\\', '/']).next().unwrap_or(path).to_lowercase()
 }
 
 #[cfg(test)]
@@ -559,6 +615,7 @@ mod tests {
         Config {
             apps: default_apps(),
             projects: map,
+            proj_numbers: HashMap::new(),
             collapsed: HashSet::new(),
             recent_expanded: HashSet::new(),
             recent_showall: HashSet::new(),
@@ -577,6 +634,35 @@ mod tests {
             search_files: false,
             cfg_path: PathBuf::new(),
         }
+    }
+
+    #[test]
+    fn project_number_stable_and_keyed() {
+        let mut c = cfg(vec![]);
+        let (a, b, other) = ("D:\\a\\claudebar", "E:\\b\\claudebar", "D:\\x\\hh");
+        assert_eq!(c.assign_number(a), 1); // первый claudebar
+        assert_eq!(c.assign_number(b), 2); // второй одноимённый
+        assert_eq!(c.assign_number(other), 1); // другой basename -> свой счёт
+        assert_eq!(c.assign_number(a), 1); // стабильность: тот же путь -> тот же №
+        assert_eq!(c.assign_number(b), 2);
+        assert_eq!(c.number_for(b), Some(2));
+        assert_eq!(c.number_for("нет"), None);
+        // round-trip через ini
+        let p = parse_ini(&c.serialize(None));
+        assert_eq!(p.proj_numbers.get(a), Some(&1));
+        assert_eq!(p.proj_numbers.get(b), Some(&2));
+    }
+
+    #[test]
+    fn color_label_by_path_with_fallback() {
+        let mut c = cfg(vec![("claudebar", 3, "old")]); // старый конфиг по имени
+        // окно с путём, записи по пути нет -> fallback на имя
+        assert_eq!(c.color_idx_for("D:\\a\\claudebar", "claudebar"), 3);
+        assert_eq!(c.label_for("D:\\a\\claudebar", "claudebar"), "old");
+        // задаём по пути -> приоритет у пути
+        c.set_color("D:\\a\\claudebar", 5);
+        assert_eq!(c.color_idx_for("D:\\a\\claudebar", "claudebar"), 5);
+        assert_eq!(c.color_idx_for("claudebar", "claudebar"), 3); // окно без пути -> старое
     }
 
     #[test]
