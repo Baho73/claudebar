@@ -18,7 +18,7 @@ mod signal;
 mod win_enum;
 
 use std::cell::{Cell, RefCell};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
@@ -136,10 +136,30 @@ thread_local! {
 }
 
 // ---------- перечисление окон ----------
+// Порядок первого появления окна за сессию (для sort=recent и «новое -> вниз») — Phase-16.
+static ORDINALS: Mutex<BTreeMap<isize, u64>> = Mutex::new(BTreeMap::new());
+static NEXT_ORDINAL: AtomicU64 = AtomicU64::new(1);
+
+fn window_ordinal(hwnd: HWND) -> u64 {
+    let key = hwnd.0 as isize;
+    let Ok(mut m) = ORDINALS.lock() else { return 0 };
+    if let Some(&o) = m.get(&key) {
+        return o;
+    }
+    // ponytail: закрытые hwnd остаются в карте (рост за сессию), не чистим — мелочь
+    let o = NEXT_ORDINAL.fetch_add(1, Ordering::Relaxed);
+    m.insert(key, o);
+    o
+}
+
 // Возвращает true, если присвоены новые № путей (нужно сохранить реестр).
 fn refresh_items(app: &mut App) -> bool {
     let raw = win_enum::list_windows();
     app.items = win_enum::match_windows(&raw, &app.config.apps);
+    // порядковый № первого появления окна (sort=recent, «новое -> вниз»)
+    for it in app.items.iter_mut() {
+        it.ordinal = window_ordinal(it.hwnd);
+    }
     // присвоить стабильные № новым полным путям (для показа дублей «(N)»)
     let mut numbered = false;
     let paths: Vec<String> = app.items.iter().filter_map(|it| it.path.clone()).collect();

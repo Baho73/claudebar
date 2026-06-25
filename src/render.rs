@@ -145,7 +145,14 @@ pub fn build_rows(items: &[WinItem], recent: &[RecentDoc], apps: &[AppDef], cfg:
                 (Some(p), Some(q)) => p.cmp(&q),
                 (Some(_), None) => std::cmp::Ordering::Less,
                 (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => items[x].name.cmp(&items[y].name),
+                // без ручной позиции: recent -> по ordinal (позже открыто -> ниже), иначе по имени — Phase-16
+                (None, None) => {
+                    if cfg.is_sort_recent() {
+                        items[x].ordinal.cmp(&items[y].ordinal)
+                    } else {
+                        items[x].name.cmp(&items[y].name)
+                    }
+                }
             }
         });
     }
@@ -591,7 +598,57 @@ mod tests {
     use crate::win_enum::WinItem;
 
     fn item(app: usize, name: &str) -> WinItem {
-        WinItem { hwnd: HWND(std::ptr::null_mut()), app, name: name.to_string(), path: None }
+        WinItem { hwnd: HWND(std::ptr::null_mut()), app, name: name.to_string(), path: None, ordinal: 0 }
+    }
+
+    fn mock_cfg() -> Config {
+        Config {
+            apps: default_apps(),
+            projects: Default::default(),
+            proj_numbers: Default::default(),
+            collapsed: Default::default(),
+            recent_expanded: Default::default(),
+            recent_showall: Default::default(),
+            section_order: Default::default(),
+            window_order: Default::default(),
+            font_face: crate::config::DEFAULT_FONT.to_string(),
+            font_size: crate::config::DEFAULT_FONT_SIZE,
+            font_weight: crate::config::DEFAULT_FONT_WEIGHT,
+            pos: None,
+            search_db: String::new(),
+            search_cmd: String::new(),
+            search_port: crate::config::DEFAULT_SEARCH_PORT,
+            chats_db: String::new(),
+            files_db: String::new(),
+            projects_root: String::new(),
+            search_files: false,
+            sort_recent: false,
+            cfg_path: std::path::PathBuf::new(),
+        }
+    }
+
+    #[test]
+    fn build_rows_order_modes() {
+        let apps = default_apps();
+        let mut bravo = item(0, "Bravo");
+        bravo.ordinal = 1; // открыт раньше
+        let mut alpha = item(0, "Alpha");
+        alpha.ordinal = 2; // открыт позже
+        let items = vec![bravo, alpha];
+        let names = |cfg: &Config| -> Vec<String> {
+            build_rows(&items, &[], &apps, cfg)
+                .into_iter()
+                .filter_map(|r| match r {
+                    Row::Window { idx } => Some(items[idx].name.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let mut c = mock_cfg();
+        c.set_sort_recent(false); // alpha: по имени
+        assert_eq!(names(&c), vec!["Alpha", "Bravo"]);
+        c.set_sort_recent(true); // recent: по ordinal (позже -> ниже)
+        assert_eq!(names(&c), vec!["Bravo", "Alpha"]);
     }
 
     #[test]

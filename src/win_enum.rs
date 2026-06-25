@@ -49,6 +49,7 @@ pub struct WinItem {
     pub app: usize, // индекс в Config.apps
     pub name: String,
     pub path: Option<String>, // полный путь проекта из заголовка (Project + настроенный ${rootPath}) — Phase-15
+    pub ordinal: u64, // порядковый № первого появления окна за сессию (для сортировки recent) — Phase-16; 0 = ещё не задан
 }
 
 // START_CONTRACT: extract_name
@@ -280,7 +281,7 @@ pub fn match_windows(raw: &[(HWND, String, String, String)], apps: &[AppDef]) ->
                 None => extract_name(title, &apps[i]),
             };
             if !name.is_empty() {
-                items.push(WinItem { hwnd: *hwnd, app: i, name, path });
+                items.push(WinItem { hwnd: *hwnd, app: i, name, path, ordinal: 0 });
             }
         }
     }
