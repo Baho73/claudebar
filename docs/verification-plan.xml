@@ -142,7 +142,7 @@
         <scenario-4 kind="success">reconcile удаляет .signal, чьё окно проекта сейчас foreground; иначе сохраняет</scenario-4>
         <scenario-5 kind="failure">Папка signals отсутствует -> пустой набор, без паники</scenario-5>
         <scenario-6 kind="success">Phase-15: should_clear гасит по полному cwd == путь окна в фокусе. Два одноимённых проекта (D:\a\claudebar, E:\b\claudebar): фокус на одном гасит ТОЛЬКО его сигнал, второй остаётся. Fallback на basename, если у окна нет пути. Тест should_clear_by_full_path</scenario-6>
-        <scenario-7 kind="success">Phase-17: busy_cwds/busy_keys читают .busy (cwd lower + basename lower); is_stale(mtime, now, ttl=600) -> свежий .busy в наборе, старше 600с игнорируется; матч окна по cwd==path (fallback basename). Тесты is_stale/busy-разбор</scenario-7>
+        <scenario-7 kind="success">Phase-17: busy_cwds/busy_keys читают .busy (cwd lower + basename lower); is_stale(mtime, now, ttl=BUSY_STALE_SECS=90) -> свежий .busy в наборе, старше 90с игнорируется; keep-alive (PostToolUse обновляет mtime) держит точки всю длинную работу; матч окна по cwd==path (fallback basename). Тесты is_stale/busy-разбор</scenario-7>
     <V-M-ICON MODULE="M-ICON" PRIORITY="low">
       <test-files><file>src/icon.rs (#[cfg(test)] на icon_from_path)</file></test-files>
       <module-checks>

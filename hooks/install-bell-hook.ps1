@@ -1,6 +1,8 @@
 # install-bell-hook.ps1 - idempotently adds the ClaudeBar hooks to ~/.claude/settings.json:
 #   - bell on Stop  (claudebar-bell.ps1): highlights the row when Claude finishes
-#   - busy on UserPromptSubmit (claudebar-busy.ps1): running dots while Claude works
+#   - busy on UserPromptSubmit (claudebar-busy.ps1): running dots when Claude starts
+#   - keep-alive on PostToolUse (claudebar-busy.ps1): refreshes .busy mtime while tools run,
+#     so the dots persist through a long task and clear ~90s after work stops (staleness)
 # Run: powershell -ExecutionPolicy Bypass -File "D:\Python\claudebar\hooks\install-bell-hook.ps1"
 # Makes a settings.json.bak backup; re-running does not duplicate. ASCII-only on purpose.
 
@@ -40,7 +42,8 @@ $busy = 'powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Python\claudeba
 
 $rb = Add-Hook 'Stop' $bell
 $ru = Add-Hook 'UserPromptSubmit' $busy
+$rp = Add-Hook 'PostToolUse' $busy
 
 $json = $j | ConvertTo-Json -Depth 100
 [System.IO.File]::WriteAllText($f, $json, (New-Object System.Text.UTF8Encoding $false))
-Write-Output "OK: bell (Stop) -> $rb; busy (UserPromptSubmit) -> $ru"
+Write-Output "OK: bell(Stop) -> $rb; busy(UserPromptSubmit) -> $ru; keep-alive(PostToolUse) -> $rp"

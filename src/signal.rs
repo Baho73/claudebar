@@ -25,7 +25,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.2.0 - Phase-17 step-1: чтение .busy (индикатор работы) — list_ext(ext, ttl) + busy_keys/busy_cwds + is_stale (фильтр зависших по mtime >600с). list_signals переведён на list_ext.
+//   LAST_CHANGE: v1.2.1 - Phase-17 hardening: staleness 600->90с + keep-alive (PostToolUse-хук обновляет .busy на каждом инструменте), чтобы точки держались всю длинную работу и гасли ~через 90с после смерти/Stop.
+//   v1.2.0 - Phase-17 step-1: чтение .busy (индикатор работы) — list_ext(ext, ttl) + busy_keys/busy_cwds + is_stale (фильтр зависших по mtime >600с). list_signals переведён на list_ext.
 //   v1.1.0 - Phase-15 step-3: матч звоночка по полному cwd == WinItem.path (fallback basename); чинит коллизию одноимённых (D-06). Signal += cwd; should_clear(sig_cwd,sig_key,fg_path,fg_key); bell_cwds.
 //   v1.0.0 - Phase-4 Step 1: модуль сигналов «звоночка» (файловый IPC из Claude Code).
 // END_CHANGE_SUMMARY
@@ -103,8 +104,9 @@ pub fn should_clear(sig_cwd: &str, sig_key: &str, fg_path: Option<&str>, fg_key:
     }
 }
 
-// .busy старше этого возраста (с) считается зависшим (Claude убит без Stop) и игнорируется — Phase-17.
-pub const BUSY_STALE_SECS: u64 = 600;
+// .busy старше этого возраста (с) считается зависшим и игнорируется. Keep-alive (PostToolUse-хук
+// обновляет mtime на каждом инструменте) держит файл свежим, пока Claude реально работает — Phase-17.
+pub const BUSY_STALE_SECS: u64 = 90;
 
 // START_CONTRACT: is_stale
 //   PURPOSE: Чистое: устарел ли файл-сигнал (mtime старше ttl от now) — фильтр зависших .busy (Phase-17).
