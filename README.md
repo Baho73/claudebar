@@ -35,7 +35,7 @@ When you run many Claude Code sessions, each lives in its own editor window. The
 - **Recent documents** per section (from Windows Recent + editors' workspace storage): reopen a closed file in one click. The first 6 are shown, with a **"show all"** toggle for the rest.
 - **Left-click** a window row → switch to it (restores it if minimized).
 - **Close button (✕)** on hover → closes that window the normal way (the app shows its own save prompt).
-- **Right-click** a window row → pick a color (8 presets) and set a label.
+- **Right-click** a window row → context menu: **copy the path** or **open the location in Explorer** (a project → its folder, a document → the file itself), pick a color (8 presets) and set a label.
 - **Reorder:** right-click a section header to enter reorder mode, then drag rows to set your own order of sections and windows. Order persists.
 - **Settings (⚙):** click the gear in the header to pick the panel **font** via the native font dialog — face, size and weight. Saved to `claudebar.ini`.
 - Color + label are bound to the **project name**, so they survive switching files and reopening the window. Stored in `claudebar.ini` next to the exe.
@@ -70,7 +70,7 @@ Highlighting works for projects open in a tracked editor window (the typical cas
 
 - **Left-click** a window row — focus that window.
 - **Hover** a window row, click **✕** on the right — close that window (the app asks to save if needed).
-- **Right-click** a window row — context menu: 8 colors, **Метка… / Label…**, **Убрать метку / Clear label**.
+- **Right-click** a window row — context menu: **Copy link** and **Open in Explorer** (project → its folder; document → the file, opened with Explorer selecting it; greyed when the path can't be resolved), 8 colors, **Метка… / Label…**, **Убрать метку / Clear label**.
 - **Click a section header** — collapse / expand the app section.
 - **Right-click a section header** — toggle **reorder mode**; the header turns gold. Drag any row to reorder sections and windows. Right-click a header again to exit.
 - **Recent sub-list** — click **▾ Недавние** to expand, click a document to reopen it, **… показать все** to see more than 6.
@@ -170,6 +170,9 @@ The in-panel search box indexes and queries entirely in Rust — no external ser
   `.docx/.pptx` via zip+xml, `.pdf` via pdf-extract.
 - **Hover tooltips** (~0.5 s) show the full path, the matching snippet for chat results, and the
   query-syntax rules over the search box.
+- **Search box niceties:** a **✕** inside the field clears it; clicking the empty field drops down a
+  **recent-queries** list (type, pick with the mouse, or arrow-key + Enter). History is saved when a
+  search completes — on clear or when focus leaves the field.
 
 Semantic (dense / "by meaning") search is deferred to an optional future Python module; the
 companion `clfind` tool remains frozen for that.
@@ -202,7 +205,7 @@ MIT — see [LICENSE](LICENSE).
 - **Недавние документы** в каждой секции (Windows Recent + хранилище проектов редакторов): первые 6 и крыжик **«показать все»**.
 - **ЛКМ** по окну — переключиться (восстановит из свёрнутого).
 - **Кнопка ✕** при наведении — закрыть окно штатно (приложение само спросит про сохранение).
-- **ПКМ** по окну — цвет (8) и метка.
+- **ПКМ** по окну — контекстное меню: **скопировать ссылку** и **открыть в проводнике** (проект → его папка; документ → сам файл, Проводник открывается с выделением файла; пункты серые, если путь не определить), цвет (8) и метка.
 - **Перетаскивание:** ПКМ по заголовку секции включает режим порядка, тащи строки — меняешь порядок секций и окон. Порядок сохраняется.
 - **Настройки (⚙):** шестерёнка в шапке открывает нативный выбор **шрифта** панели (гарнитура, кегль, насыщенность); сохраняется в `claudebar.ini` (ключ `font=`).
 - Цвет и метка привязаны к имени проекта, переживают смену файла и перезапуск окна. Конфиг `claudebar.ini` рядом с exe.
