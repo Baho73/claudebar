@@ -1,9 +1,9 @@
 // FILE: src/settings.rs
-// VERSION: 1.2.0
+// VERSION: 1.3.0
 // START_MODULE_CONTRACT
-//   PURPOSE: Настройки и сведения панели: нативный выбор шрифта (ChooseFontW), предзаполненный текущей гарнитурой/кеглем/начертанием; окно «О программе» с версией и контактами автора.
-//   SCOPE: choose_font (модальный диалог -> (face, size, weight) или None), parse_face (чистое: lfFaceName -> String), about_text (чистое: текст «О программе»), show_about (модальный MessageBox).
-//   DEPENDS: none
+//   PURPOSE: Настройки и сведения панели: нативный выбор шрифта (ChooseFontW); окно «О программе»; включение полных путей в заголовках редакторов (window.title с ${rootPath}).
+//   SCOPE: choose_font (модальный диалог -> (face, size, weight) или None), parse_face (чистое), about_text (чистое), show_about (модальный MessageBox), set_window_title (чистое: правка settings.json без порчи JSONC), configure_editor_titles (бэкап+запись settings.json VS Code/Cursor).
+//   DEPENDS: none (serde_json — внешний крейт для строгого JSON, не модуль)
 //   LINKS: M-SETTINGS
 //   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS
@@ -16,10 +16,13 @@
 //   about_text   - чистое: собрать текст окна «О программе» из версии (+ TELEGRAM/GITHUB_URL)
 //   show_about   - модальный MessageBox «О программе» (версия, Telegram, GitHub)
 //   wide         - &str -> UTF-16 с завершающим \0 (приватный помощник для Win32-строк)
+//   set_window_title       - чистое: вставить/обновить "window.title" в settings.json (TitleEdit), не корёжа JSONC
+//   configure_editor_titles - бэкап + запись window.title с ${rootPath} в settings.json VS Code/Cursor (Phase-15)
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.2.0 - Phase-11: пункт «О программе» в меню ⚙ — окно с версией, Telegram (@IvanPonomarev) и GitHub. about_text (чистое, тестируемо) + show_about (MessageBoxW).
+//   LAST_CHANGE: v1.3.0 - Phase-15 step-5: configure_editor_titles + чистое set_window_title (включение полных путей в заголовках; бэкап, идемпотентно, JSONC-устойчиво).
+//   v1.2.0 - Phase-11: пункт «О программе» в меню ⚙ — окно с версией, Telegram (@IvanPonomarev) и GitHub. about_text (чистое, тестируемо) + show_about (MessageBoxW).
 //   v1.1.0 - fix(grace-fix): choose_font принимает/возвращает вес; lf.lfWeight предзаполняется текущим (стиль больше не сбрасывается); флаги канонические (CF_SCREENFONTS|CF_INITTOLOGFONTSTRUCT).
 //   v1.0.0 - Phase-9 Step 2: новый модуль настроек; выбор шрифта через ChooseFontW.
 // END_CHANGE_SUMMARY
@@ -134,9 +137,100 @@ pub fn show_about(parent: HWND) {
     }
 }
 
+// Заголовок редактора с полным путём проекта (${rootPath}) — идентификация окон по пути (Phase-15).
+const EDITOR_TITLE: &str = "${rootName}${separator}${rootPath}${separator}${appName}";
+
+pub enum TitleEdit {
+    Unchanged,       // window.title уже = нашему значению (идемпотентно)
+    Updated(String), // новый контент settings.json для записи
+    SkipManual,      // JSONC с чужим window.title — безопасно не трогаем
+}
+
+// START_CONTRACT: set_window_title
+//   PURPOSE: Вставить/обновить "window.title" в тексте settings.json, не корёжа JSONC (Phase-15).
+//   INPUTS: { content: &str - текущий settings.json; value: &str - значение window.title }
+//   OUTPUTS: { TitleEdit - Unchanged | Updated(new) | SkipManual }
+//   SIDE_EFFECTS: none (чистое)
+// END_CONTRACT: set_window_title
+pub fn set_window_title(content: &str, value: &str) -> TitleEdit {
+    let target = format!("\"window.title\": \"{}\"", value);
+    if content.contains(&target) {
+        return TitleEdit::Unchanged; // уже стоит — идемпотентно
+    }
+    if content.trim().is_empty() {
+        return TitleEdit::Updated(format!("{{\n  \"window.title\": \"{}\"\n}}", value));
+    }
+    // строгий JSON (без комментариев) -> безопасно через serde_json
+    if let Ok(serde_json::Value::Object(mut map)) = serde_json::from_str::<serde_json::Value>(content) {
+        map.insert("window.title".into(), serde_json::Value::String(value.to_string()));
+        if let Ok(s) = serde_json::to_string_pretty(&serde_json::Value::Object(map)) {
+            return TitleEdit::Updated(s);
+        }
+    }
+    // JSONC: если ключа ещё нет — вставить сразу после первой '{'
+    if !content.contains("\"window.title\"") {
+        if let Some(pos) = content.find('{') {
+            let mut s = String::with_capacity(content.len() + value.len() + 24);
+            s.push_str(&content[..=pos]);
+            s.push_str(&format!("\n  \"window.title\": \"{}\",", value));
+            s.push_str(&content[pos + 1..]);
+            return TitleEdit::Updated(s);
+        }
+    }
+    TitleEdit::SkipManual // JSONC с существующим window.title — не трогаем (risk-24)
+}
+
+// START_CONTRACT: configure_editor_titles
+//   PURPOSE: Записать window.title с ${rootPath} в settings.json VS Code и Cursor (бэкап, идемпотентно) — Phase-15.
+//   INPUTS: {}
+//   OUTPUTS: { Vec<(String, &'static str)> - (редактор, статус) для отчёта пользователю }
+//   SIDE_EFFECTS: бэкап (settings.json.claudebar-bak) + запись settings.json редакторов
+// END_CONTRACT: configure_editor_titles
+pub fn configure_editor_titles() -> Vec<(String, &'static str)> {
+    let mut out = Vec::new();
+    let Some(appdata) = std::env::var_os("APPDATA") else {
+        return out;
+    };
+    for (name, sub) in [("VS Code", "Code"), ("Cursor", "Cursor")] {
+        let path = std::path::PathBuf::from(&appdata).join(sub).join("User").join("settings.json");
+        if !path.exists() {
+            out.push((name.to_string(), "не установлен"));
+            continue;
+        }
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let status = match set_window_title(&content, EDITOR_TITLE) {
+            TitleEdit::Unchanged => "уже настроен",
+            TitleEdit::SkipManual => "свой window.title — не тронут",
+            TitleEdit::Updated(new) => {
+                let _ = std::fs::copy(&path, path.with_file_name("settings.json.claudebar-bak"));
+                if std::fs::write(&path, new).is_ok() { "настроен" } else { "ошибка записи" }
+            }
+        };
+        out.push((name.to_string(), status));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn set_window_title_cases() {
+        let v = "${rootPath}";
+        // строгий JSON без ключа -> добавлен
+        assert!(matches!(set_window_title("{\n  \"editor.fontSize\": 14\n}", v),
+            TitleEdit::Updated(ref s) if s.contains("window.title") && s.contains(v)));
+        // уже наш value -> Unchanged
+        assert!(matches!(set_window_title("{ \"window.title\": \"${rootPath}\" }", v), TitleEdit::Unchanged));
+        // JSONC (комментарий) без ключа -> вставка после {
+        assert!(matches!(set_window_title("{\n  // c\n  \"a\": 1\n}", v),
+            TitleEdit::Updated(ref s) if s.contains("window.title")));
+        // JSONC с чужим window.title -> не трогаем
+        assert!(matches!(set_window_title("{\n  // c\n  \"window.title\": \"x\"\n}", v), TitleEdit::SkipManual));
+        // пустой файл -> создаём
+        assert!(matches!(set_window_title("", v), TitleEdit::Updated(ref s) if s.contains("window.title")));
+    }
 
     #[test]
     fn about_text_has_version_and_contacts() {
