@@ -1,5 +1,5 @@
 // FILE: src/signal.rs
-// VERSION: 1.1.0
+// VERSION: 1.2.0
 // START_MODULE_CONTRACT
 //   PURPOSE: «Звоночек» завершения ИИ: читать файлы-сигналы из %APPDATA%\claudebar\signals\, отдавать проекты для подсветки, гасить сигнал при фокусе окна проекта.
 //   SCOPE: путь папки сигналов, парсинг .signal (cwd проекта), ключ проекта (basename) + полный cwd, наборы «звенящих» (basename и cwd), сброс по фокусу с матчем по полному пути.
@@ -18,11 +18,15 @@
 //   list_signals      - прочитать активные сигналы из папки
 //   bell_keys         - множество «звенящих» basename-ключей для paint (fallback)
 //   bell_cwds         - множество полных cwd активных сигналов — точная подсветка по пути (Phase-15)
+//   is_stale          - чистое: устарел ли .busy по mtime (фильтр зависших) — Phase-17
+//   list_ext          - чтение сигналов по расширению (signal|busy) с опц. staleness-фильтром
+//   busy_keys/busy_cwds - наборы проектов с активным .busy (индикатор работы) — Phase-17
 //   reconcile         - удалить .signal, чьё окно проекта сейчас foreground (по полному пути)
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.1.0 - Phase-15 step-3: матч звоночка по полному cwd == WinItem.path (fallback basename); чинит коллизию одноимённых (D-06). Signal += cwd; should_clear(sig_cwd,sig_key,fg_path,fg_key); bell_cwds.
+//   LAST_CHANGE: v1.2.0 - Phase-17 step-1: чтение .busy (индикатор работы) — list_ext(ext, ttl) + busy_keys/busy_cwds + is_stale (фильтр зависших по mtime >600с). list_signals переведён на list_ext.
+//   v1.1.0 - Phase-15 step-3: матч звоночка по полному cwd == WinItem.path (fallback basename); чинит коллизию одноимённых (D-06). Signal += cwd; should_clear(sig_cwd,sig_key,fg_path,fg_key); bell_cwds.
 //   v1.0.0 - Phase-4 Step 1: модуль сигналов «звоночка» (файловый IPC из Claude Code).
 // END_CHANGE_SUMMARY
 
@@ -99,24 +103,59 @@ pub fn should_clear(sig_cwd: &str, sig_key: &str, fg_path: Option<&str>, fg_key:
     }
 }
 
-// START_CONTRACT: list_signals
-//   PURPOSE: Прочитать активные .signal из папки сигналов.
-//   INPUTS: {}
-//   OUTPUTS: { Vec<Signal> - путь, ключ проекта, mtime }
+// .busy старше этого возраста (с) считается зависшим (Claude убит без Stop) и игнорируется — Phase-17.
+pub const BUSY_STALE_SECS: u64 = 600;
+
+// START_CONTRACT: is_stale
+//   PURPOSE: Чистое: устарел ли файл-сигнал (mtime старше ttl от now) — фильтр зависших .busy (Phase-17).
+//   INPUTS: { mtime_secs: u64; now_secs: u64; ttl: u64 }
+//   OUTPUTS: { bool }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: is_stale
+pub fn is_stale(mtime_secs: u64, now_secs: u64, ttl: u64) -> bool {
+    now_secs.saturating_sub(mtime_secs) > ttl
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn file_mtime_secs(p: &std::path::Path) -> u64 {
+    std::fs::metadata(p)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+// START_CONTRACT: list_ext
+//   PURPOSE: Прочитать активные сигналы заданного расширения (signal|busy); ttl=Some -> отфильтровать зависшие по mtime.
+//   INPUTS: { ext: &str - расширение без точки; ttl: Option<u64> - порог staleness (None = без фильтра) }
+//   OUTPUTS: { Vec<Signal> - путь, ключ (basename lower), полный cwd (lower) }
 //   SIDE_EFFECTS: чтение каталога signals
-// END_CONTRACT: list_signals
-pub fn list_signals() -> Vec<Signal> {
+// END_CONTRACT: list_ext
+fn list_ext(ext: &str, ttl: Option<u64>) -> Vec<Signal> {
     let dir = match signal_dir() {
         Some(d) => d,
         None => return Vec::new(),
     };
+    let now = now_secs();
     let mut out = Vec::new();
     // START_BLOCK_SCAN_SIGNALS
     if let Ok(rd) = std::fs::read_dir(&dir) {
         for e in rd.flatten() {
             let p = e.path();
-            if p.extension().and_then(|s| s.to_str()).map(|s| s.eq_ignore_ascii_case("signal")) != Some(true) {
+            if p.extension().and_then(|s| s.to_str()).map(|s| s.eq_ignore_ascii_case(ext)) != Some(true) {
                 continue;
+            }
+            if let Some(ttl) = ttl {
+                if is_stale(file_mtime_secs(&p), now, ttl) {
+                    continue; // зависший .busy -> пропускаем
+                }
             }
             let content = match std::fs::read_to_string(&p) {
                 Ok(c) => c,
@@ -137,6 +176,16 @@ pub fn list_signals() -> Vec<Signal> {
     out
 }
 
+// Активные .signal (звоночек) — без staleness-фильтра.
+pub fn list_signals() -> Vec<Signal> {
+    list_ext("signal", None)
+}
+
+// Активные .busy (индикатор работы) — с фильтром зависших по mtime.
+fn list_busy() -> Vec<Signal> {
+    list_ext("busy", Some(BUSY_STALE_SECS))
+}
+
 // START_CONTRACT: bell_keys
 //   PURPOSE: Множество «звенящих» ключей проектов для подсветки в paint.
 //   INPUTS: {}
@@ -155,6 +204,26 @@ pub fn bell_keys() -> HashSet<String> {
 // END_CONTRACT: bell_cwds
 pub fn bell_cwds() -> HashSet<String> {
     list_signals().into_iter().map(|s| s.cwd).collect()
+}
+
+// START_CONTRACT: busy_keys
+//   PURPOSE: Множество basename-ключей (lower) проектов с активным .busy — индикатор работы (fallback) — Phase-17.
+//   INPUTS: {}
+//   OUTPUTS: { HashSet<String> }
+//   SIDE_EFFECTS: чтение каталога signals
+// END_CONTRACT: busy_keys
+pub fn busy_keys() -> HashSet<String> {
+    list_busy().into_iter().map(|s| s.key).collect()
+}
+
+// START_CONTRACT: busy_cwds
+//   PURPOSE: Множество полных cwd (lower) с активным .busy (staleness-фильтр) — бегущие точки по пути — Phase-17.
+//   INPUTS: {}
+//   OUTPUTS: { HashSet<String> }
+//   SIDE_EFFECTS: чтение каталога signals
+// END_CONTRACT: busy_cwds
+pub fn busy_cwds() -> HashSet<String> {
+    list_busy().into_iter().map(|s| s.cwd).collect()
 }
 
 // START_CONTRACT: reconcile
@@ -203,5 +272,13 @@ mod tests {
         // окно без пути -> fallback на basename
         assert!(should_clear("d:\\a\\claudebar", "claudebar", None, "claudebar"));
         assert!(!should_clear("d:\\a\\claudebar", "claudebar", None, "other"));
+    }
+
+    #[test]
+    fn is_stale_by_mtime() {
+        assert!(!is_stale(1000, 1500, 600)); // 500с < 600 -> свежий
+        assert!(is_stale(1000, 1700, 600)); // 700с > 600 -> устарел
+        assert!(!is_stale(1700, 1000, 600)); // mtime в будущем -> не устарел (saturating)
+        assert!(!is_stale(1000, 1600, 600)); // ровно 600 -> ещё не устарел (строго >)
     }
 }
