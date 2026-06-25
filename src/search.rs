@@ -311,6 +311,23 @@ pub fn folder_for_project(chats_db: &str, name: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    // Фикстура: БД создаётся ПРОД-схемой (index::init_schema) и наполняется как индексатор —
+    // INSERT в chunks + ручной INSERT в standalone chunks_fts(rowid,text). Так тест бьёт по той же
+    // схеме и write-path, что и боевой код (а не по отдельной external-content схеме). rows: (folder, source, text).
+    fn seed_db(p: &str, rows: &[(&str, &str, &str)]) {
+        let conn = Connection::open(p).unwrap();
+        crate::index::init_schema(&conn).unwrap();
+        for (i, (folder, source, text)) in rows.iter().enumerate() {
+            let id = (i + 1) as i64;
+            conn.execute(
+                "INSERT INTO chunks(id,project_folder,source,ref,location,text) VALUES (?1,?2,?3,'s','0',?4)",
+                params![id, folder, source, text],
+            )
+            .unwrap();
+            conn.execute("INSERT INTO chunks_fts(rowid,text) VALUES (?1,?2)", params![id, text]).unwrap();
+        }
+    }
+
     #[test]
     fn fts_query_operators() {
         // И + префикс последнего слова (живой набор)
@@ -341,18 +358,10 @@ mod tests {
 
     #[test]
     fn folder_for_project_matches_basename() {
-        let path = std::env::temp_dir().join("clfind_folder_test.db");
+        let path = std::env::temp_dir().join("clbar_folder_test.db");
         let _ = std::fs::remove_file(&path);
         let p = path.to_str().unwrap();
-        {
-            let conn = Connection::open(p).unwrap();
-            conn.execute_batch(
-                "CREATE TABLE chunks(id INTEGER PRIMARY KEY, project_folder TEXT, source TEXT, ref TEXT, location TEXT, text TEXT);",
-            )
-            .unwrap();
-            conn.execute("INSERT INTO chunks(project_folder,source,ref,location,text) VALUES ('D:\\Python\\claudebar','chat','s','0','t')", []).unwrap();
-            conn.execute("INSERT INTO chunks(project_folder,source,ref,location,text) VALUES ('D:\\Python\\other','file','f','x','t')", []).unwrap();
-        }
+        seed_db(p, &[("D:\\Python\\claudebar", "chat", "t"), ("D:\\Python\\other", "file", "x")]);
         assert_eq!(folder_for_project(p, "claudebar").as_deref(), Some("D:\\Python\\claudebar"));
         assert_eq!(folder_for_project(p, "CLAUDEBAR").as_deref(), Some("D:\\Python\\claudebar")); // регистронезависимо
         assert_eq!(folder_for_project(p, "нет-такого").as_deref(), None);
@@ -384,22 +393,14 @@ mod tests {
     }
 
     #[test]
-    fn bm25_search_on_temp_clfind_db() {
-        let path = std::env::temp_dir().join("clfind_bm25_test.db");
+    fn bm25_search_on_temp_chats_db() {
+        let path = std::env::temp_dir().join("clbar_bm25_test.db");
         let _ = std::fs::remove_file(&path);
         let p = path.to_str().unwrap();
-        {
-            let conn = Connection::open(p).unwrap();
-            conn.execute_batch(
-                "CREATE TABLE chunks(id INTEGER PRIMARY KEY, project_folder TEXT, source TEXT, ref TEXT, location TEXT, text TEXT);
-                 CREATE VIRTUAL TABLE chunks_fts USING fts5(text, content='chunks', content_rowid='id', tokenize='unicode61');
-                 CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN INSERT INTO chunks_fts(rowid,text) VALUES(new.id,new.text); END;",
-            ).unwrap();
-            conn.execute("INSERT INTO chunks(project_folder,source,ref,location,text) VALUES (?1,'chat','s','0',?2)",
-                params!["D:\\Python\\hh", "обсуждали telegram лайки кандидата"]).unwrap();
-            conn.execute("INSERT INTO chunks(project_folder,source,ref,location,text) VALUES (?1,'chat','s','0',?2)",
-                params!["D:\\Python\\claudebar", "правим окно за экраном"]).unwrap();
-        }
+        seed_db(p, &[
+            ("D:\\Python\\hh", "chat", "обсуждали telegram лайки кандидата"),
+            ("D:\\Python\\claudebar", "chat", "правим окно за экраном"),
+        ]);
         let hits = bm25_search(p, "telegr", "chats", 10);
         assert!(!hits.is_empty());
         assert_eq!(hits[0].0, "D:\\Python\\hh");
@@ -412,25 +413,13 @@ mod tests {
         let path = std::env::temp_dir().join("clbar_snippet_test.db");
         let _ = std::fs::remove_file(&path);
         let p = path.to_str().unwrap();
-        {
-            let conn = Connection::open(p).unwrap();
-            conn.execute_batch(
-                "CREATE TABLE chunks(id INTEGER PRIMARY KEY, project_folder TEXT, source TEXT, ref TEXT, location TEXT, text TEXT);
-                 CREATE VIRTUAL TABLE chunks_fts USING fts5(text, content='chunks', content_rowid='id', tokenize='unicode61');
-                 CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN INSERT INTO chunks_fts(rowid,text) VALUES(new.id,new.text); END;",
-            ).unwrap();
-            conn.execute("INSERT INTO chunks(project_folder,source,ref,location,text) VALUES (?1,'chat','s','0',?2)",
-                params!["D:\\Python\\run-pig", "там был подстроечник и конденсатор в схеме"]).unwrap();
-        }
+        seed_db(p, &[
+            ("D:\\Python\\run-pig", "chat", "там был подстроечник и конденсатор в схеме"),
+            ("D:\\Docs", "file", "смета по фундаменту"), // source='file' тоже находится (фильтра source нет)
+        ]);
         let s = snippet_for(p, "подстроечник", "D:\\Python\\run-pig").unwrap();
         assert!(s.contains("подстроечник"));
         assert!(snippet_for(p, "подстроечник", "D:\\Python\\other").is_none()); // другая папка
-        // source='file' тоже находится (фильтра source нет — база односорсная)
-        {
-            let conn = Connection::open(p).unwrap();
-            conn.execute("INSERT INTO chunks(project_folder,source,ref,location,text) VALUES (?1,'file','f','смета.xlsx',?2)",
-                params!["D:\\Docs", "смета по фундаменту"]).unwrap();
-        }
         assert!(snippet_for(p, "смета", "D:\\Docs").unwrap().contains("смета"));
         let _ = std::fs::remove_file(&path);
     }
@@ -441,14 +430,7 @@ mod tests {
             let path = std::env::temp_dir().join(name);
             let _ = std::fs::remove_file(&path);
             let p = path.to_str().unwrap().to_string();
-            let conn = Connection::open(&p).unwrap();
-            conn.execute_batch(
-                "CREATE TABLE chunks(id INTEGER PRIMARY KEY, project_folder TEXT, source TEXT, ref TEXT, location TEXT, text TEXT);
-                 CREATE VIRTUAL TABLE chunks_fts USING fts5(text, content='chunks', content_rowid='id', tokenize='unicode61');
-                 CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN INSERT INTO chunks_fts(rowid,text) VALUES(new.id,new.text); END;",
-            ).unwrap();
-            conn.execute("INSERT INTO chunks(project_folder,source,ref,location,text) VALUES (?1,?2,'r','0',?3)",
-                params![folder, src, text]).unwrap();
+            seed_db(&p, &[(folder, src, text)]); // прод-схема (как индексатор)
             p
         };
         let cdb = mk("clbar_sb_chats.db", "chat", "D:\\A", "смета в чате");
