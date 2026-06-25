@@ -38,6 +38,24 @@
       <Priority>medium</Priority>
       <RelatedFlows>DF-OPENLOC</RelatedFlows>
     </UC-012>
+    <UC-013>
+      <Actor>User</Actor>
+      <Action>Открывает два проекта с одинаковым именем папки в разных путях</Action>
+      <Goal>Различать их в панели (цвет/метка/звоночек привязаны к нужному), видеть нумерацию дублей</Goal>
+      <Preconditions>Редактор настроен показывать полный путь в заголовке (${rootPath}); ClaudeBar читает путь из заголовка</Preconditions>
+      <AcceptanceCriteria>Идентичность = полный путь; одноимённые показываются «name» и «name (2)/(3)» со стабильным №; цвет/метка/звоночек не путаются между ними</AcceptanceCriteria>
+      <Priority>medium</Priority>
+      <RelatedFlows>DF-PATHID, DF-PROJNUM, DF-EDITORCFG</RelatedFlows>
+    </UC-013>
+    <UC-014>
+      <Actor>User</Actor>
+      <Action>Выбирает в настройках порядок окон: по алфавиту или по времени открытия</Action>
+      <Goal>Видеть окна в удобном порядке (новые внизу при recent)</Goal>
+      <Preconditions>—</Preconditions>
+      <AcceptanceCriteria>sort=alpha|recent в конфиге; ручной drag-порядок важнее; новое окно по умолчанию внизу; выбор переживает перезапуск</AcceptanceCriteria>
+      <Priority>low</Priority>
+      <RelatedFlows>DF-SORT</RelatedFlows>
+    </UC-014>
     <UC-003>
       <Actor>User</Actor>
       <Action>Смотрит на панель</Action>

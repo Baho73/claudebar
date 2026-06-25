@@ -28,6 +28,10 @@
     <risk-21 phase="Phase-14">Имя документа неоднозначно: два файла с одним basename в разных папках дают коллизию в карте basename-&gt;путь. Митигация — берём первый матч из Recent; ponytail-приемлемо, помечено в коде. Уточнение пути по hwnd/процессу отложено.</risk-21>
     <risk-22 phase="Phase-14">Документ не в Windows Recent (или .lnk указывает на удалённый файл) -&gt; путь не резолвится. Митигация — пункты «Скопировать ссылку»/«Открыть в проводнике» становятся MF_GRAYED, не падаем.</risk-22>
     <risk-23 phase="Phase-14">COM (IShellLinkW) на UI-потоке заморозил бы интерфейс. Митигация — резолв .lnk только в фоновом потоке (как Ф-C), UI читает готовую карту doc_paths; на UI-потоке только clipboard и explorer /select (COM не нужен).</risk-23>
+    <risk-24 phase="Phase-15">settings.json редакторов часто JSONC (комментарии, висячие запятые) — serde_json не распарсит. Митигация: ВСЕГДА бэкап перед правкой; пытаться parse, при неудаче — аккуратная текстовая вставка/замена ключа window.title или предупредить и НЕ трогать файл. Не портить конфиг пользователя.</risk-24>
+    <risk-25 phase="Phase-15">Ложный путь-токен: если заголовок содержит и полный путь активного файла (${activeEditorLong}), extract_project_path возьмёт не тот. Митигация: рекомендованный формат title без ${activeEditorLong}; брать путь-директорию (rootPath), не файл.</risk-25>
+    <risk-26 phase="Phase-15">${rootPath} в заголовке появляется только после включения; для Office/терминалов и ненастроенных редакторов пути нет. Митигация: extract_project_path -&gt; None -&gt; откат на basename (текущее поведение), грациозно.</risk-26>
+    <risk-27 phase="Phase-16">Windows не отдаёт время открытия окна -&gt; ordinal (first-seen) считается за сессию ClaudeBar и сбрасывается при его перезапуске. Принято: порядок recent приблизительный; старые окна по текущему порядку, новые падают вниз.</risk-27>
   </ArchitectureNotes>
 
   <DependencyRationale>
@@ -418,6 +422,25 @@
       <step-3>«Скопировать ссылку» -&gt; путь (папки или файла) в буфер (CF_UNICODETEXT). «Открыть в проводнике» -&gt; папка: ShellExecuteW open; файл: explorer.exe /select,"&lt;file&gt;"</step-3>
       <evidence>ПКМ по VS Code -&gt; ссылка = путь папки, проводник открыл папку; ПКМ по Word-доку -&gt; ссылка = путь файла, Explorer выделил файл; ПКМ по терминалу -&gt; пункты серые</evidence>
     </DF-OPENLOC>
+    <DF-PATHID NAME="Идентичность по полному пути" TRIGGER="Опрос окон (заголовок редактора)">
+      <step-1>M-WINENUM.extract_project_path(title) ищет path-токен (X:\... / UNC) -&gt; WinItem.path = Some(полный путь) либо None</step-1>
+      <step-2>Идентичность = path (если есть), иначе basename: M-CONFIG цвет/метка/№ ключуются путём; M-SIGNAL гасит по cwd==path; меню Phase-14 берёт папку/файл из path</step-2>
+      <evidence>D:\a\claudebar и E:\b\claudebar — разные цвета/метки, точечный звоночек, верный путь в меню</evidence>
+    </DF-PATHID>
+    <DF-PROJNUM NAME="Стабильная нумерация дублей" TRIGGER="Встречен новый полный путь">
+      <step-1>M-CONFIG: путь не в реестре -&gt; присвоить следующий свободный № для этого basename, записать (pn=), НИКОГДА не переназначать</step-1>
+      <step-2>M-RENDER: имя = basename, при наличии дублей basename -&gt; «basename (N)» (первый без числа)</step-2>
+      <evidence>«Проверка», «Проверка (2)»; после закрытия первого второй остаётся «(2)»</evidence>
+    </DF-PROJNUM>
+    <DF-SORT NAME="Порядок окон" TRIGGER="Построение строк">
+      <step-1>Ручной порядок (window_order) первичен. Окна без ручной позиции: по sort= (alpha=имя | recent=ordinal). Новое окно (нет ordinal/позиции) -&gt; вниз</step-1>
+      <step-2>M-MAIN метит каждый новый hwnd инкрементным ordinal (карта за сессию); M-RENDER/M-WINENUM применяют порядок</step-2>
+      <evidence>recent: только что открытое окно внизу секции; alpha: по алфавиту; ручной drag переживает оба</evidence>
+    </DF-SORT>
+    <DF-EDITORCFG NAME="Включение полных путей в заголовках" TRIGGER="⚙ -> пункт «Полные пути»">
+      <step-1>M-SETTINGS.configure_editor_titles: бэкап settings.json VS Code+Cursor, вставить/обновить window.title с ${rootPath} (идемпотентно)</step-1>
+      <evidence>После клика и перезапуска редактора заголовок содержит полный путь; повторный клик не дублирует; бэкап создан</evidence>
+    </DF-EDITORCFG>
   </DataFlow>
 
   <ImplementationOrder>
@@ -613,6 +636,38 @@
         <on-fail>grace-fix; откат коммитом</on-fail>
       </checkpoint>
     </Phase-14>
+
+    <Phase-15 name="Идентичность по полному пути + нумерация" status="pending">
+      <goal>Различать проекты по ПОЛНОМУ пути (из заголовка редактора с ${rootPath}), а не по basename; одноимённые дубли нумеровать стабильно «(N)». Чинит коллизию D-06. Утверждён пользователем (gg).</goal>
+      <step-1 module="M-WINENUM" status="pending" verification="V-M-WINENUM">extract_project_path(title) -&gt; Option&lt;String&gt;: поиск path-токена (Windows X:\... или UNC \\\\), не путать с именем файла; WinItem += path: Option&lt;String&gt;; match_windows заполняет path. Чистая, тест (путь/UNC/нет/Office-имя не путь)</step-1>
+      <step-2 module="M-CONFIG" status="pending" verification="V-M-CONFIG">Реестр путь-&gt;№ (ключ pn=&lt;path&gt;\t&lt;N&gt;): assign_number (первый свободный № для basename, persisted, не переназначать) + lookup; цвет/метка ключ = путь с fallback на basename (back-compat). Чистые, round-trip + стабильность</step-2>
+      <step-3 module="M-SIGNAL" status="pending" verification="V-M-SIGNAL">should_clear/reconcile матчат по полному cwd сигнала == window.path (fallback basename, если пути нет). Тест: одноимённые в разных путях гасятся точечно</step-3>
+      <step-4 module="M-RENDER" status="pending" verification="V-M-RENDER">Показ имени: basename + «(N)» при наличии дублей basename (первый без числа); цвет/метка читаются по пути</step-4>
+      <step-5 module="M-SETTINGS" status="pending" verification="V-M-SETTINGS">configure_editor_titles(): бэкап + вставка/обновление window.title с ${rootPath} в settings.json VS Code и Cursor; идемпотентно; JSONC-устойчивость (risk-24). Smoke</step-5>
+      <step-6 module="M-MAIN" status="pending" verification="V-M-MAIN">Склейка: WinItem.path в идентичность; пункт ⚙ «Полные пути в заголовках» -&gt; configure_editor_titles; меню Phase-14 берёт папку/файл из window.path, если есть</step-6>
+      <checkpoint>
+        <tests>cargo test зелёные (extract_project_path; реестр № round-trip+стабильность; cwd-матч; показ (N)); cargo build --release под GNU</tests>
+        <smoke>Включить полные пути (⚙), перезапустить редактор; два проекта с одним именем папки в разных путях -&gt; разные строки «name»/«name (2)», разные цвет/метка, звоночек точечно, меню Phase-14 копирует/открывает верный путь</smoke>
+        <flows>DF-PATHID, DF-PROJNUM, DF-EDITORCFG end-to-end</flows>
+        <artifacts>graph/plan/verification синхронны; grace lint=0</artifacts>
+        <on-fail>grace-fix; откат коммитом; settings.json не парсится -&gt; не трогать, предупредить</on-fail>
+      </checkpoint>
+    </Phase-15>
+
+    <Phase-16 name="Сортировка окон (alpha/recent)" status="pending">
+      <goal>Настройка порядка окон: alpha (по имени, как сейчас) или recent (позже открыто -&gt; ниже). Ручной drag-порядок важнее; новое окно по умолчанию вниз. Утверждён пользователем (gg).</goal>
+      <step-1 module="M-CONFIG" status="pending" verification="V-M-CONFIG">Ключ sort=alpha|recent (дефолт alpha); is/set + персист. Round-trip</step-1>
+      <step-2 module="M-MAIN" status="pending" verification="V-M-MAIN">Карта hwnd-&gt;ordinal (first-seen за сессию): новый hwnd получает следующий ordinal; для recent и «новое -&gt; вниз»</step-2>
+      <step-3 module="M-RENDER" status="pending" verification="V-M-RENDER">build_rows порядок: ручной (window_order) первичен; остальные по sort= (alpha=имя | recent=ordinal возр.); окно без позиции/ordinal -&gt; в конец секции</step-3>
+      <step-4 module="M-MAIN" status="pending" verification="V-M-MAIN">Пункт ⚙ переключатель сортировки (alpha/recent, checkable) -&gt; set + save + rebuild</step-4>
+      <checkpoint>
+        <tests>cargo test (порядок: manual&gt;mode, alpha vs recent, new-&gt;низ; sort= round-trip); cargo build --release</tests>
+        <smoke>Переключение recent/alpha в ⚙ меняет порядок; только что открытое окно внизу; ручной drag переживает оба; переживает перезапуск (sort= в ini)</smoke>
+        <flows>DF-SORT end-to-end</flows>
+        <artifacts>graph/plan/verification синхронны; grace lint=0</artifacts>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-16>
   </ImplementationOrder>
 
   <ExecutionPolicy>

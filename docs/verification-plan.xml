@@ -70,6 +70,8 @@
         <scenario-7 kind="regression">Вес шрифта не сохранялся -> панель всегда жирная (600), диалог не предзаполнял начертание. Фикс: font_weight (3-е поле font=), set_font(face,size,weight). Тест font_weight_persisted_and_honored (вкл. обратную совместимость 2-польного font=)</scenario-7>
         <scenario-8 kind="regression">После смены конфигурации мониторов сохранённая pos= оказывается вне виртуального экрана -> окно создаётся за экраном (видно лишь в панели задач). Фикс: visible_start_pos(saved, default, win_w/h, virtual screen rect) -> дефолт на первичном экране, если видимой площади &lt; MIN_VISIBLE; M-MAIN вызывает её с SM_*VIRTUALSCREEN при CreateWindow. Тест offscreen_pos_falls_back_to_default (за правым/левым/нижним краем -> дефолт; частично видимое и валидное -> сохраняется)</scenario-8>
         <scenario-9 kind="success">v0.5 Phase-12: конфиг поиска round-trip — search_db/search_cmd/search_port через ключи searchdb=/searchcmd=/searchport= (serialize -> parse сохраняет); без ключей -> дефолты (порт 8799, db оканчивается clfind.db, cmd содержит clfind). Тест search_config_roundtrip_and_defaults</scenario-9>
+        <scenario-10 kind="success">Phase-15: реестр путь-&gt;№ (pn=) round-trip + СТАБИЛЬНОСТЬ — assign_number для нового пути даёт первый свободный № среди одноимённых basename; повторный вызов для того же пути возвращает ТОТ ЖЕ №; закрытие «(1)» не меняет № у «(2)». Цвет/метка по полному пути с fallback на basename (старый конфиг по basename продолжает работать)</scenario-10>
+        <scenario-11 kind="success">Phase-16: sort=alpha|recent round-trip (set -> serialize -> parse); отсутствие ключа -> дефолт alpha</scenario-11>
       </scenarios>
     </V-M-CONFIG>
     <V-M-WINENUM MODULE="M-WINENUM" PRIORITY="high">
@@ -84,6 +86,7 @@
         <scenario-4 kind="success">v0.4: match_windows с предикатом класса — explorer.exe+CabinetWClass матчится в Проводник; explorer.exe с иным классом (Shell_TrayWnd) отбрасывается</scenario-4>
         <scenario-5 kind="success">v0.4: NameMode::Whole возвращает весь заголовок (папка "A - B" не режется по " - ")</scenario-5>
         <scenario-6 kind="success">v0.4: console_client по snapshot pid->parent классифицирует консоль: conhost с родителем cmd.exe -> cmd; с powershell.exe/pwsh.exe -> PowerShell; нет клиента -> None (окно не показывается)</scenario-6>
+        <scenario-7 kind="success">Phase-15: extract_project_path находит полный путь в заголовке — "claudebar — D:\Python\claudebar - Visual Studio Code" -> Some("D:\Python\claudebar"); UNC \\server\share\proj -> Some; заголовок без пути ("Doc.docx - Word") -> None; имя файла не принимается за путь. match_windows заполняет WinItem.path</scenario-7>
       </scenarios>
     </V-M-WINENUM>
     <V-M-ACTIVATE MODULE="M-ACTIVATE" PRIORITY="medium">
@@ -123,6 +126,7 @@
         <scenario-7 kind="regression">Перетаскивание было необнаружимо (хватать только за 24px ручку, режим невидим). Фикс: в reorder hit_test отдаёт DragHandle для всей строки секции/окна; шапка показывает подсказку режима. Тест hit_test_reorder_gives_drag_handle</scenario-7>
         <scenario-8 kind="success">v0.4 Phase-9: paint рисует глиф «⚙» в шапке слева от «✕» (ручной smoke); зона клика «⚙» открывает меню настроек</scenario-8>
         <scenario-9 kind="success">v0.5 Phase-12: folder_project (basename пути в lower), search_color_for (открытый проект среди совпадений -> цвет, иначе None), search_result_rows (закрытые совпадения -> SearchHeader + SearchResult, открытые исключены). Тесты folder_project_basename_lower, search_color_and_result_rows. Глиф «🔍» в шапке, цветная полоса совпавших строк, блок «Найдено ещё» — ручной smoke</scenario-9>
+        <scenario-10 kind="success">Phase-15/16: display_name даёт «basename» для одиночного проекта и «basename (N)» при дублях basename (первый без числа, № из реестра); build_rows порядок — ручной первичен, остальные по sort= (alpha=имя | recent=ordinal возр.), окно без позиции/ordinal в конец секции. Тесты display_name_numbers_duplicates, build_rows_order_modes</scenario-10>
       </scenarios>
     </V-M-RENDER>
     <V-M-SIGNAL MODULE="M-SIGNAL" PRIORITY="high">
@@ -136,6 +140,7 @@
         <scenario-3 kind="success">bell_keys содержит имя проекта при наличии активного .signal</scenario-3>
         <scenario-4 kind="success">reconcile удаляет .signal, чьё окно проекта сейчас foreground; иначе сохраняет</scenario-4>
         <scenario-5 kind="failure">Папка signals отсутствует -> пустой набор, без паники</scenario-5>
+        <scenario-6 kind="success">Phase-15: should_clear гасит по полному cwd == путь окна в фокусе. Два одноимённых проекта (D:\a\claudebar, E:\b\claudebar): фокус на одном гасит ТОЛЬКО его сигнал, второй остаётся. Fallback на basename, если у окна нет пути. Тест should_clear_by_full_path</scenario-6>
       </scenarios>
     </V-M-SIGNAL>
     <V-M-ICON MODULE="M-ICON" PRIORITY="low">
@@ -163,6 +168,7 @@
         <scenario-3 kind="failure">Отмена диалога -> None; конфиг не меняется</scenario-3>
         <scenario-4 kind="regression">Диалог не предзаполнял текущий шрифт (пустой/жирный по умолчанию): lf.lfWeight хардкодился 400, флаги избыточны. Фикс: choose_font(parent,face,size,weight) предзаполняет lf.lfWeight текущим и возвращает (face,size,weight); флаги CF_SCREENFONTS|CF_INITTOLOGFONTSTRUCT (ручной smoke)</scenario-4>
         <scenario-5 kind="success">v0.4.1 Phase-11: about_text(version) содержит «ClaudeBar v{version}», TELEGRAM (@IvanPonomarev) и GITHUB_URL (тест about_text_has_version_and_contacts); show_about открывает MessageBox из меню «⚙» -> «О программе…» (ручной smoke)</scenario-5>
+        <scenario-6 kind="success">Phase-15: configure_editor_titles делает бэкап settings.json VS Code+Cursor, вставляет/обновляет window.title с ${rootPath} идемпотентно (повторный вызов не дублирует); settings.json не парсится (JSONC) -> не портит, предупреждает (risk-24). Smoke + чистый тест на вставку ключа в валидный JSON</scenario-6>
       </scenarios>
     </V-M-SETTINGS>
     <V-M-MAIN MODULE="M-MAIN" PRIORITY="medium">
@@ -179,7 +185,7 @@
         <scenario-6 kind="success">Phase-13 Ф-C: меню «Искать в файлах» включает scope -> spawn_files_index (COM-резолв .lnk из Recent в фоновом потоке с CoInitializeEx, ensure_files_index) -> поиск через search_bm25 находит и в файлах; выключение возвращает только чаты</scenario-6>
         <scenario-7 kind="regression">ПКМ по строке окна / клик «⚙»: контекстное меню (TrackPopupMenu, модальный цикл) НЕ закрывается само через ~0.5с и тултип не всплывает поверх. Механизм: флаг MENU_ACTIVE выставлен вокруг TrackPopupMenu; WM_TIMER при нём ничего не делает (ни show_tooltip по dwell ~0.5с, ни refresh/resize по ~1с — любой из них закрывал меню). KillTimer ненадёжен: не удаляет уже синтезированное WM_TIMER из очереди. Smoke: правый клик, подержать без движения мыши &gt;1с — меню остаётся, тултипа нет</scenario-7>
         <scenario-8 kind="success">Phase-14: ПКМ по VS Code/Cursor -> «Скопировать ссылку» кладёт путь папки проекта в буфер, «Открыть в проводнике» открывает папку. ПКМ по Word/Excel/MS Project -> «ссылка» = полный путь файла, «проводник» = Explorer с выделением файла (/select). ПКМ по терминалу/Проводнику или нерезолвимому пути -> оба пункта MF_GRAYED. doc_paths И кэш папок проектов (PROJ_FOLDERS/project_folders) строятся в фоне; ПКМ матчит по basename в памяти — D-02: синхронного открытия SQLite на UI-потоке при правом клике больше нет. D-03: copy_to_clipboard освобождает hmem (GlobalFree) во всех путях отказа (GlobalLock null, OpenClipboard fail, SetClipboardData err); владение буферу переходит только при успешном SetClipboardData — утечки нет</scenario-8>
-      </scenarios>
+        <scenario-9 kind="success">Phase-15/16: WinItem.path участвует в идентичности (цвет/метка/звоночек/меню по полному пути); пункт ⚙ «Полные пути в заголовках» -> configure_editor_titles; карта hwnd->ordinal метит новые окна (сортировка recent, «новое -> вниз»); переключатель ⚙ alpha/recent -> set+save+rebuild. Smoke: два одноимённых проекта различимы; recent кладёт новое окно вниз</scenario-9>
     </V-M-MAIN>
     <V-M-SEARCH MODULE="M-SEARCH" PRIORITY="high">
       <test-files><file>src/search.rs (#[cfg(test)])</file></test-files>

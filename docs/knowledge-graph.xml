@@ -8,7 +8,7 @@
          часть логики уже существует внутри main.rs и будет вынесена при рефакторе (Phase-1). -->
 
     <M-MAIN NAME="Main" TYPE="ENTRY_POINT" STATUS="partial">
-      <purpose>Точка входа: GetModuleHandle, регистрация класса, создание topmost-окна, таймер опроса, message loop, диспетчеризация в обработчики. v0.3: опрос M-SIGNAL (bell_keys + reconcile) на тике, проброс bell в paint, зоны клика и режим reorder. v0.4: шрифт панели читается из конфига (make_font(face,…)); «⚙» в шапке открывает меню настроек → M-SETTINGS.choose_font → rebuild_fonts + repaint. v0.5 (Phase-14): в меню окна «Скопировать ссылку»/«Открыть в проводнике» — путь проекта (M-SEARCH.folder_for_project) или документа (фоновая карта doc_paths из Recent .lnk).</purpose>
+      <purpose>Точка входа: GetModuleHandle, регистрация класса, создание topmost-окна, таймер опроса, message loop, диспетчеризация в обработчики. v0.3: опрос M-SIGNAL (bell_keys + reconcile) на тике, проброс bell в paint, зоны клика и режим reorder. v0.4: шрифт панели читается из конфига (make_font(face,…)); «⚙» в шапке открывает меню настроек → M-SETTINGS.choose_font → rebuild_fonts + repaint. v0.5 (Phase-14): в меню окна «Скопировать ссылку»/«Открыть в проводнике» — путь проекта (M-SEARCH.folder_for_project) или документа (фоновая карта doc_paths из Recent .lnk). Phase-15/16: идентичность проекта по полному пути из заголовка (extract_project_path) + нумерация дублей «(N)»; пункт ⚙ «Полные пути» (configure_editor_titles); настройка порядка окон sort=alpha|recent с картой ordinal первого появления.</purpose>
       <path>src/main.rs</path>
       <depends>M-CONFIG, M-WINENUM, M-RENDER, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX</depends>
       <verification-ref>V-M-MAIN</verification-ref>
@@ -17,6 +17,7 @@
         <fn-wndproc PURPOSE="Оконная процедура: WM_PAINT/TIMER/мышь/команды меню; зоны Close/RecentMore/DragHandle, режим reorder по ПКМ, «⚙» в шапке → меню настроек" />
         <fn-show_menu PURPOSE="Меню окна по ПКМ: цвет/метка + «Скопировать ссылку»/«Открыть в проводнике» (серые если путь не резолвится); гасит dwell-таймер тултипа перед TrackPopupMenu — Phase-14" />
         <fn-spawn_doc_paths PURPOSE="Фоновый COM-поток: карта basename->путь документов (Recent .lnk) + кэш папок проектов (search::project_folders) для меню — Phase-14; D-02: DB-скан в фоне, не на UI" />
+        <fn-window_ordinal PURPOSE="Карта hwnd->ordinal (first-seen за сессию) для сортировки recent и «новое окно вниз» — Phase-16" />
         <fn-make_font PURPOSE="Создать HFONT из имени гарнитуры (конфиг) + высоты/насыщенности — v0.4" />
         <fn-create_window PURPOSE="Стартовая позиция через config::visible_start_pos с метриками SM_*VIRTUALSCREEN — не создавать окно за пределами видимых мониторов" />
         <fn-rebuild_fonts PURPOSE="Пересоздать font_main/font_small после смены шрифта в настройках (удалить старые HFONT) — v0.4" />
@@ -35,8 +36,9 @@
         <fn-process_snapshot PURPOSE="CreateToolhelp32Snapshot -> карта pid -> (имя exe, parent pid); строится раз на опрос — v0.4" />
         <fn-console_client PURPOSE="Разрешить shell-клиента консоли (cmd/powershell/pwsh) по pid окна через conhost (self/parent/child) — v0.4" />
         <fn-extract_name PURPOSE="Имя проекта/документа из заголовка по AppDef (вкл. NameMode::Whole)" />
-        <fn-match_windows PURPOSE="Сопоставление окно↔AppDef по предикату (процесс ∈ proc∪proc_alts) И (class отсутствует ИЛИ совпал)" />
-        <type-WinItem PURPOSE="Окно: hwnd, ключ приложения, имя проекта/документа, заголовок" />
+        <fn-match_windows PURPOSE="Сопоставление окно↔AppDef по предикату (процесс ∈ proc∪proc_alts) И (class отсутствует ИЛИ совпал); заполняет WinItem.path — Phase-15" />
+        <fn-extract_project_path PURPOSE="Чистое: полный путь проекта из заголовка (path-токен X:\... / UNC), иначе None — идентичность по пути; Phase-15" />
+        <type-WinItem PURPOSE="Окно: hwnd, ключ приложения, имя проекта/документа, заголовок, path: Option (полный путь из заголовка) — Phase-15" />
       </annotations>
     </M-WINENUM>
 
@@ -54,7 +56,10 @@
         <fn-visible_start_pos PURPOSE="Чистое: стартовая позиция окна с учётом мониторов — saved, если видно на виртуальном экране, иначе default (фикс «окно за экраном» после смены мониторов)" />
         <fn-search PURPOSE="search_db/search_cmd/search_port: конфиг поиска по чатам (ключи searchdb=/searchcmd=/searchport=) для M-SEARCH/M-SDAEMON — Phase-12" />
         <fn-default_apps PURPOSE="Встроенный набор: редакторы, Office + Windows Terminal, cmd, PowerShell, Git Bash, Проводник — v0.4" />
-        <type-Config PURPOSE="Корень конфигурации: apps, проекты, секции, недавние, порядок, позиция, шрифт" />
+        <fn-project_number PURPOSE="Реестр полный путь -> стабильный № (ключ pn=); assign (первый свободный для basename, persisted, не переназначать) + lookup — Phase-15" />
+        <fn-color_label_by_path PURPOSE="Цвет/метка ключуются полным путём проекта с fallback на basename (back-compat) — Phase-15" />
+        <fn-sort_mode PURPOSE="Режим порядка окон sort=alpha|recent (is/set, ключ sort=, деф. alpha) — Phase-16" />
+        <type-Config PURPOSE="Корень конфигурации: apps, проекты, секции, недавние, порядок, позиция, шрифт, реестр номеров путей, sort" />
         <type-AppDef PURPOSE="Определение приложения: proc + proc_alts, class (фильтр окна), имя блока, NameMode, расширения" />
         <type-NameMode PURPOSE="Извлечение имени: Project{suffix} | Document | DocumentLast | Whole — v0.4" />
         <type-ProjConf PURPOSE="Настройки проекта: индекс цвета, метка" />
@@ -68,7 +73,8 @@
       <depends>M-CONFIG, M-WINENUM, M-ACTIVATE, M-RECENT, M-ICON</depends>
       <verification-ref>V-M-RENDER</verification-ref>
       <annotations>
-        <fn-build_rows PURPOSE="Сгруппировать окна и недавние в строки по секциям с учётом ручного порядка и showall (Row::RecentMore при &gt;6)" />
+        <fn-build_rows PURPOSE="Сгруппировать окна и недавние в строки по секциям: ручной порядок первичен, остальные по sort= (alpha=имя | recent=ordinal), новое окно -> вниз; showall (Row::RecentMore при &gt;6) — Phase-16" />
+        <fn-display_name PURPOSE="Имя строки окна: basename + «(N)» при дублях basename (стабильный № из M-CONFIG); цвет/метка по пути — Phase-15" />
         <fn-paint PURPOSE="Отрисовать строки (GDI, двойной буфер): иконки, ✕, ручки drag, подсветка bell и перетаскивания" />
         <fn-hit_test PURPOSE="Определить строку и зону (Body|Close|DragHandle) по координатам клика и режиму reorder" />
         <fn-section_of_row PURPOSE="Индекс приложения секции, к которой относится строка" />
@@ -115,8 +121,8 @@
         <fn-reconcile PURPOSE="Удалить .signal, чьё окно проекта сейчас foreground (сброс по фокусу)" />
         <fn-signal_dir PURPOSE="Путь к папке сигналов (создать при отсутствии)" />
         <fn-parse_signal PURPOSE="Извлечь cwd проекта из содержимого .signal" />
-        <fn-project_key PURPOSE="basename(cwd) в нижнем регистре — ключ сопоставления со строкой окна" />
-        <fn-should_clear PURPOSE="Чистое: сигнал гасится, если его ключ == ключ окна в фокусе" />
+        <fn-project_key PURPOSE="basename(cwd) в нижнем регистре — ключ сопоставления со строкой окна (fallback при отсутствии пути)" />
+        <fn-should_clear PURPOSE="Чистое: сигнал гасится, если его cwd == путь окна в фокусе (точечно по полному пути; fallback basename) — Phase-15" />
         <type-Signal PURPOSE="Активный сигнал: путь файла, ключ проекта" />
       </annotations>
     </M-SIGNAL>
@@ -142,6 +148,7 @@
         <fn-parse_face PURPOSE="Чистое: lfFaceName (UTF-16, null-terminated) -> String (тестируемо)" />
         <fn-about_text PURPOSE="Чистое: текст окна «О программе» из версии + TELEGRAM/GITHUB_URL (тестируемо) — v0.4.1" />
         <fn-show_about PURPOSE="Модальный MessageBox «О программе»: версия (CARGO_PKG_VERSION), Telegram, GitHub — v0.4.1" />
+        <fn-configure_editor_titles PURPOSE="Записать window.title с ${rootPath} в settings.json VS Code+Cursor (бэкап, идемпотентно, JSONC-устойчиво) — Phase-15" />
       </annotations>
     </M-SETTINGS>
 
