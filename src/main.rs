@@ -73,6 +73,7 @@ const ID_SET_FONT: usize = 30; // меню настроек: выбрать шр
 const ID_ABOUT: usize = 31; // меню настроек: о программе
 const ID_TOGGLE_FILES: usize = 32; // меню настроек: искать и в файлах (history)
 const ID_FULLPATHS: usize = 33; // меню настроек: включить полные пути в заголовках редакторов (Phase-15)
+const ID_SORT: usize = 34; // меню настроек: сортировка окон по времени (recent) vs по имени (alpha) — Phase-16
 const ID_SEARCH: usize = 40; // EDIT-поле поиска в шапке (WM_COMMAND EN_CHANGE)
 const SEARCH_MIN: usize = 3; // живой BM25 начинается с N символов
 const WM_APP_SEARCH: u32 = WM_APP + 1; // dense-результаты из фонового потока
@@ -1486,6 +1487,9 @@ unsafe fn show_settings_menu(hwnd: HWND) {
     let fflag = if files_on { MF_STRING | MF_CHECKED } else { MF_STRING };
     let _ = AppendMenuW(menu, fflag, ID_TOGGLE_FILES, w!("Искать в файлах (history)"));
     let _ = AppendMenuW(menu, MF_STRING, ID_FULLPATHS, w!("Полные пути в заголовках редакторов"));
+    let recent_on = APP.with(|c| c.borrow().as_ref().map(|a| a.config.is_sort_recent()).unwrap_or(false));
+    let sflag = if recent_on { MF_STRING | MF_CHECKED } else { MF_STRING };
+    let _ = AppendMenuW(menu, sflag, ID_SORT, w!("Сортировка по времени (новые внизу)"));
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
     let _ = AppendMenuW(menu, MF_STRING, ID_ABOUT, w!("О программе…"));
     let mut pt = POINT::default();
@@ -1541,6 +1545,21 @@ fn handle_command(hwnd: HWND, id: usize) {
         let wmsg: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
         unsafe {
             MessageBoxW(hwnd, PCWSTR(wmsg.as_ptr()), w!("Полные пути"), MB_OK | MB_ICONINFORMATION);
+        }
+        return;
+    }
+    // настройки: переключить сортировку окон (alpha <-> recent)
+    if id == ID_SORT {
+        APP.with(|c| {
+            if let Some(a) = c.borrow_mut().as_mut() {
+                let v = !a.config.is_sort_recent();
+                a.config.set_sort_recent(v);
+                a.config.save(hwnd);
+                rebuild_rows(a);
+            }
+        });
+        unsafe {
+            let _ = InvalidateRect(hwnd, None, BOOL(0));
         }
         return;
     }

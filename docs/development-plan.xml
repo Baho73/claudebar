@@ -654,12 +654,12 @@
       </checkpoint>
     </Phase-15>
 
-    <Phase-16 name="Сортировка окон (alpha/recent)" status="pending">
+    <Phase-16 name="Сортировка окон (alpha/recent)" status="done">
       <goal>Настройка порядка окон: alpha (по имени, как сейчас) или recent (позже открыто -&gt; ниже). Ручной drag-порядок важнее; новое окно по умолчанию вниз. Утверждён пользователем (gg).</goal>
       <step-1 module="M-CONFIG" status="done" verification="V-M-CONFIG">Ключ sort=alpha|recent (дефолт alpha); sort_recent + is_sort_recent/set_sort_recent + персист. Тест sort_mode_roundtrip</step-1>
       <step-2 module="M-MAIN" status="done" verification="V-M-MAIN">ORDINALS (Mutex&lt;BTreeMap hwnd-&gt;u64&gt;) + window_ordinal: новый hwnd получает следующий ordinal; refresh_items проставляет WinItem.ordinal. Для recent и «новое -&gt; вниз»</step-2>
       <step-3 module="M-RENDER" status="done" verification="V-M-RENDER">build_rows: ручной (window_rank) первичен; (None,None) -&gt; recent: ordinal возр. (позже -&gt; ниже), alpha: имя. Тест build_rows_order_modes</step-3>
-      <step-4 module="M-MAIN" status="pending" verification="V-M-MAIN">Пункт ⚙ переключатель сортировки (alpha/recent, checkable) -&gt; set + save + rebuild</step-4>
+      <step-4 module="M-MAIN" status="done" verification="V-M-MAIN">Пункт ⚙ «Сортировка по времени (новые внизу)» (checkable, ID_SORT) -&gt; set_sort_recent + save + rebuild_rows + repaint</step-4>
       <checkpoint>
         <tests>cargo test (порядок: manual&gt;mode, alpha vs recent, new-&gt;низ; sort= round-trip); cargo build --release</tests>
         <smoke>Переключение recent/alpha в ⚙ меняет порядок; только что открытое окно внизу; ручной drag переживает оба; переживает перезапуск (sort= в ini)</smoke>
