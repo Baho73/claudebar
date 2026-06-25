@@ -1,27 +1,29 @@
 // FILE: src/signal.rs
-// VERSION: 1.0.0
+// VERSION: 1.1.0
 // START_MODULE_CONTRACT
-//   PURPOSE: «Звоночек» завершения ИИ: читать файлы-сигналы из %APPDATA%\claudebar\signals\, отдавать имена проектов для подсветки, гасить сигнал при фокусе окна проекта.
-//   SCOPE: путь папки сигналов, парсинг .signal (cwd проекта), ключ проекта (basename), набор «звенящих» ключей, сброс по фокусу.
-//   DEPENDS: M-WINENUM (сопоставление сигнала с открытым окном по имени проекта)
+//   PURPOSE: «Звоночек» завершения ИИ: читать файлы-сигналы из %APPDATA%\claudebar\signals\, отдавать проекты для подсветки, гасить сигнал при фокусе окна проекта.
+//   SCOPE: путь папки сигналов, парсинг .signal (cwd проекта), ключ проекта (basename) + полный cwd, наборы «звенящих» (basename и cwd), сброс по фокусу с матчем по полному пути.
+//   DEPENDS: M-WINENUM (сопоставление сигнала с открытым окном по полному пути WinItem.path, иначе по basename)
 //   LINKS: M-SIGNAL
 //   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS
 // END_MODULE_CONTRACT
 //
 // START_MODULE_MAP
-//   Signal            - активный сигнал: путь файла, ключ проекта (lower)
+//   Signal            - активный сигнал: путь файла, ключ проекта (basename, lower), полный cwd (lower)
 //   signal_dir        - путь к %APPDATA%\claudebar\signals (создаётся при отсутствии)
 //   parse_signal      - извлечь cwd проекта из содержимого .signal
-//   project_key       - basename(cwd) в нижнем регистре — ключ сопоставления со строкой окна
-//   should_clear      - чистое: сигнал гасится, если его ключ == ключ окна в фокусе
+//   project_key       - basename(cwd) в нижнем регистре — fallback-ключ сопоставления
+//   should_clear      - чистое: сигнал гасится, если окно в фокусе — этот проект (по полному пути, иначе basename)
 //   list_signals      - прочитать активные сигналы из папки
-//   bell_keys         - множество «звенящих» ключей проектов для paint
-//   reconcile         - удалить .signal, чьё окно проекта сейчас foreground
+//   bell_keys         - множество «звенящих» basename-ключей для paint (fallback)
+//   bell_cwds         - множество полных cwd активных сигналов — точная подсветка по пути (Phase-15)
+//   reconcile         - удалить .signal, чьё окно проекта сейчас foreground (по полному пути)
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.0.0 - Phase-4 Step 1: модуль сигналов «звоночка» (файловый IPC из Claude Code).
+//   LAST_CHANGE: v1.1.0 - Phase-15 step-3: матч звоночка по полному cwd == WinItem.path (fallback basename); чинит коллизию одноимённых (D-06). Signal += cwd; should_clear(sig_cwd,sig_key,fg_path,fg_key); bell_cwds.
+//   v1.0.0 - Phase-4 Step 1: модуль сигналов «звоночка» (файловый IPC из Claude Code).
 // END_CHANGE_SUMMARY
 
 use std::collections::HashSet;
@@ -33,7 +35,8 @@ use crate::win_enum::WinItem;
 
 pub struct Signal {
     pub path: PathBuf,
-    pub key: String, // имя проекта (lower) = basename(cwd)
+    pub key: String, // имя проекта (lower) = basename(cwd) — fallback-матч
+    pub cwd: String, // полный cwd проекта (lower) — точный матч по пути (Phase-15)
 }
 
 // START_CONTRACT: signal_dir
@@ -84,13 +87,16 @@ pub fn project_key(cwd: &str) -> String {
 }
 
 // START_CONTRACT: should_clear
-//   PURPOSE: Решить, гасить ли сигнал: его ключ совпал с ключом окна в фокусе.
-//   INPUTS: { signal_key: &str; fg_key: Option<&str> - ключ проекта окна в фокусе }
+//   PURPOSE: Решить, гасить ли сигнал: окно в фокусе — этот проект. По полному пути (точно), иначе по basename.
+//   INPUTS: { sig_cwd: &str - полный cwd сигнала (lower); sig_key: &str - basename (lower); fg_path: Option<&str> - путь окна в фокусе; fg_key: &str - basename имени окна (lower) }
 //   OUTPUTS: { bool }
 //   SIDE_EFFECTS: none
 // END_CONTRACT: should_clear
-pub fn should_clear(signal_key: &str, fg_key: Option<&str>) -> bool {
-    fg_key == Some(signal_key)
+pub fn should_clear(sig_cwd: &str, sig_key: &str, fg_path: Option<&str>, fg_key: &str) -> bool {
+    match fg_path {
+        Some(p) => p.eq_ignore_ascii_case(sig_cwd), // точный матч по полному пути (Phase-15)
+        None => fg_key == sig_key,                  // окно без пути -> fallback на basename
+    }
 }
 
 // START_CONTRACT: list_signals
@@ -124,7 +130,7 @@ pub fn list_signals() -> Vec<Signal> {
             if key.is_empty() {
                 continue;
             }
-            out.push(Signal { path: p, key });
+            out.push(Signal { path: p, key, cwd: cwd.to_lowercase() });
         }
     }
     // END_BLOCK_SCAN_SIGNALS
@@ -141,6 +147,16 @@ pub fn bell_keys() -> HashSet<String> {
     list_signals().into_iter().map(|s| s.key).collect()
 }
 
+// START_CONTRACT: bell_cwds
+//   PURPOSE: Множество полных cwd (lower) активных сигналов — для точной подсветки окна по пути (Phase-15).
+//   INPUTS: {}
+//   OUTPUTS: { HashSet<String> - cwd проектов (lower) с активным сигналом }
+//   SIDE_EFFECTS: чтение каталога signals
+// END_CONTRACT: bell_cwds
+pub fn bell_cwds() -> HashSet<String> {
+    list_signals().into_iter().map(|s| s.cwd).collect()
+}
+
 // START_CONTRACT: reconcile
 //   PURPOSE: Удалить .signal, чьё окно проекта сейчас на переднем плане (сброс по фокусу).
 //   INPUTS: { items: &[WinItem] - открытые окна; fg: HWND - окно в фокусе }
@@ -148,11 +164,12 @@ pub fn bell_keys() -> HashSet<String> {
 //   SIDE_EFFECTS: удаляет файлы-сигналы
 // END_CONTRACT: reconcile
 pub fn reconcile(items: &[WinItem], fg: HWND) {
-    let fg_key = items.iter().find(|it| it.hwnd == fg).map(|it| it.name.to_lowercase());
-    let Some(fg_key) = fg_key else { return };
+    let Some(fgw) = items.iter().find(|it| it.hwnd == fg) else { return };
+    let fg_path = fgw.path.as_deref();
+    let fg_key = fgw.name.to_lowercase();
     // START_BLOCK_CLEAR_FOCUSED
     for s in list_signals() {
-        if should_clear(&s.key, Some(fg_key.as_str())) {
+        if should_clear(&s.cwd, &s.key, fg_path, &fg_key) {
             let _ = std::fs::remove_file(&s.path);
         }
     }
@@ -179,9 +196,12 @@ mod tests {
     }
 
     #[test]
-    fn should_clear_only_on_exact_fg_key() {
-        assert!(should_clear("proj", Some("proj")));
-        assert!(!should_clear("proj", Some("other")));
-        assert!(!should_clear("proj", None));
+    fn should_clear_by_full_path() {
+        // точный матч по полному пути: одноимённые в разных путях НЕ путаются
+        assert!(should_clear("d:\\a\\claudebar", "claudebar", Some("D:\\a\\claudebar"), "claudebar")); // регистронезависимо
+        assert!(!should_clear("d:\\a\\claudebar", "claudebar", Some("E:\\b\\claudebar"), "claudebar")); // другой путь -> НЕ гасит
+        // окно без пути -> fallback на basename
+        assert!(should_clear("d:\\a\\claudebar", "claudebar", None, "claudebar"));
+        assert!(!should_clear("d:\\a\\claudebar", "claudebar", None, "other"));
     }
 }
