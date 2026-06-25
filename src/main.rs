@@ -1294,14 +1294,20 @@ unsafe fn copy_to_clipboard(hwnd: HWND, text: &str) {
     };
     let dst = GlobalLock(hmem);
     if dst.is_null() {
-        return; // ponytail: редкий отказ lock -> терпимая утечка hmem
+        let _ = GlobalFree(hmem); // владение буферу не передано -> освобождаем (D-03)
+        return;
     }
     std::ptr::copy_nonoverlapping(wide.as_ptr(), dst as *mut u16, wide.len());
     let _ = GlobalUnlock(hmem);
     if OpenClipboard(hwnd).is_ok() {
         let _ = EmptyClipboard();
-        let _ = SetClipboardData(CF_UNICODETEXT, HANDLE(hmem.0)); // успех -> hmem владеет буфер
+        // владение hmem уходит буферу ТОЛЬКО при успешном SetClipboardData; иначе освобождаем (D-03)
+        if SetClipboardData(CF_UNICODETEXT, HANDLE(hmem.0)).is_err() {
+            let _ = GlobalFree(hmem);
+        }
         let _ = CloseClipboard();
+    } else {
+        let _ = GlobalFree(hmem); // буфер обмена не открылся -> hmem ничей (D-03)
     }
 }
 
