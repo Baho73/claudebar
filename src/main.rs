@@ -65,6 +65,10 @@ const ID_LABEL_CLEAR: usize = 21;
 const ID_COPY_LINK: usize = 22; // меню окна: скопировать путь (Phase-14)
 const ID_OPEN_DIR: usize = 23; // меню окна: открыть в проводнике (Phase-14)
 const CF_UNICODETEXT: u32 = 13; // формат буфера обмена Win32 (clipboard CF_UNICODETEXT)
+
+// Пока открыто контекстное меню (модальный TrackPopupMenu) — WM_TIMER не трогает окно/тултип,
+// иначе любой тик (dwell-тултип ~0.5с или общий refresh ~1с) закрывает меню. Phase-14 fix.
+static MENU_ACTIVE: AtomicBool = AtomicBool::new(false);
 const ID_SET_FONT: usize = 30; // меню настроек: выбрать шрифт
 const ID_ABOUT: usize = 31; // меню настроек: о программе
 const ID_TOGGLE_FILES: usize = 32; // меню настроек: искать и в файлах (history)
@@ -301,6 +305,11 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
     unsafe {
         match msg {
             WM_TIMER => {
+                if MENU_ACTIVE.load(Ordering::Relaxed) {
+                    // контекстное меню открыто: не показываем тултип и не перерисовываем,
+                    // иначе модальный TrackPopupMenu закрывается на первом же тике
+                    return LRESULT(0);
+                }
                 if wp.0 == ID_TIP_TIMER {
                     let _ = KillTimer(hwnd, ID_TIP_TIMER);
                     show_tooltip(hwnd);
@@ -1385,6 +1394,12 @@ fn menu_link_for(a: &App, wi: usize) -> Option<(String, bool)> {
 
 unsafe fn show_menu(hwnd: HWND) {
     let menu = CreatePopupMenu().unwrap_or_default();
+    // Phase-14: ссылка/проводник — в начале меню (до палитры); серые, если путь не резолвится
+    let has_link = APP.with(|c| c.borrow().as_ref().map(|a| a.menu_link.is_some()).unwrap_or(false));
+    let lflag = if has_link { MF_STRING } else { MF_STRING | MF_GRAYED };
+    let _ = AppendMenuW(menu, lflag, ID_COPY_LINK, w!("Скопировать ссылку"));
+    let _ = AppendMenuW(menu, lflag, ID_OPEN_DIR, w!("Открыть в проводнике"));
+    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
     for (i, p) in PALETTE.iter().enumerate() {
         let name: Vec<u16> = p.0.encode_utf16().chain(std::iter::once(0)).collect();
         let _ = AppendMenuW(menu, MF_STRING, ID_COLOR_BASE + i, PCWSTR(name.as_ptr()));
@@ -1392,19 +1407,15 @@ unsafe fn show_menu(hwnd: HWND) {
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
     let _ = AppendMenuW(menu, MF_STRING, ID_LABEL, w!("Метка…"));
     let _ = AppendMenuW(menu, MF_STRING, ID_LABEL_CLEAR, w!("Убрать метку"));
-    // Phase-14: ссылка/проводник; серые, если путь не резолвится (терминал, нет в индексе/Recent)
-    let has_link = APP.with(|c| c.borrow().as_ref().map(|a| a.menu_link.is_some()).unwrap_or(false));
-    let lflag = if has_link { MF_STRING } else { MF_STRING | MF_GRAYED };
-    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
-    let _ = AppendMenuW(menu, lflag, ID_COPY_LINK, w!("Скопировать ссылку"));
-    let _ = AppendMenuW(menu, lflag, ID_OPEN_DIR, w!("Открыть в проводнике"));
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
-    // меню модальное: гасим dwell-таймер и прячем тултип, иначе он всплывёт поверх меню
-    let _ = KillTimer(hwnd, ID_TIP_TIMER);
+    // меню модальное: на время прячем тултип и глушим тики таймера (иначе меню закроется)
     hide_tooltip(hwnd);
+    let _ = KillTimer(hwnd, ID_TIP_TIMER);
+    MENU_ACTIVE.store(true, Ordering::Relaxed);
     let _ = SetForegroundWindow(hwnd);
     let _ = TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, None);
+    MENU_ACTIVE.store(false, Ordering::Relaxed);
     let _ = DestroyMenu(menu);
 }
 
@@ -1419,11 +1430,13 @@ unsafe fn show_settings_menu(hwnd: HWND) {
     let _ = AppendMenuW(menu, MF_STRING, ID_ABOUT, w!("О программе…"));
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
-    // меню модальное: гасим dwell-таймер и прячем тултип, иначе он всплывёт поверх меню
-    let _ = KillTimer(hwnd, ID_TIP_TIMER);
+    // меню модальное: на время прячем тултип и глушим тики таймера (иначе меню закроется)
     hide_tooltip(hwnd);
+    let _ = KillTimer(hwnd, ID_TIP_TIMER);
+    MENU_ACTIVE.store(true, Ordering::Relaxed);
     let _ = SetForegroundWindow(hwnd);
     let _ = TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, None);
+    MENU_ACTIVE.store(false, Ordering::Relaxed);
     let _ = DestroyMenu(menu);
 }
 
