@@ -322,6 +322,17 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 };
                 let disp = display_name(&it.name, it.path.as_deref().and_then(|p| app.config.number_for(p)));
                 dt(mem, &disp, RECT { left: 42, top, right: name_right, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+                // индикатор работы: бегущие точки по низу строки, где Claude сейчас занят (Phase-17)
+                let busy = match it.path.as_deref() {
+                    Some(p) => app.busy_paths.contains(&p.to_lowercase()),
+                    None => app.busy.contains(&it.name.to_lowercase()),
+                };
+                if busy {
+                    SelectObject(mem, app.font_small);
+                    SetTextColor(mem, rgb(C_BELL_BAR.0, C_BELL_BAR.1, C_BELL_BAR.2));
+                    dt(mem, dots_for_frame(app.anim_frame), RECT { left: 44, top, right: 120, bottom: top + ROW - 1 }, DT_SINGLELINE | DT_BOTTOM | DT_LEFT | DT_NOPREFIX);
+                    SelectObject(mem, app.font_main); // вернуть основной шрифт
+                }
                 if app.reorder {
                     draw_handle(mem, w - 18, top);
                 } else if hovered {

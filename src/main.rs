@@ -48,6 +48,8 @@ const EM_SETSEL: u32 = 0x00B1;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 const ID_TIP_TIMER: usize = 3; // dwell-таймер подсказки (~0.5с)
 const TIP_DELAY: u32 = 500; // мс выдержки перед показом подсказки
+const ID_ANIM_TIMER: usize = 4; // таймер анимации бегущих точек busy (Phase-17)
+const ANIM_MS: u32 = 350; // мс между кадрами анимации точек
 const TIP_SEARCHBOX: i32 = -2; // tip_row: курсор над строкой поиска -> правила
 const C_TIP_BG: u32 = 0x00E1FFFF; // фон подсказки (инфо-жёлтый, RGB 255,255,225)
 const C_TIP_TXT: u32 = 0x00202020; // тёмный текст подсказки
@@ -112,6 +114,9 @@ pub(crate) struct App {
     pub(crate) last_h: i32,
     pub(crate) bell: HashSet<String>, // имена проектов со «звоночком» (lower) — подсветка строк (fallback)
     pub(crate) bell_paths: HashSet<String>, // полные cwd со «звоночком» (lower) — точная подсветка по пути (Phase-15)
+    pub(crate) busy: HashSet<String>, // имена проектов с активным .busy (lower) — бегущие точки (fallback) — Phase-17
+    pub(crate) busy_paths: HashSet<String>, // полные cwd с активным .busy (lower) — точные точки по пути — Phase-17
+    pub(crate) anim_frame: u32, // кадр анимации бегущих точек — Phase-17
     pub(crate) search_hits: Vec<search::FolderHit>, // папки-совпадения поиска (Phase-12)
     pub(crate) search_edit: HWND, // EDIT-поле поиска в шапке (null = скрыто)
     pub(crate) tooltip: HWND, // tracking-подсказка (путь/сниппет/правила) — Phase-13 Ф-B
@@ -186,7 +191,21 @@ fn refresh_items(app: &mut App) -> bool {
     signal::reconcile(&app.items, fg);
     app.bell = signal::bell_keys();
     app.bell_paths = signal::bell_cwds(); // точная подсветка по полному пути (Phase-15)
+    app.busy = signal::busy_keys();
+    app.busy_paths = signal::busy_cwds(); // бегущие точки «идёт работа» (Phase-17)
     numbered
+}
+
+// Включить/выключить таймер анимации точек: идёт только пока есть busy (в простое не мигаем) — Phase-17.
+fn update_anim_timer(hwnd: HWND, app: &App) {
+    let active = !app.busy.is_empty() || !app.busy_paths.is_empty();
+    unsafe {
+        if active {
+            let _ = SetTimer(hwnd, ID_ANIM_TIMER, ANIM_MS, None);
+        } else {
+            let _ = KillTimer(hwnd, ID_ANIM_TIMER);
+        }
+    }
 }
 
 // ---------- ввод метки (модальный prompt) ----------
@@ -345,6 +364,16 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     // иначе модальный TrackPopupMenu закрывается на первом же тике
                     return LRESULT(0);
                 }
+                if wp.0 == ID_ANIM_TIMER {
+                    // кадр анимации бегущих точек busy (Phase-17)
+                    APP.with(|c| {
+                        if let Some(a) = c.borrow_mut().as_mut() {
+                            a.anim_frame = a.anim_frame.wrapping_add(1);
+                        }
+                    });
+                    let _ = InvalidateRect(hwnd, None, BOOL(0));
+                    return LRESULT(0);
+                }
                 if wp.0 == ID_TIP_TIMER {
                     let _ = KillTimer(hwnd, ID_TIP_TIMER);
                     show_tooltip(hwnd);
@@ -355,6 +384,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                         if refresh_items(app) {
                             app.config.save(hwnd); // новые № путей -> сохранить реестр
                         }
+                        update_anim_timer(hwnd, app); // вкл/выкл анимацию точек по наличию busy
                         render::resize(hwnd, app);
                     }
                 });
@@ -1711,6 +1741,9 @@ fn main() -> Result<()> {
             last_h: 0,
             bell: HashSet::new(),
             bell_paths: HashSet::new(),
+            busy: HashSet::new(),
+            busy_paths: HashSet::new(),
+            anim_frame: 0,
             search_hits: Vec::new(),
             search_edit: HWND(std::ptr::null_mut()),
             tooltip: HWND(std::ptr::null_mut()),
