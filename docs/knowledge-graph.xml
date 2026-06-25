@@ -8,13 +8,15 @@
          часть логики уже существует внутри main.rs и будет вынесена при рефакторе (Phase-1). -->
 
     <M-MAIN NAME="Main" TYPE="ENTRY_POINT" STATUS="partial">
-      <purpose>Точка входа: GetModuleHandle, регистрация класса, создание topmost-окна, таймер опроса, message loop, диспетчеризация в обработчики. v0.3: опрос M-SIGNAL (bell_keys + reconcile) на тике, проброс bell в paint, зоны клика и режим reorder. v0.4: шрифт панели читается из конфига (make_font(face,…)); «⚙» в шапке открывает меню настроек → M-SETTINGS.choose_font → rebuild_fonts + repaint.</purpose>
+      <purpose>Точка входа: GetModuleHandle, регистрация класса, создание topmost-окна, таймер опроса, message loop, диспетчеризация в обработчики. v0.3: опрос M-SIGNAL (bell_keys + reconcile) на тике, проброс bell в paint, зоны клика и режим reorder. v0.4: шрифт панели читается из конфига (make_font(face,…)); «⚙» в шапке открывает меню настроек → M-SETTINGS.choose_font → rebuild_fonts + repaint. v0.5 (Phase-14): в меню окна «Скопировать ссылку»/«Открыть в проводнике» — путь проекта (M-SEARCH.folder_for_project) или документа (фоновая карта doc_paths из Recent .lnk).</purpose>
       <path>src/main.rs</path>
-      <depends>M-CONFIG, M-WINENUM, M-RENDER, M-SIGNAL, M-SETTINGS</depends>
+      <depends>M-CONFIG, M-WINENUM, M-RENDER, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX</depends>
       <verification-ref>V-M-MAIN</verification-ref>
       <annotations>
         <fn-main PURPOSE="Инициализация приложения и цикл сообщений" />
         <fn-wndproc PURPOSE="Оконная процедура: WM_PAINT/TIMER/мышь/команды меню; зоны Close/RecentMore/DragHandle, режим reorder по ПКМ, «⚙» в шапке → меню настроек" />
+        <fn-show_menu PURPOSE="Меню окна по ПКМ: цвет/метка + «Скопировать ссылку»/«Открыть в проводнике» (серые если путь не резолвится); гасит dwell-таймер тултипа перед TrackPopupMenu — Phase-14" />
+        <fn-spawn_doc_paths PURPOSE="Фоновый COM-поток: карта basename->полный путь из Windows Recent (.lnk) для пунктов меню документов — Phase-14" />
         <fn-make_font PURPOSE="Создать HFONT из имени гарнитуры (конфиг) + высоты/насыщенности — v0.4" />
         <fn-create_window PURPOSE="Стартовая позиция через config::visible_start_pos с метриками SM_*VIRTUALSCREEN — не создавать окно за пределами видимых мониторов" />
         <fn-rebuild_fonts PURPOSE="Пересоздать font_main/font_small после смены шрифта в настройках (удалить старые HFONT) — v0.4" />
@@ -156,6 +158,7 @@
         <fn-parse_dense_response PURPOSE="Чистое: JSON ответа демона -> папки с dense-скором (ручной разбор)" />
         <type-Color PURPOSE="Цвет подсветки папки: Bm25 (жёлтый) | Dense (синий) — модальность, без отдельной функции (dense только при пустом BM25)" />
         <fn-search PURPOSE="Оркестрация: live BM25; при пустом результате -> dense-fallback через M-SDAEMON" />
+        <fn-folder_for_project PURPOSE="Чистое (ro): SELECT DISTINCT project_folder (source='chat') -> папка, basename==имя окна регистронезависимо; для пункта меню «Скопировать ссылку/Открыть в проводнике» (Phase-14)" />
         <type-FolderHit PURPOSE="Папка-совпадение: folder, bm25, dense, best, цвет" />
       </annotations>
     </M-SEARCH>
@@ -203,7 +206,7 @@
     <CrossLink from="M-RENDER" to="M-WINENUM" relation="строит строки и порядок из WinItem" />
     <CrossLink from="M-RECENT" to="M-CONFIG" relation="использует AppDef (расширения, editor_storage) для классификации недавних" />
     <CrossLink from="M-MAIN" to="M-SETTINGS" relation="из меню «⚙» открывает выбор шрифта (результат сохраняет через M-CONFIG.set_font) и окно «О программе» (settings::show_about)" />
-    <CrossLink from="M-MAIN" to="M-SEARCH" relation="окошко поиска в шапке: ввод/Enter/Esc запускают поиск, debounce live BM25" />
+    <CrossLink from="M-MAIN" to="M-SEARCH" relation="окошко поиска в шапке: ввод/Enter/Esc запускают поиск, debounce live BM25; folder_for_project для пункта меню «ссылка/проводник» (Phase-14)" />
     <CrossLink from="M-RENDER" to="M-SEARCH" relation="читает результаты поиска для подсветки папок (жёлтый/синий) и блока «Найдено ещё»" />
     <CrossLink from="M-MAIN" to="M-INDEX" relation="запускает авто-индексацию в фоне при старте и по таймеру; пути баз/корень индексации передаёт параметрами из M-CONFIG" />
   </Project>

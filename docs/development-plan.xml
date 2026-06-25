@@ -25,6 +25,9 @@
     <risk-18 phase="Phase-13">FTS5 запись+чтение своей базы из одного процесса (поток-индексатор пишет, UI читает). Митигация — WAL, отдельные соединения; устаревшее чтение между тиками допустимо.</risk-18>
     <risk-19 phase="Phase-13">pdf-extract/calamine (Ф-C) капризны на части файлов. Митигация — пер-файл try, битый файл пропускается (skip + log), не валит индексацию.</risk-19>
     <risk-20 phase="Phase-13">Дублирование логики чанкинга/парсинга с clfind (Python). Принято осознанно: clfind держит dense, Rust — BM25; пересечение в извлечении текста терпимо, схема индекса общая.</risk-20>
+    <risk-21 phase="Phase-14">Имя документа неоднозначно: два файла с одним basename в разных папках дают коллизию в карте basename-&gt;путь. Митигация — берём первый матч из Recent; ponytail-приемлемо, помечено в коде. Уточнение пути по hwnd/процессу отложено.</risk-21>
+    <risk-22 phase="Phase-14">Документ не в Windows Recent (или .lnk указывает на удалённый файл) -&gt; путь не резолвится. Митигация — пункты «Скопировать ссылку»/«Открыть в проводнике» становятся MF_GRAYED, не падаем.</risk-22>
+    <risk-23 phase="Phase-14">COM (IShellLinkW) на UI-потоке заморозил бы интерфейс. Митигация — резолв .lnk только в фоновом потоке (как Ф-C), UI читает готовую карту doc_paths; на UI-потоке только clipboard и explorer /select (COM не нужен).</risk-23>
   </ArchitectureNotes>
 
   <DependencyRationale>
@@ -405,6 +408,12 @@
       <step-3>M-RENDER подсвечивает найденное синим (открытые строки + «Найдено ещё»)</step-3>
       <evidence>На «слов не помню» демон поднялся, модель загрузилась, синие папки появились; UI не подвисал</evidence>
     </DF-SEARCH-DENSE>
+    <DF-OPENLOC NAME="Ссылка/проводник по ПКМ" TRIGGER="ПКМ по строке окна -> пункт меню">
+      <step-1>M-MAIN: WinItem{app,name}; по apps[app].mode выбирает цель — Project: M-SEARCH.folder_for_project(chats_db,name) -&gt; папка; Document/DocumentLast: doc_paths[name.lower()] (фоновая карта из Recent .lnk) -&gt; файл; иначе None</step-1>
+      <step-2>None -&gt; пункты MF_GRAYED. Иначе строит меню с «Скопировать ссылку»/«Открыть в проводнике»</step-2>
+      <step-3>«Скопировать ссылку» -&gt; путь (папки или файла) в буфер (CF_UNICODETEXT). «Открыть в проводнике» -&gt; папка: ShellExecuteW open; файл: explorer.exe /select,"&lt;file&gt;"</step-3>
+      <evidence>ПКМ по VS Code -&gt; ссылка = путь папки, проводник открыл папку; ПКМ по Word-доку -&gt; ссылка = путь файла, Explorer выделил файл; ПКМ по терминалу -&gt; пункты серые</evidence>
+    </DF-OPENLOC>
   </DataFlow>
 
   <ImplementationOrder>
@@ -586,6 +595,20 @@
         <on-fail>grace-fix; откат коммитом; крейт извлечения не собирается -&gt; формат пропускается (skip), не блокирует фазу</on-fail>
       </checkpoint>
     </Phase-13>
+
+    <Phase-14 name="Действия по ПКМ: ссылка и проводник" status="pending">
+      <goal>В контекстном меню окна (ПКМ) два пункта: «Скопировать ссылку» и «Открыть в проводнике». По типу окна (NameMode): проект -&gt; папка проекта; документ -&gt; сам файл (Explorer с выделением). Утверждён пользователем (gg).</goal>
+      <step-1 module="M-SEARCH" status="pending" verification="V-M-SEARCH">folder_for_project(chats_db, name) -&gt; Option&lt;String&gt;: SELECT DISTINCT project_folder (source='chat'), матч basename==name регистронезависимо, первый. Чистая, read-only; тест против temp-БД (найден/регистр/None)</step-1>
+      <step-2 module="M-MAIN" status="pending" verification="V-M-MAIN">Фоновая карта doc_paths (basename.lower -&gt; полный путь) из Windows Recent .lnk (переиспользует collect_history_docs/resolve_lnk в COM-потоке); строится при старте и обновляется по таймеру; UI читает готовую</step-2>
+      <step-3 module="M-MAIN" status="pending" verification="V-M-MAIN">show_menu: по apps[app].mode выбрать цель (Project: folder_for_project; Document/DocumentLast: doc_paths; Whole/None: пусто); пункты ID_COPY_LINK/ID_OPEN_DIR (MF_GRAYED если цели нет). handle_command: copy -&gt; clipboard (CF_UNICODETEXT); open -&gt; папка ShellExecute / файл explorer /select</step-3>
+      <checkpoint>
+        <tests>cargo test зелёные (M-SEARCH: folder_for_project — найден по basename, регистронезависимо, None если нет); cargo build --release под GNU</tests>
+        <smoke>ПКМ по VS Code/Cursor: «ссылка» = путь папки (в буфере), «проводник» открывает папку. ПКМ по Word/Excel/MS Project: «ссылка» = путь файла, «проводник» открывает Explorer с выделением файла. ПКМ по терминалу/Проводнику или ненайденному: пункты серые. Тултип-фикс (scenario-7) не регрессировал</smoke>
+        <flows>DF-OPENLOC end-to-end</flows>
+        <artifacts>graph/plan/verification синхронны; grace lint = 0</artifacts>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-14>
   </ImplementationOrder>
 
   <ExecutionPolicy>

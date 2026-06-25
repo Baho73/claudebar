@@ -29,6 +29,15 @@
       <Priority>high</Priority>
       <RelatedFlows>DF-TAG</RelatedFlows>
     </UC-002>
+    <UC-012>
+      <Actor>User</Actor>
+      <Action>ПКМ по строке окна, выбирает «Скопировать ссылку» или «Открыть в проводнике»</Action>
+      <Goal>Быстро получить путь проекта/документа в буфер или открыть его расположение в Проводнике</Goal>
+      <Preconditions>Строка — проект (VS Code/Cursor) или документ (Word/Excel/MS Project); путь резолвится (папка из индекса чатов, файл из Windows Recent)</Preconditions>
+      <AcceptanceCriteria>Проект -&gt; ссылка/проводник по папке проекта; документ -&gt; ссылка по файлу и Проводник с выделением файла; для терминала/Проводника или нерезолвимого пути пункты неактивны (серые)</AcceptanceCriteria>
+      <Priority>medium</Priority>
+      <RelatedFlows>DF-OPENLOC</RelatedFlows>
+    </UC-012>
     <UC-003>
       <Actor>User</Actor>
       <Action>Смотрит на панель</Action>
