@@ -271,7 +271,11 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 let it: &WinItem = &app.items[*idx];
                 let id_key = it.path.as_deref().unwrap_or(&it.name); // идентичность: путь, иначе имя (Phase-15)
                 // START_BLOCK_ROW_BG_WINDOW
-                let belling = app.bell.contains(&it.name.to_lowercase());
+                // звоночек: окно с путём — точный матч по cwd; без пути — по basename (Phase-15)
+                let belling = match it.path.as_deref() {
+                    Some(p) => app.bell_paths.contains(&p.to_lowercase()),
+                    None => app.bell.contains(&it.name.to_lowercase()),
+                };
                 if it.hwnd == fg {
                     fill(mem, full, C_ACTIVE);
                 } else if belling {

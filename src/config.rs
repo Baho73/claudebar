@@ -467,6 +467,11 @@ impl Config {
         let _ = std::fs::write(&self.cfg_path, self.serialize(pos));
     }
 
+    // Сохранить с текущей (уже известной) позицией, без обращения к окну — для записи реестра № при старте.
+    pub fn save_pos(&self) {
+        let _ = std::fs::write(&self.cfg_path, self.serialize(self.pos));
+    }
+
     pub fn is_collapsed(&self, block: &str) -> bool {
         self.collapsed.contains(block)
     }

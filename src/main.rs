@@ -72,6 +72,7 @@ static MENU_ACTIVE: AtomicBool = AtomicBool::new(false);
 const ID_SET_FONT: usize = 30; // меню настроек: выбрать шрифт
 const ID_ABOUT: usize = 31; // меню настроек: о программе
 const ID_TOGGLE_FILES: usize = 32; // меню настроек: искать и в файлах (history)
+const ID_FULLPATHS: usize = 33; // меню настроек: включить полные пути в заголовках редакторов (Phase-15)
 const ID_SEARCH: usize = 40; // EDIT-поле поиска в шапке (WM_COMMAND EN_CHANGE)
 const SEARCH_MIN: usize = 3; // живой BM25 начинается с N символов
 const WM_APP_SEARCH: u32 = WM_APP + 1; // dense-результаты из фонового потока
@@ -108,7 +109,8 @@ pub(crate) struct App {
     pub(crate) menu_target: usize, // индекс строки, по которой открыли меню
     pub(crate) menu_link: Option<(String, bool)>, // цель «ссылка/проводник»: (путь, is_file) — Phase-14
     pub(crate) last_h: i32,
-    pub(crate) bell: HashSet<String>, // имена проектов со «звоночком» (lower) — подсветка строк
+    pub(crate) bell: HashSet<String>, // имена проектов со «звоночком» (lower) — подсветка строк (fallback)
+    pub(crate) bell_paths: HashSet<String>, // полные cwd со «звоночком» (lower) — точная подсветка по пути (Phase-15)
     pub(crate) search_hits: Vec<search::FolderHit>, // папки-совпадения поиска (Phase-12)
     pub(crate) search_edit: HWND, // EDIT-поле поиска в шапке (null = скрыто)
     pub(crate) tooltip: HWND, // tracking-подсказка (путь/сниппет/правила) — Phase-13 Ф-B
@@ -134,9 +136,19 @@ thread_local! {
 }
 
 // ---------- перечисление окон ----------
-fn refresh_items(app: &mut App) {
+// Возвращает true, если присвоены новые № путей (нужно сохранить реестр).
+fn refresh_items(app: &mut App) -> bool {
     let raw = win_enum::list_windows();
     app.items = win_enum::match_windows(&raw, &app.config.apps);
+    // присвоить стабильные № новым полным путям (для показа дублей «(N)»)
+    let mut numbered = false;
+    let paths: Vec<String> = app.items.iter().filter_map(|it| it.path.clone()).collect();
+    for p in paths {
+        if app.config.number_for(&p).is_none() {
+            app.config.assign_number(&p);
+            numbered = true;
+        }
+    }
     // открытые сейчас документы (basename без расширения, lower) — исключаем из недавних
     let open: HashSet<String> = app
         .items
@@ -152,6 +164,8 @@ fn refresh_items(app: &mut App) {
     let fg = unsafe { GetForegroundWindow() };
     signal::reconcile(&app.items, fg);
     app.bell = signal::bell_keys();
+    app.bell_paths = signal::bell_cwds(); // точная подсветка по полному пути (Phase-15)
+    numbered
 }
 
 // ---------- ввод метки (модальный prompt) ----------
@@ -317,7 +331,9 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 }
                 APP.with(|c| {
                     if let Some(app) = c.borrow_mut().as_mut() {
-                        refresh_items(app);
+                        if refresh_items(app) {
+                            app.config.save(hwnd); // новые № путей -> сохранить реестр
+                        }
                         render::resize(hwnd, app);
                     }
                 });
@@ -1405,7 +1421,8 @@ fn menu_link_for(a: &App, wi: usize) -> Option<(String, bool)> {
     let it = a.items.get(wi)?;
     match a.config.apps.get(it.app)?.mode {
         config::NameMode::Project { .. } => {
-            proj_folder_for(&it.name).map(|f| (f, false)) // кэш PROJ_FOLDERS, без БД на UI (D-02)
+            // путь окна (из заголовка) надёжнее; иначе кэш PROJ_FOLDERS (Phase-15)
+            it.path.clone().or_else(|| proj_folder_for(&it.name)).map(|f| (f, false))
         }
         config::NameMode::Document | config::NameMode::DocumentLast => {
             doc_path_for(&it.name).map(|p| (p, true))
@@ -1448,6 +1465,7 @@ unsafe fn show_settings_menu(hwnd: HWND) {
     let files_on = APP.with(|c| c.borrow().as_ref().map(|a| a.config.search_files).unwrap_or(false));
     let fflag = if files_on { MF_STRING | MF_CHECKED } else { MF_STRING };
     let _ = AppendMenuW(menu, fflag, ID_TOGGLE_FILES, w!("Искать в файлах (history)"));
+    let _ = AppendMenuW(menu, MF_STRING, ID_FULLPATHS, w!("Полные пути в заголовках редакторов"));
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
     let _ = AppendMenuW(menu, MF_STRING, ID_ABOUT, w!("О программе…"));
     let mut pt = POINT::default();
@@ -1486,6 +1504,24 @@ fn handle_command(hwnd: HWND, id: usize) {
     // настройки: окно «О программе» (версия + контакты автора)
     if id == ID_ABOUT {
         settings::show_about(hwnd);
+        return;
+    }
+    // настройки: включить полные пути в заголовках редакторов (window.title с ${rootPath})
+    if id == ID_FULLPATHS {
+        let res = settings::configure_editor_titles();
+        let msg = if res.is_empty() {
+            "Не найден %APPDATA% — настроить не удалось.".to_string()
+        } else {
+            let lines: Vec<String> = res.iter().map(|(e, s)| format!("• {}: {}", e, s)).collect();
+            format!(
+                "Заголовки редакторов:\n{}\n\nПерезапусти редактор, чтобы применилось. Бэкап: settings.json.claudebar-bak",
+                lines.join("\n")
+            )
+        };
+        let wmsg: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
+        unsafe {
+            MessageBoxW(hwnd, PCWSTR(wmsg.as_ptr()), w!("Полные пути"), MB_OK | MB_ICONINFORMATION);
+        }
         return;
     }
     // настройки: переключить scope «+Файлы» (history)
@@ -1635,6 +1671,7 @@ fn main() -> Result<()> {
             menu_link: None,
             last_h: 0,
             bell: HashSet::new(),
+            bell_paths: HashSet::new(),
             search_hits: Vec::new(),
             search_edit: HWND(std::ptr::null_mut()),
             tooltip: HWND(std::ptr::null_mut()),
@@ -1644,7 +1681,9 @@ fn main() -> Result<()> {
             reorder: false,
             drag: None,
         };
-        refresh_items(&mut app);
+        if refresh_items(&mut app) {
+            app.config.save_pos(); // окна ещё нет -> сохраняем с известной позицией
+        }
 
         let cls = w!("claudebar_wnd");
         let wc = WNDCLASSW {

@@ -637,14 +637,14 @@
       </checkpoint>
     </Phase-14>
 
-    <Phase-15 name="Идентичность по полному пути + нумерация" status="pending">
+    <Phase-15 name="Идентичность по полному пути + нумерация" status="done">
       <goal>Различать проекты по ПОЛНОМУ пути (из заголовка редактора с ${rootPath}), а не по basename; одноимённые дубли нумеровать стабильно «(N)». Чинит коллизию D-06. Утверждён пользователем (gg).</goal>
       <step-1 module="M-WINENUM" status="done" verification="V-M-WINENUM">extract_project_path(title) -&gt; Option&lt;String&gt;: поиск path-токена (Windows X:\... или UNC \\\\), не путать с именем файла; WinItem += path: Option&lt;String&gt;; match_windows заполняет path (имя = basename пути при наличии). Чистая, тест (путь/UNC/нет/Office-имя не путь)</step-1>
       <step-2 module="M-CONFIG" status="done" verification="V-M-CONFIG">Реестр путь-&gt;№ (ключ pn=&lt;path&gt;\t&lt;N&gt;): assign_number (первый свободный № для basename, persisted, не переназначать) + number_for; color_idx_for/label_for ключ = путь с fallback на basename (back-compat). Чистые, round-trip + стабильность</step-2>
       <step-3 module="M-SIGNAL" status="done" verification="V-M-SIGNAL">should_clear(sig_cwd,sig_key,fg_path,fg_key)/reconcile матчат по полному cwd == window.path (fallback basename); Signal += cwd; bell_cwds. Тест should_clear_by_full_path: одноимённые в разных путях гасятся точечно</step-3>
       <step-4 module="M-RENDER" status="done" verification="V-M-RENDER">display_name(name, number) -> basename + «(N)» при N&gt;=2 (первый без числа); paint берёт цвет/метку через color_idx_for/label_for по пути (id_key = path|name). Тест display_name_numbers_duplicates</step-4>
       <step-5 module="M-SETTINGS" status="done" verification="V-M-SETTINGS">configure_editor_titles() + чистое set_window_title (TitleEdit Unchanged|Updated|SkipManual): бэкап + вставка window.title с ${rootPath} в settings.json VS Code/Cursor; идемпотентно; JSONC-устойчиво (строгий JSON через serde_json, иначе текст-вставка, чужой ключ не трогаем). Тест set_window_title_cases</step-5>
-      <step-6 module="M-MAIN" status="pending" verification="V-M-MAIN">Склейка: WinItem.path в идентичность; пункт ⚙ «Полные пути в заголовках» -&gt; configure_editor_titles; меню Phase-14 берёт папку/файл из window.path, если есть</step-6>
+      <step-6 module="M-MAIN" status="done" verification="V-M-MAIN">Склейка: refresh_items assign_number новым путям (+save), bell_paths=bell_cwds (render belling по пути); пункт ⚙ «Полные пути в заголовках» -&gt; configure_editor_titles + MessageBox-отчёт; menu_link_for Project берёт window.path, иначе proj_folder_for</step-6>
       <checkpoint>
         <tests>cargo test зелёные (extract_project_path; реестр № round-trip+стабильность; cwd-матч; показ (N)); cargo build --release под GNU</tests>
         <smoke>Включить полные пути (⚙), перезапустить редактор; два проекта с одним именем папки в разных путях -&gt; разные строки «name»/«name (2)», разные цвет/метка, звоночек точечно, меню Phase-14 копирует/открывает верный путь</smoke>
