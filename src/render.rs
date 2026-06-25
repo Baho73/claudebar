@@ -328,10 +328,13 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                     None => app.busy.contains(&it.name.to_lowercase()),
                 };
                 if busy {
-                    SelectObject(mem, app.font_small);
+                    // точки сразу СПРАВА от имени, по центру строки (шрифт имени, золотой) — заметнее, чем по низу
+                    let mut nr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                    let mut nb: Vec<u16> = disp.encode_utf16().collect();
+                    DrawTextW(mem, &mut nb, &mut nr, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+                    let dx = (42 + (nr.right - nr.left) + 6).min(name_right - 28);
                     SetTextColor(mem, rgb(C_BELL_BAR.0, C_BELL_BAR.1, C_BELL_BAR.2));
-                    dt(mem, dots_for_frame(app.anim_frame), RECT { left: 44, top, right: 120, bottom: top + ROW - 1 }, DT_SINGLELINE | DT_BOTTOM | DT_LEFT | DT_NOPREFIX);
-                    SelectObject(mem, app.font_main); // вернуть основной шрифт
+                    dt(mem, dots_for_frame(app.anim_frame), RECT { left: dx, top, right: dx + 28, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
                 }
                 if app.reorder {
                     draw_handle(mem, w - 18, top);
