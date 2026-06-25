@@ -1,11 +1,12 @@
-# claudebar-bell.ps1 - Stop/Notification hook for the ClaudeBar bell. ASCII-only on purpose
+# claudebar-busy.ps1 - UserPromptSubmit hook for the ClaudeBar "work in progress" dots. ASCII-only
 # (Windows PowerShell reads .ps1 without BOM as ANSI, so non-ASCII chars break parsing).
 #
-# Writes %APPDATA%\claudebar\signals\<session>.signal with the project cwd. ClaudeBar polls
-# that folder (~1s) and highlights the editor window row whose project name matches.
+# Writes %APPDATA%\claudebar\signals\<session>.busy with the project cwd when Claude starts working.
+# ClaudeBar polls that folder (~1s) and animates running dots "..." on the matching editor window row.
+# The Stop hook (claudebar-bell.ps1) deletes the .busy file when work finishes (dots -> bell).
 # Claude Code passes JSON with cwd and session_id on stdin.
 #
-# Wire it up in ~/.claude/settings.json (hooks.Stop) - see hooks/README.md or -=letter=-.txt.
+# Wire it up in ~/.claude/settings.json (hooks.UserPromptSubmit) - see hooks/README.md.
 
 $ErrorActionPreference = 'SilentlyContinue'
 
@@ -25,9 +26,5 @@ $safe = ($sid -replace '[^\w\-]', '_')
 $dir = Join-Path $env:APPDATA 'claudebar\signals'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
-$file = Join-Path $dir "$safe.signal"
+$file = Join-Path $dir "$safe.busy"
 [System.IO.File]::WriteAllText($file, $cwd, (New-Object System.Text.UTF8Encoding $false))
-
-# work finished: remove the busy marker so the running dots stop (dots -> bell)
-$busy = Join-Path $dir "$safe.busy"
-Remove-Item -LiteralPath $busy -Force -ErrorAction SilentlyContinue

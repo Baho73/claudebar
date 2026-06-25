@@ -1,4 +1,6 @@
-# install-bell-hook.ps1 - idempotently adds the ClaudeBar bell hook to ~/.claude/settings.json.
+# install-bell-hook.ps1 - idempotently adds the ClaudeBar hooks to ~/.claude/settings.json:
+#   - bell on Stop  (claudebar-bell.ps1): highlights the row when Claude finishes
+#   - busy on UserPromptSubmit (claudebar-busy.ps1): running dots while Claude works
 # Run: powershell -ExecutionPolicy Bypass -File "D:\Python\claudebar\hooks\install-bell-hook.ps1"
 # Makes a settings.json.bak backup; re-running does not duplicate. ASCII-only on purpose.
 
@@ -10,20 +12,35 @@ if (-not (Test-Path $f)) { Write-Output "ERR: settings.json not found: $f"; exit
 Copy-Item $f "$f.bak" -Force
 $j = Get-Content $f -Raw | ConvertFrom-Json
 
-$cmd = 'powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Python\claudebar\hooks\claudebar-bell.ps1"'
-
-if (-not $j.hooks -or -not $j.hooks.Stop -or @($j.hooks.Stop).Count -eq 0) {
-    Write-Output "ERR: hooks.Stop missing - add the block manually (see -=letter=-.txt)"
-    exit 1
+# Ensure $j.hooks exists
+if (-not $j.PSObject.Properties['hooks']) {
+    $j | Add-Member -NotePropertyName hooks -NotePropertyValue ([pscustomobject]@{})
 }
 
-$existing = @($j.hooks.Stop[0].hooks).command
-if ($existing -contains $cmd) {
-    Write-Output "already present"
-    exit 0
+function Add-Hook($event, $cmd) {
+    $entry = [pscustomobject]@{ type = 'command'; command = $cmd }
+    if (-not $j.hooks.PSObject.Properties[$event] -or @($j.hooks.$event).Count -eq 0) {
+        # event missing -> create array with one matcher-object holding the command
+        $block = [pscustomobject]@{ hooks = @($entry) }
+        if ($j.hooks.PSObject.Properties[$event]) {
+            $j.hooks.$event = @($block)
+        } else {
+            $j.hooks | Add-Member -NotePropertyName $event -NotePropertyValue @($block)
+        }
+        return "added"
+    }
+    $existing = @($j.hooks.$event[0].hooks).command
+    if ($existing -contains $cmd) { return "already present" }
+    $j.hooks.$event[0].hooks = @($j.hooks.$event[0].hooks) + @($entry)
+    return "added"
 }
 
-$j.hooks.Stop[0].hooks = @($j.hooks.Stop[0].hooks) + @([pscustomobject]@{ type = 'command'; command = $cmd })
+$bell = 'powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Python\claudebar\hooks\claudebar-bell.ps1"'
+$busy = 'powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Python\claudebar\hooks\claudebar-busy.ps1"'
+
+$rb = Add-Hook 'Stop' $bell
+$ru = Add-Hook 'UserPromptSubmit' $busy
+
 $json = $j | ConvertTo-Json -Depth 100
 [System.IO.File]::WriteAllText($f, $json, (New-Object System.Text.UTF8Encoding $false))
-Write-Output "OK: bell hook added"
+Write-Output "OK: bell (Stop) -> $rb; busy (UserPromptSubmit) -> $ru"

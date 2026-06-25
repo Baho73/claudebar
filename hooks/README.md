@@ -1,8 +1,11 @@
-# ClaudeBar hooks — «звоночек» завершения ИИ
+# ClaudeBar hooks — «звоночек» завершения + индикатор работы
 
-`claudebar-bell.ps1` — хук Claude Code, который сообщает панели ClaudeBar, что ИИ
-закончила работу в каком-то проекте. Панель подсвечивает строку соответствующего окна
-тёплой золотой полосой; подсветка гаснет, когда окно проекта получает фокус.
+Два хука Claude Code сообщают панели ClaudeBar состояние проекта:
+
+- `claudebar-bell.ps1` (событие **Stop**) — ИИ **закончила** работу: строка окна подсвечивается
+  тёплой золотой полосой; подсветка гаснет, когда окно проекта получает фокус.
+- `claudebar-busy.ps1` (событие **UserPromptSubmit**) — ИИ **начала** работу: на строке окна
+  бегут точки «...». Stop-хук удаляет busy-маркер, и точки сменяются звоночком.
 
 ## Как это работает
 
@@ -19,18 +22,30 @@ VS Code/Cursor), а не по HWND — это устойчиво к переза
 
 ## Подключение
 
-Добавьте блок в `~/.claude/settings.json` в массив `hooks.Stop` (можно рядом с уже
-существующим `notify-flash.ps1` — они не мешают друг другу):
+Проще всего — одной командой (добавит оба хука, бэкап + идемпотентно):
 
-```json
-{
-  "type": "command",
-  "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"D:\\Python\\claudebar\\hooks\\claudebar-bell.ps1\""
-}
+```
+powershell -ExecutionPolicy Bypass -File "D:\Python\claudebar\hooks\install-bell-hook.ps1"
 ```
 
-Тот же блок можно добавить в `hooks.Notification`, если хотите подсветку и на запросах
-подтверждения, а не только на завершении.
+Вручную — два блока в `~/.claude/settings.json`:
+
+```json
+"Stop": [ { "hooks": [
+  { "type": "command", "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"D:\\Python\\claudebar\\hooks\\claudebar-bell.ps1\"" }
+] } ],
+"UserPromptSubmit": [ { "hooks": [
+  { "type": "command", "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"D:\\Python\\claudebar\\hooks\\claudebar-busy.ps1\"" }
+] } ]
+```
+
+Bell-блок можно добавить и в `hooks.Notification` — подсветка на запросах подтверждения, не только на завершении.
+
+## Индикатор работы (busy)
+
+`UserPromptSubmit` пишет `%APPDATA%\claudebar\signals\<session>.busy` с `cwd`; пока файл есть,
+ClaudeBar анимирует «...» на строке проекта. `Stop` удаляет `.busy` (и пишет `.signal` звоночка).
+Если Claude убит без `Stop`, ClaudeBar игнорирует `.busy` старше ~600с (по mtime), чтобы точки не висели вечно.
 
 ## Ограничение
 
