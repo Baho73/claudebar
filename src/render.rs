@@ -572,7 +572,7 @@ mod tests {
     use crate::win_enum::WinItem;
 
     fn item(app: usize, name: &str) -> WinItem {
-        WinItem { hwnd: HWND(std::ptr::null_mut()), app, name: name.to_string() }
+        WinItem { hwnd: HWND(std::ptr::null_mut()), app, name: name.to_string(), path: None }
     }
 
     #[test]

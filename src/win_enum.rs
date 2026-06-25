@@ -48,6 +48,7 @@ pub struct WinItem {
     pub hwnd: HWND,
     pub app: usize, // индекс в Config.apps
     pub name: String,
+    pub path: Option<String>, // полный путь проекта из заголовка (Project + настроенный ${rootPath}) — Phase-15
 }
 
 // START_CONTRACT: extract_name
@@ -67,6 +68,29 @@ pub fn extract_name(title: &str, app: &AppDef) -> String {
         NameMode::Whole => title,
     };
     seg.trim_start_matches(['●', '•', '*', ' ']).trim().to_string()
+}
+
+// START_CONTRACT: extract_project_path
+//   PURPOSE: Полный путь проекта из заголовка редактора (если настроен показывать ${rootPath}) — Phase-15.
+//   INPUTS: { title: &str - заголовок окна }
+//   OUTPUTS: { Option<String> - сегмент-путь (X:\... или UNC \\...), иначе None }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: extract_project_path
+pub fn extract_project_path(title: &str) -> Option<String> {
+    // сегменты по " - "; берём первый, похожий на путь (имя файла за путь не принимается)
+    title.split(" - ").map(str::trim).find(|s| is_path(s)).map(|s| s.to_string())
+}
+
+// Похоже ли на путь Windows: диск X:\ / X:/, либо UNC \\server\...
+fn is_path(s: &str) -> bool {
+    let b = s.as_bytes();
+    (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/'))
+        || s.starts_with("\\\\")
+}
+
+// Имя проекта = последний сегмент пути (сохраняя регистр) — для показа.
+fn path_basename(p: &str) -> String {
+    p.trim_end_matches(['\\', '/']).rsplit(['\\', '/']).next().unwrap_or(p).to_string()
 }
 
 // START_CONTRACT: process_name
@@ -246,9 +270,17 @@ pub fn match_windows(raw: &[(HWND, String, String, String)], apps: &[AppDef]) ->
     // START_BLOCK_MATCH_BY_PROCESS
     for (hwnd, title, proc, class) in raw {
         if let Some(i) = apps.iter().position(|a| app_matches(a, proc, class)) {
-            let name = extract_name(title, &apps[i]);
+            // путь — только для редакторов (Project) с настроенным ${rootPath} в заголовке
+            let path = matches!(apps[i].mode, NameMode::Project { .. })
+                .then(|| extract_project_path(title))
+                .flatten();
+            // имя: при известном пути — его basename (заголовок мог сменить формат), иначе обычное правило
+            let name = match &path {
+                Some(p) => path_basename(p),
+                None => extract_name(title, &apps[i]),
+            };
             if !name.is_empty() {
-                items.push(WinItem { hwnd: *hwnd, app: i, name });
+                items.push(WinItem { hwnd: *hwnd, app: i, name, path });
             }
         }
     }
@@ -281,6 +313,23 @@ mod tests {
         );
         let cursor = &apps[1];
         assert_eq!(extract_name("ksp.md - Cursor", cursor), "ksp.md");
+    }
+
+    #[test]
+    fn extract_project_path_from_title() {
+        // путь в среднем сегменте (формат "${rootName} - ${rootPath} - ${appName}")
+        assert_eq!(
+            extract_project_path("claudebar - D:\\Python\\claudebar - Visual Studio Code").as_deref(),
+            Some("D:\\Python\\claudebar")
+        );
+        assert_eq!(extract_project_path("\\\\srv\\share\\proj - Cursor").as_deref(), Some("\\\\srv\\share\\proj"));
+        assert_eq!(extract_project_path("main.rs - claudebar - Visual Studio Code"), None); // нет пути
+        assert_eq!(extract_project_path("Договор.docx - Word"), None); // имя файла не путь
+        // match_windows: имя = basename пути, path заполнен
+        let raw = [(h(1), "x - D:\\a\\claudebar - Visual Studio Code".to_string(), "code.exe".to_string(), String::new())];
+        let items = match_windows(&raw, &default_apps());
+        assert_eq!(items[0].name, "claudebar");
+        assert_eq!(items[0].path.as_deref(), Some("D:\\a\\claudebar"));
     }
 
     #[test]
