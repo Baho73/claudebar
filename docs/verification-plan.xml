@@ -127,6 +127,7 @@
         <scenario-8 kind="success">v0.4 Phase-9: paint рисует глиф «⚙» в шапке слева от «✕» (ручной smoke); зона клика «⚙» открывает меню настроек</scenario-8>
         <scenario-9 kind="success">v0.5 Phase-12: folder_project (basename пути в lower), search_color_for (открытый проект среди совпадений -> цвет, иначе None), search_result_rows (закрытые совпадения -> SearchHeader + SearchResult, открытые исключены). Тесты folder_project_basename_lower, search_color_and_result_rows. Глиф «🔍» в шапке, цветная полоса совпавших строк, блок «Найдено ещё» — ручной smoke</scenario-9>
         <scenario-10 kind="success">Phase-15/16: display_name даёт «basename» для одиночного проекта и «basename (N)» при дублях basename (первый без числа, № из реестра); build_rows порядок — ручной первичен, остальные по sort= (alpha=имя | recent=ordinal возр.), окно без позиции/ordinal в конец секции. Тесты display_name_numbers_duplicates, build_rows_order_modes</scenario-10>
+        <scenario-11 kind="success">Phase-17: dots_for_frame(frame) -> «.»/«..»/«...» циклом по кадру; paint рисует индикатор на строке окна, чей path/basename в busy-наборе (неброский цвет). Тест dots_for_frame; анимация — ручной smoke</scenario-11>
       </scenarios>
     </V-M-RENDER>
     <V-M-SIGNAL MODULE="M-SIGNAL" PRIORITY="high">
@@ -141,8 +142,7 @@
         <scenario-4 kind="success">reconcile удаляет .signal, чьё окно проекта сейчас foreground; иначе сохраняет</scenario-4>
         <scenario-5 kind="failure">Папка signals отсутствует -> пустой набор, без паники</scenario-5>
         <scenario-6 kind="success">Phase-15: should_clear гасит по полному cwd == путь окна в фокусе. Два одноимённых проекта (D:\a\claudebar, E:\b\claudebar): фокус на одном гасит ТОЛЬКО его сигнал, второй остаётся. Fallback на basename, если у окна нет пути. Тест should_clear_by_full_path</scenario-6>
-      </scenarios>
-    </V-M-SIGNAL>
+        <scenario-7 kind="success">Phase-17: busy_cwds/busy_keys читают .busy (cwd lower + basename lower); is_stale(mtime, now, ttl=600) -> свежий .busy в наборе, старше 600с игнорируется; матч окна по cwd==path (fallback basename). Тесты is_stale/busy-разбор</scenario-7>
     <V-M-ICON MODULE="M-ICON" PRIORITY="low">
       <test-files><file>src/icon.rs (#[cfg(test)] на icon_from_path)</file></test-files>
       <module-checks>
@@ -186,6 +186,7 @@
         <scenario-7 kind="regression">ПКМ по строке окна / клик «⚙»: контекстное меню (TrackPopupMenu, модальный цикл) НЕ закрывается само через ~0.5с и тултип не всплывает поверх. Механизм: флаг MENU_ACTIVE выставлен вокруг TrackPopupMenu; WM_TIMER при нём ничего не делает (ни show_tooltip по dwell ~0.5с, ни refresh/resize по ~1с — любой из них закрывал меню). KillTimer ненадёжен: не удаляет уже синтезированное WM_TIMER из очереди. Smoke: правый клик, подержать без движения мыши &gt;1с — меню остаётся, тултипа нет</scenario-7>
         <scenario-8 kind="success">Phase-14: ПКМ по VS Code/Cursor -> «Скопировать ссылку» кладёт путь папки проекта в буфер, «Открыть в проводнике» открывает папку. ПКМ по Word/Excel/MS Project -> «ссылка» = полный путь файла, «проводник» = Explorer с выделением файла (/select). ПКМ по терминалу/Проводнику или нерезолвимому пути -> оба пункта MF_GRAYED. doc_paths И кэш папок проектов (PROJ_FOLDERS/project_folders) строятся в фоне; ПКМ матчит по basename в памяти — D-02: синхронного открытия SQLite на UI-потоке при правом клике больше нет. D-03: copy_to_clipboard освобождает hmem (GlobalFree) во всех путях отказа (GlobalLock null, OpenClipboard fail, SetClipboardData err); владение буферу переходит только при успешном SetClipboardData — утечки нет</scenario-8>
         <scenario-9 kind="success">Phase-15/16: WinItem.path участвует в идентичности (цвет/метка/звоночек/меню по полному пути); пункт ⚙ «Полные пути в заголовках» -> configure_editor_titles; карта hwnd->ordinal метит новые окна (сортировка recent, «новое -> вниз»); переключатель ⚙ alpha/recent -> set+save+rebuild. Smoke: два одноимённых проекта различимы; recent кладёт новое окно вниз</scenario-9>
+        <scenario-10 kind="success">Phase-17: refresh_items наполняет App.busy_paths (busy_cwds); ID_ANIM_TIMER (~350мс) стартует при непустом busy и гаснет в простое; anim_frame++ -> InvalidateRect. Smoke: промпт Claude -> «...» бегут на строке проекта; Stop -> точки гаснут, строка золотая (звоночек); в простое не мигает</scenario-10>
     </V-M-MAIN>
     <V-M-SEARCH MODULE="M-SEARCH" PRIORITY="high">
       <test-files><file>src/search.rs (#[cfg(test)])</file></test-files>

@@ -32,6 +32,9 @@
     <risk-25 phase="Phase-15">Ложный путь-токен: если заголовок содержит и полный путь активного файла (${activeEditorLong}), extract_project_path возьмёт не тот. Митигация: рекомендованный формат title без ${activeEditorLong}; брать путь-директорию (rootPath), не файл.</risk-25>
     <risk-26 phase="Phase-15">${rootPath} в заголовке появляется только после включения; для Office/терминалов и ненастроенных редакторов пути нет. Митигация: extract_project_path -&gt; None -&gt; откат на basename (текущее поведение), грациозно.</risk-26>
     <risk-27 phase="Phase-16">Windows не отдаёт время открытия окна -&gt; ordinal (first-seen) считается за сессию ClaudeBar и сбрасывается при его перезапуске. Принято: порядок recent приблизительный; старые окна по текущему порядку, новые падают вниз.</risk-27>
+    <risk-28 phase="Phase-17">Зависший .busy: Claude убит без Stop -&gt; файл остаётся, строка вечно мигает. Митигация: ClaudeBar игнорирует .busy старше ~600с (mtime); SessionEnd-хук дополнительно удаляет .busy.</risk-28>
+    <risk-29 phase="Phase-17">Стоимость перерисовки анимации. Митигация: ID_ANIM_TIMER запускается только при непустом busy и гасится в простое; перерисовка всего окна на кадр (~3 кадра/с) терпима.</risk-29>
+    <risk-30 phase="Phase-17">UserPromptSubmit спавнит powershell на каждый промпт -&gt; лёгкая задержка submit (как bell на Stop). Принято как минор; быстрый текстовый ответ даёт короткое мигание точек (не баг).</risk-30>
   </ArchitectureNotes>
 
   <DependencyRationale>
@@ -437,6 +440,12 @@
       <step-2>M-MAIN метит каждый новый hwnd инкрементным ordinal (карта за сессию); M-RENDER/M-WINENUM применяют порядок</step-2>
       <evidence>recent: только что открытое окно внизу секции; alpha: по алфавиту; ручной drag переживает оба</evidence>
     </DF-SORT>
+    <DF-BUSY NAME="Индикатор работы (бегущие точки)" TRIGGER="UserPromptSubmit-хук Claude + таймер опроса">
+      <step-1>Хук UserPromptSubmit пишет %APPDATA%\claudebar\signals\&lt;session&gt;.busy с cwd (старт работы); Stop удаляет .busy (+ пишет .signal звоночка)</step-1>
+      <step-2>M-MAIN на опросе: M-SIGNAL.busy_cwds/busy_keys (staleness-фильтр mtime &gt;600с) -&gt; App.busy_paths; ID_ANIM_TIMER старт при непустом busy, kill при пустом</step-2>
+      <step-3>M-RENDER: строка окна, чей path/basename в busy, рисует анимированный «...» (dots_for_frame(anim_frame)); на Stop busy пуст -&gt; точки гаснут, строка золотая (звоночек)</step-3>
+      <evidence>Claude работает в проекте -&gt; «...» бегут на его строке; завершил -&gt; точки сменились золотой полосой; в простое не мигает</evidence>
+    </DF-BUSY>
     <DF-EDITORCFG NAME="Включение полных путей в заголовках" TRIGGER="⚙ -> пункт «Полные пути»">
       <step-1>M-SETTINGS.configure_editor_titles: бэкап settings.json VS Code+Cursor, вставить/обновить window.title с ${rootPath} (идемпотентно)</step-1>
       <evidence>После клика и перезапуска редактора заголовок содержит полный путь; повторный клик не дублирует; бэкап создан</evidence>
@@ -668,6 +677,21 @@
         <on-fail>grace-fix; откат коммитом</on-fail>
       </checkpoint>
     </Phase-16>
+
+    <Phase-17 name="Индикатор работы (бегущие точки)" status="pending">
+      <goal>Бегущие точки «...» на строке проекта, пока Claude Code работает в нём (busy-сигнал через хук UserPromptSubmit, гаснет на Stop с переходом в звоночек). Охват: Claude-busy через хуки. Утверждён пользователем (gg).</goal>
+      <step-1 module="M-SIGNAL" status="pending" verification="V-M-SIGNAL">Чтение .busy: list_busy (паттерн list_signals, ext=busy) со staleness-фильтром по mtime (&gt;BUSY_STALE_SECS~600 игнор); busy_cwds()/busy_keys() (cwd lower + basename lower). Чистый is_stale(mtime, now, ttl). Тесты staleness + разбор</step-1>
+      <step-2 module="M-SIGNAL" status="pending" verification="V-M-SIGNAL">Пишущая сторона (hooks/): claudebar-busy.ps1 (UserPromptSubmit -&gt; пишет &lt;session&gt;.busy с cwd, ASCII-only); claudebar-bell.ps1 (Stop) дополнить удалением &lt;session&gt;.busy; install-bell-hook.ps1 += блок hooks.UserPromptSubmit (идемпотентно); README. Подключение в settings.json — пользователь</step-2>
+      <step-3 module="M-RENDER" status="pending" verification="V-M-RENDER">Чистая dots_for_frame(frame) -&gt; «.»/«..»/«...» (цикл по кадру); paint рисует индикатор на busy-строках (неброский цвет, низ/право строки). Тест dots_for_frame</step-3>
+      <step-4 module="M-MAIN" status="pending" verification="V-M-MAIN">App += busy_paths: HashSet + anim_frame: u32; refresh_items наполняет busy (busy_cwds); ID_ANIM_TIMER (~350мс): старт при непустом busy, kill при пустом; на тике anim_frame+=1 + InvalidateRect. render belling-индикатор по busy_paths (path/basename)</step-4>
+      <checkpoint>
+        <tests>cargo test зелёные (dots_for_frame; busy staleness/match); cargo build --release под GNU</tests>
+        <smoke>Промпт Claude в открытом проекте -&gt; «...» бегут на строке окна; завершение (Stop) -&gt; точки сменяются золотой полосой звоночка; в простое окно не мигает; .busy старше 600с игнорируется</smoke>
+        <flows>DF-BUSY end-to-end</flows>
+        <artifacts>graph/plan/verification синхронны; grace lint=0</artifacts>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-17>
   </ImplementationOrder>
 
   <ExecutionPolicy>

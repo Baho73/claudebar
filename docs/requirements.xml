@@ -56,6 +56,15 @@
       <Priority>low</Priority>
       <RelatedFlows>DF-SORT</RelatedFlows>
     </UC-014>
+    <UC-015>
+      <Actor>User</Actor>
+      <Action>Запускает работу Claude Code в проекте, открытом в редакторе</Action>
+      <Goal>Видеть, в каком проекте сейчас идёт работа, не переключаясь в окно</Goal>
+      <Preconditions>Подключён хук UserPromptSubmit (claudebar-busy.ps1) в ~/.claude/settings.json</Preconditions>
+      <AcceptanceCriteria>Пока Claude работает в проекте — на строке его окна бегут «...»; на завершении (Stop) точки гаснут и сменяются подсветкой звоночка; в простое окно не мигает; зависший .busy (старше ~600с) игнорируется</AcceptanceCriteria>
+      <Priority>medium</Priority>
+      <RelatedFlows>DF-BUSY</RelatedFlows>
+    </UC-015>
     <UC-003>
       <Actor>User</Actor>
       <Action>Смотрит на панель</Action>
