@@ -19,7 +19,8 @@ mod win_enum;
 
 use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::collections::HashSet;
+use std::sync::Mutex;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
 use config::{Config, PALETTE};
@@ -38,6 +39,8 @@ use windows::Win32::System::Com::{
     COINIT_APARTMENTTHREADED, STGM_READ,
 };
 use windows::Win32::UI::Shell::{IShellLinkW, ShellExecuteW, ShellLink};
+use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
+use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use std::os::windows::ffi::OsStrExt;
 
@@ -59,6 +62,9 @@ thread_local! {
 const ID_COLOR_BASE: usize = 1; // 1..=8
 const ID_LABEL: usize = 20;
 const ID_LABEL_CLEAR: usize = 21;
+const ID_COPY_LINK: usize = 22; // меню окна: скопировать путь (Phase-14)
+const ID_OPEN_DIR: usize = 23; // меню окна: открыть в проводнике (Phase-14)
+const CF_UNICODETEXT: u32 = 13; // формат буфера обмена Win32 (clipboard CF_UNICODETEXT)
 const ID_SET_FONT: usize = 30; // меню настроек: выбрать шрифт
 const ID_ABOUT: usize = 31; // меню настроек: о программе
 const ID_TOGGLE_FILES: usize = 32; // меню настроек: искать и в файлах (history)
@@ -96,6 +102,7 @@ pub(crate) struct App {
     pub(crate) font_small: HFONT,
     pub(crate) hover: i32,
     pub(crate) menu_target: usize, // индекс строки, по которой открыли меню
+    pub(crate) menu_link: Option<(String, bool)>, // цель «ссылка/проводник»: (путь, is_file) — Phase-14
     pub(crate) last_h: i32,
     pub(crate) bell: HashSet<String>, // имена проектов со «звоночком» (lower) — подсветка строк
     pub(crate) search_hits: Vec<search::FolderHit>, // папки-совпадения поиска (Phase-12)
@@ -310,6 +317,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 let t = INDEX_TICKS.fetch_add(1, Ordering::Relaxed);
                 if t > 0 && t % INDEX_EVERY_TICKS == 0 {
                     spawn_index(hwnd);
+                    spawn_doc_paths(); // освежить пути документов (Phase-14)
                 }
                 LRESULT(0)
             }
@@ -532,6 +540,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                         APP.with(|c| {
                             if let Some(a) = c.borrow_mut().as_mut() {
                                 a.menu_target = wi;
+                                a.menu_link = menu_link_for(a, wi); // путь для «ссылка/проводник» (Phase-14)
                             }
                         });
                         show_menu(hwnd);
@@ -1214,6 +1223,70 @@ unsafe fn resolve_lnk(lnk: &std::path::Path) -> Option<String> {
     (len > 0).then(|| String::from_utf16_lossy(&buf[..len]))
 }
 
+// ---------- пути документов для меню «ссылка/проводник» (Phase-14) ----------
+// Карта basename(lowercase) -> полный путь файла из Windows Recent (.lnk резолв).
+// Меню документа (Word/Excel/MS Project) читает её на UI-потоке; строится в фоне (COM).
+static DOC_PATHS: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+static DOC_PATHS_BUILDING: AtomicBool = AtomicBool::new(false);
+
+// Построить/освежить карту doc_paths в фоне (резолв .lnk Recent через COM, не морозит UI).
+fn spawn_doc_paths() {
+    if DOC_PATHS_BUILDING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(|| {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        }
+        // ponytail: повторяет проход collect_history_docs с files-индексом; терпимо (фон, редко)
+        let mut map = BTreeMap::new();
+        for path in collect_history_docs() {
+            if let Some(base) = std::path::Path::new(&path).file_name().and_then(|s| s.to_str()) {
+                map.entry(base.to_lowercase()).or_insert(path); // первый матч при коллизии basename (risk-21)
+            }
+        }
+        if let Ok(mut g) = DOC_PATHS.lock() {
+            *g = map;
+        }
+        unsafe {
+            CoUninitialize();
+        }
+        DOC_PATHS_BUILDING.store(false, Ordering::SeqCst);
+    });
+}
+
+// Полный путь документа по имени окна (basename, регистронезависимо) или None.
+fn doc_path_for(name: &str) -> Option<String> {
+    let key = name.trim().to_lowercase();
+    DOC_PATHS.lock().ok()?.get(&key).cloned()
+}
+
+// Положить текст в буфер обмена (CF_UNICODETEXT). При успехе владение hmem уходит буферу.
+unsafe fn copy_to_clipboard(hwnd: HWND, text: &str) {
+    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2) else {
+        return;
+    };
+    let dst = GlobalLock(hmem);
+    if dst.is_null() {
+        return; // ponytail: редкий отказ lock -> терпимая утечка hmem
+    }
+    std::ptr::copy_nonoverlapping(wide.as_ptr(), dst as *mut u16, wide.len());
+    let _ = GlobalUnlock(hmem);
+    if OpenClipboard(hwnd).is_ok() {
+        let _ = EmptyClipboard();
+        let _ = SetClipboardData(CF_UNICODETEXT, HANDLE(hmem.0)); // успех -> hmem владеет буфер
+        let _ = CloseClipboard();
+    }
+}
+
+// Открыть Проводник с выделением файла: explorer.exe /select,"<path>".
+unsafe fn open_in_explorer_select(path: &str) {
+    let file: Vec<u16> = "explorer.exe".encode_utf16().chain(std::iter::once(0)).collect();
+    let params: Vec<u16> = format!("/select,\"{}\"", path).encode_utf16().chain(std::iter::once(0)).collect();
+    ShellExecuteW(None, w!("open"), PCWSTR(file.as_ptr()), PCWSTR(params.as_ptr()), PCWSTR::null(), SW_SHOWNORMAL);
+}
+
 fn run_live_search(hwnd: HWND) {
     unsafe { hide_history_dropdown() }; // изменение текста закрывает историю
     let q = APP.with(|c| c.borrow().as_ref().map(|a| edit_text(a.search_edit)).unwrap_or_default());
@@ -1295,6 +1368,21 @@ fn drop_reorder(a: &mut App, from: i32, to: i32) {
     }
 }
 
+// Цель пунктов «ссылка/проводник» по индексу окна: (путь, is_file). None -> пункты серые.
+// Проект (Code/Cursor) -> папка проекта из chats_db; документ (Word/Excel/MS Project) -> файл из Recent; иначе None.
+fn menu_link_for(a: &App, wi: usize) -> Option<(String, bool)> {
+    let it = a.items.get(wi)?;
+    match a.config.apps.get(it.app)?.mode {
+        config::NameMode::Project { .. } => {
+            search::folder_for_project(&a.config.chats_db, &it.name).map(|f| (f, false))
+        }
+        config::NameMode::Document | config::NameMode::DocumentLast => {
+            doc_path_for(&it.name).map(|p| (p, true))
+        }
+        config::NameMode::Whole => None,
+    }
+}
+
 unsafe fn show_menu(hwnd: HWND) {
     let menu = CreatePopupMenu().unwrap_or_default();
     for (i, p) in PALETTE.iter().enumerate() {
@@ -1304,6 +1392,12 @@ unsafe fn show_menu(hwnd: HWND) {
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
     let _ = AppendMenuW(menu, MF_STRING, ID_LABEL, w!("Метка…"));
     let _ = AppendMenuW(menu, MF_STRING, ID_LABEL_CLEAR, w!("Убрать метку"));
+    // Phase-14: ссылка/проводник; серые, если путь не резолвится (терминал, нет в индексе/Recent)
+    let has_link = APP.with(|c| c.borrow().as_ref().map(|a| a.menu_link.is_some()).unwrap_or(false));
+    let lflag = if has_link { MF_STRING } else { MF_STRING | MF_GRAYED };
+    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+    let _ = AppendMenuW(menu, lflag, ID_COPY_LINK, w!("Скопировать ссылку"));
+    let _ = AppendMenuW(menu, lflag, ID_OPEN_DIR, w!("Открыть в проводнике"));
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
     // меню модальное: гасим dwell-таймер и прячем тултип, иначе он всплывёт поверх меню
@@ -1376,6 +1470,22 @@ fn handle_command(hwnd: HWND, id: usize) {
             unsafe { set_search_cue(w!("⏳ Индексирую файлы…")) };
         }
         run_live_search(hwnd); // пересчитать выдачу с учётом нового scope
+        return;
+    }
+    // Phase-14: «Скопировать ссылку» / «Открыть в проводнике» — берут готовый a.menu_link
+    if id == ID_COPY_LINK || id == ID_OPEN_DIR {
+        let link = APP.with(|c| c.borrow().as_ref().and_then(|a| a.menu_link.clone()));
+        let Some((path, is_file)) = link else { return };
+        unsafe {
+            if id == ID_COPY_LINK {
+                copy_to_clipboard(hwnd, &path);
+            } else if is_file {
+                open_in_explorer_select(&path); // документ: Explorer с выделением файла
+            } else {
+                let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+                ShellExecuteW(None, w!("open"), PCWSTR(wide.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
+            }
+        }
         return;
     }
     // имя проекта по menu_target
@@ -1487,6 +1597,7 @@ fn main() -> Result<()> {
             font_small: make_font(&font_face, -((font_size - 3).max(8)), font_weight.min(400)),
             hover: -1,
             menu_target: 0,
+            menu_link: None,
             last_h: 0,
             bell: HashSet::new(),
             search_hits: Vec::new(),
@@ -1550,6 +1661,7 @@ fn main() -> Result<()> {
         create_search_box(hwnd);
         create_tooltip(hwnd);
         spawn_index(hwnd); // первичная индексация чатов в фоне
+        spawn_doc_paths(); // карта путей документов для меню «ссылка/проводник» (Phase-14)
         let files_on = APP.with(|c| c.borrow().as_ref().map(|a| a.config.search_files).unwrap_or(false));
         if files_on {
             spawn_files_index(hwnd); // scope «+Файлы» сохранён -> построить индекс файлов
