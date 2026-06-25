@@ -269,6 +269,7 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
             }
             Row::Window { idx } => {
                 let it: &WinItem = &app.items[*idx];
+                let id_key = it.path.as_deref().unwrap_or(&it.name); // идентичность: путь, иначе имя (Phase-15)
                 // START_BLOCK_ROW_BG_WINDOW
                 let belling = app.bell.contains(&it.name.to_lowercase());
                 if it.hwnd == fg {
@@ -292,12 +293,12 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 }
                 // цветная плашка (с отступом — окна вложены в секцию)
                 let cy = top + (ROW - SWATCH) / 2;
-                let (_, r, g, b) = PALETTE[app.config.color_idx(&it.name)];
+                let (_, r, g, b) = PALETTE[app.config.color_idx_for(id_key, &it.name)];
                 fill(mem, RECT { left: 22, top: cy, right: 22 + SWATCH, bottom: cy + SWATCH }, (r, g, b)); // +2px зазор от иконки-рамки поиска
                 // имя
                 SelectObject(mem, app.font_main);
                 SetTextColor(mem, rgb(C_TXT.0, C_TXT.1, C_TXT.2));
-                let label = app.config.label(&it.name);
+                let label = app.config.label_for(id_key, &it.name);
                 let hovered = app.hover == i as i32;
                 // START_BLOCK_ROW_WINDOW_RIGHT
                 // в режиме reorder — ручка; при наведении — ✕; иначе метка
@@ -308,7 +309,8 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 } else {
                     w - 96
                 };
-                dt(mem, &it.name, RECT { left: 42, top, right: name_right, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+                let disp = display_name(&it.name, it.path.as_deref().and_then(|p| app.config.number_for(p)));
+                dt(mem, &disp, RECT { left: 42, top, right: name_right, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
                 if app.reorder {
                     draw_handle(mem, w - 18, top);
                 } else if hovered {
@@ -534,6 +536,19 @@ pub fn folder_project(folder: &str) -> String {
     folder.trim_end_matches(['\\', '/']).rsplit(['\\', '/']).next().unwrap_or(folder).to_lowercase()
 }
 
+// START_CONTRACT: display_name
+//   PURPOSE: Имя строки окна с нумерацией дублей по-Windows: «name» или «name (N)» при N>=2 — Phase-15.
+//   INPUTS: { name: &str; number: Option<i32> - стабильный № из M-CONFIG (None = нет пути/не присвоен) }
+//   OUTPUTS: { String }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: display_name
+pub fn display_name(name: &str, number: Option<i32>) -> String {
+    match number {
+        Some(n) if n >= 2 => format!("{} ({})", name, n),
+        _ => name.to_string(), // первый дубль (N=1) и одиночные — без числа
+    }
+}
+
 // START_CONTRACT: search_color_for
 //   PURPOSE: Цвет подсветки для проекта, если он среди совпадений поиска.
 //   INPUTS: { hits: &[FolderHit]; project_lower: &str }
@@ -573,6 +588,14 @@ mod tests {
 
     fn item(app: usize, name: &str) -> WinItem {
         WinItem { hwnd: HWND(std::ptr::null_mut()), app, name: name.to_string(), path: None }
+    }
+
+    #[test]
+    fn display_name_numbers_duplicates() {
+        assert_eq!(display_name("claudebar", None), "claudebar"); // нет пути/номера
+        assert_eq!(display_name("claudebar", Some(1)), "claudebar"); // первый дубль — без числа
+        assert_eq!(display_name("claudebar", Some(2)), "claudebar (2)");
+        assert_eq!(display_name("claudebar", Some(3)), "claudebar (3)");
     }
 
     #[test]
