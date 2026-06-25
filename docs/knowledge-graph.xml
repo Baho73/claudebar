@@ -92,15 +92,16 @@
     </M-ACTIVATE>
 
     <M-RECENT NAME="Recent" TYPE="INTEGRATION" STATUS="implemented">
-      <purpose>Чтение Windows Recent (%APPDATA%\Microsoft\Windows\Recent\*.lnk через IShellLinkW), фильтр по расширению на приложение, исключение открытых сейчас, открытие документа через ShellExecuteW. v0.3: жёсткий лимит 6 снят (хранить до ~50 на приложение, сорт. по mtime); обрезку до 6 решает M-RENDER через «показать все».</purpose>
+      <purpose>Чтение Windows Recent (%APPDATA%\Microsoft\Windows\Recent\*.lnk через IShellLinkW), фильтр по расширению на приложение, исключение открытых сейчас, открытие документа через ShellExecuteW. Плюс недавние проекты редакторов (VS Code/Cursor) из workspaceStorage (workspace.json -> папка), открываемые запуском редактора (OpenCmd::Editor). v0.3: жёсткий лимит 6 снят (хранить до ~50 на приложение, сорт. по mtime); обрезку до 6 решает M-RENDER через «показать все».</purpose>
       <path>src/recent.rs</path>
       <depends>M-WINENUM, M-CONFIG</depends>
       <verification-ref>V-M-RECENT</verification-ref>
       <annotations>
-        <fn-list_recent PURPOSE="Распарсить .lnk Recent в пути с временем (до STORE_LIMIT на app, по mtime)" />
+        <fn-list_recent PURPOSE="Недавние: .lnk Recent (Office) + проекты редакторов из workspaceStorage; до STORE_LIMIT на app, по mtime" />
         <fn-resolve_lnk PURPOSE="IShellLinkW::GetPath -> целевой путь" />
         <fn-open_doc PURPOSE="ShellExecuteW(open, path)" />
         <type-RecentDoc PURPOSE="Недавний документ: путь, ключ приложения, время последнего открытия" />
+        <type-OpenCmd PURPOSE="Как открыть недавнее: Lnk(ярлык Recent) | Editor{exe, folder} (проект редактора)" />
       </annotations>
     </M-RECENT>
 

@@ -182,7 +182,7 @@
 
     <M-RECENT NAME="Recent" TYPE="INTEGRATION" LAYER="2" ORDER="1" STATUS="implemented">
       <contract>
-        <purpose>Недавние документы из Windows Recent по расширению, исключая открытые сейчас; открытие через ShellExecute. v0.3: жёсткий лимит 6 снимается (хранить ~50 на приложение, сорт. по mtime) — обрезку до 6 решает M-RENDER через «показать все».</purpose>
+        <purpose>Недавние документы из Windows Recent по расширению, исключая открытые сейчас; открытие через ShellExecute. Плюс недавние проекты редакторов (VS Code/Cursor) из workspaceStorage (workspace.json -&gt; папка), открываемые запуском редактора (OpenCmd::Editor). v0.3: жёсткий лимит 6 снимается (хранить ~50 на приложение, сорт. по mtime) — обрезку до 6 решает M-RENDER через «показать все».</purpose>
         <inputs><param name="apps" type="&amp;[AppDef]" /><param name="open_basenames" type="&amp;HashSet" /></inputs>
         <outputs><param name="Vec&lt;RecentDoc&gt;" type="path+app+mtime" /></outputs>
       </contract>
@@ -266,31 +266,33 @@
         <outputs><param name="exit code" type="i32" /></outputs>
       </contract>
       <interface><export-main PURPOSE="Точка входа" /></interface>
-      <depends>M-CONFIG, M-WINENUM, M-RENDER, M-SIGNAL, M-SETTINGS</depends>
+      <depends>M-CONFIG, M-WINENUM, M-RENDER, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX</depends>
       <target><source>src/main.rs</source><tests>smoke-запуск exe</tests></target>
       <verification-ref>V-M-MAIN</verification-ref>
     </M-MAIN>
 
     <M-SEARCH NAME="Search" TYPE="CORE_LOGIC" LAYER="2" ORDER="5" STATUS="implemented">
       <contract>
-        <purpose>Поиск по чатам с подсветкой папок. Живой BM25 нативно (rusqlite поверх общего clfind.db FTS5, WAL read-only) с 3-го символа; при пустом BM25 — fallback на dense через M-SDAEMON. Агрегация чанков по project_folder, цвет: жёлтый=BM25, синий=dense (зелёного нет). Phase-12.</purpose>
+        <purpose>Поиск по чатам: нативный живой BM25 (rusqlite поверх СВОЕЙ claudebar_chats.db FTS5, read-only) с 3-го символа, агрегация чанков по project_folder, цвет жёлтый. snippet_for — фраза-сниппет для тултипа. Dense (смысл) отложен — M-SDAEMON dormant, search() = BM25-only. Phase-12 -&gt; Phase-13.</purpose>
         <inputs><param name="query" type="&amp;str" /><param name="db_path" type="&amp;Path" /></inputs>
         <outputs><param name="Vec&lt;FolderHit&gt;" type="folder+bm25/dense+color+best" /></outputs>
         <errors><error code="DB_OPEN_FALLBACK_EMPTY" /><error code="DAEMON_UNAVAILABLE_BM25_ONLY" /></errors>
       </contract>
       <interface>
         <export-fts_query PURPOSE="Чистое: ввод -&gt; FTS5 MATCH (токены \w+, последний как префикс term*); защита от инъекции" />
-        <export-bm25_search PURPOSE="rusqlite: clfind.db (WAL, ro) FTS5 MATCH -&gt; чанки (folder, score)" />
+        <export-bm25_search PURPOSE="rusqlite: своя claudebar_chats.db (ro) FTS5 MATCH -&gt; чанки (folder, score)" />
+        <export-snippet_for PURPOSE="rusqlite: фраза-сниппет (FTS5 snippet) лучшего совпадения в папке — для тултипа" />
+        <export-folder_for_project PURPOSE="Чистое (ro): папка проекта по basename имени окна — для меню «ссылка/проводник» (Phase-14)" />
         <export-aggregate_to_folders PURPOSE="Чистое: чанки -&gt; папки с флагами bm25/dense, цветом и лучшим чанком" />
-        <export-parse_dense_response PURPOSE="Чистое: JSON демона -&gt; папки с dense-скором (ручной разбор)" />
-        <export-search PURPOSE="Оркестрация: live BM25; пусто -&gt; dense-fallback через M-SDAEMON" />
+        <export-parse_dense_response PURPOSE="Чистое: JSON демона -&gt; папки с dense-скором (ручной разбор; dormant до оживления dense)" />
+        <export-search PURPOSE="BM25-only по своей базе; dense-fallback отложен (M-SDAEMON dormant, cmd/port игнорируются)" />
       </interface>
       <depends>none</depends>
-      <target><source>src/search.rs</source><tests>src/search.rs (#[cfg(test)] на fts_query/aggregate/parse + bm25 на temp clfind.db)</tests></target>
+      <target><source>src/search.rs</source><tests>src/search.rs (#[cfg(test)] на fts_query/aggregate/parse/folder_for_project + bm25 на temp claudebar_chats.db)</tests></target>
       <verification-ref>V-M-SEARCH</verification-ref>
     </M-SEARCH>
 
-    <M-SDAEMON NAME="SearchDaemon" TYPE="INTEGRATION" LAYER="2" ORDER="6" STATUS="implemented">
+    <M-SDAEMON NAME="SearchDaemon" TYPE="INTEGRATION" LAYER="2" ORDER="6" STATUS="dormant">
       <contract>
         <purpose>Клиент Python-демона clfind (только dense): спавн `clfind serve` при молчащем /health (команда из M-CONFIG.search_daemon_cmd, pythonw без консоли), поллинг /health до ready, dense-запрос HTTP POST /search через std::net (без HTTP-крейта). Phase-12.</purpose>
         <inputs><param name="cmd" type="&amp;str" /><param name="port" type="u16" /><param name="query" type="&amp;str" /></inputs>
@@ -308,7 +310,7 @@
       <verification-ref>V-M-SDAEMON</verification-ref>
     </M-SDAEMON>
 
-    <M-INDEX NAME="Index" TYPE="DATA_LAYER" LAYER="2" ORDER="7" STATUS="planned">
+    <M-INDEX NAME="Index" TYPE="DATA_LAYER" LAYER="2" ORDER="7" STATUS="implemented">
       <contract>
         <purpose>Rust-индексатор: строит/освежает локальный BM25-индекс (SQLite FTS5) из транскриптов Claude Code (~/.claude/projects/**/*.jsonl), позже — из доков history. Инкремент по mtime; авто-запуск при старте + по таймеру (фон). Заменяет Python-сборку BM25 (clfind остаётся для отложенного dense). Phase-13.</purpose>
         <inputs><param name="chats_db" type="&amp;str" /><param name="projects_root" type="&amp;str" /></inputs>

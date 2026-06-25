@@ -194,15 +194,15 @@
         <scenario-3 kind="success">bm25_search против временной clfind.db (создать FTS5 в тесте через rusqlite, вставить чанки) -> верные папки по префиксу</scenario-3>
         <scenario-4 kind="success">aggregate_to_folders: чанки нескольких папок -> дедуп по папке, флаги bm25/dense, лучший чанк; color_of(bm25-only)=жёлтый, (dense-only)=синий</scenario-4>
         <scenario-5 kind="success">parse_dense_response: JSON демона -> папки с dense-скором (ручной разбор, как recent.rs)</scenario-5>
-        <scenario-6 kind="success">Оркестрация: непустой BM25 -> demon НЕ поднимается; пустой BM25 -> вызов M-SDAEMON (smoke)</scenario-6>
+        <scenario-6 kind="dormant">Оркестрация dense-fallback (пустой BM25 -> M-SDAEMON) — ОТЛОЖЕНО (Phase-13): search() = BM25-only, dense-ветка усыплена. Проверять при оживлении dense-модуля (Python)</scenario-6>
         <scenario-8 kind="success">folder_for_project (Phase-14): temp-БД с project_folder «D:\Python\claudebar» (source='chat'); запрос «claudebar» -> Some(папка), «CLAUDEBAR» -> Some (регистронезависимо по basename), «нет-такого» -> None. Тест folder_for_project_*</scenario-8>
       </scenarios>
     </V-M-SEARCH>
-    <V-M-SDAEMON MODULE="M-SDAEMON" PRIORITY="medium">
+    <V-M-SDAEMON MODULE="M-SDAEMON" PRIORITY="medium" STATUS="dormant">
       <test-files><file>src/sdaemon.rs (#[cfg(test)])</file></test-files>
       <module-checks>
-        <check-1>cargo test sdaemon</check-1>
-        <check-2>Ручной smoke: при молчащем /health спавнит clfind serve, дожидается ready, dense-запрос возвращает папки</check-2>
+        <check-1>cargo test sdaemon (чистые parse_health/build_dense_request — реальны и зелены)</check-1>
+        <check-2 status="dormant">ОТЛОЖЕНО: ручной smoke живого демона (спавн clfind serve, /health ready, dense-запрос) — проверять при оживлении dense</check-2>
       </module-checks>
       <scenarios>
         <scenario-1 kind="success">parse_health: тело -> cold|loading|ready; мусор -> безопасный дефолт</scenario-1>
