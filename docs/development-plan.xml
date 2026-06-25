@@ -656,7 +656,7 @@
 
     <Phase-16 name="Сортировка окон (alpha/recent)" status="pending">
       <goal>Настройка порядка окон: alpha (по имени, как сейчас) или recent (позже открыто -&gt; ниже). Ручной drag-порядок важнее; новое окно по умолчанию вниз. Утверждён пользователем (gg).</goal>
-      <step-1 module="M-CONFIG" status="pending" verification="V-M-CONFIG">Ключ sort=alpha|recent (дефолт alpha); is/set + персист. Round-trip</step-1>
+      <step-1 module="M-CONFIG" status="done" verification="V-M-CONFIG">Ключ sort=alpha|recent (дефолт alpha); sort_recent + is_sort_recent/set_sort_recent + персист. Тест sort_mode_roundtrip</step-1>
       <step-2 module="M-MAIN" status="pending" verification="V-M-MAIN">Карта hwnd-&gt;ordinal (first-seen за сессию): новый hwnd получает следующий ordinal; для recent и «новое -&gt; вниз»</step-2>
       <step-3 module="M-RENDER" status="pending" verification="V-M-RENDER">build_rows порядок: ручной (window_order) первичен; остальные по sort= (alpha=имя | recent=ordinal возр.); окно без позиции/ordinal -&gt; в конец секции</step-3>
       <step-4 module="M-MAIN" status="pending" verification="V-M-MAIN">Пункт ⚙ переключатель сортировки (alpha/recent, checkable) -&gt; set + save + rebuild</step-4>

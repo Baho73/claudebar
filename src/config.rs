@@ -140,6 +140,7 @@ pub struct Config {
     pub files_db: String, // своя FTS5-база файлов (Ф-C) — Phase-13
     pub projects_root: String, // корень транскриптов Claude Code для индексации — Phase-13
     pub search_files: bool, // scope «+Файлы»: искать и в claudebar_files.db (ключ searchfiles=) — Phase-13
+    pub sort_recent: bool, // порядок окон: true=recent (позже открыто -> ниже), false=alpha (по имени; ключ sort=) — Phase-16
     pub cfg_path: PathBuf,
 }
 
@@ -262,6 +263,7 @@ struct ParsedIni {
     files_db: String,
     projects_root: String,
     search_files: bool,
+    sort_recent: bool,
 }
 
 fn parse_ini(text: &str) -> ParsedIni {
@@ -283,6 +285,7 @@ fn parse_ini(text: &str) -> ParsedIni {
     let mut files_db: String = default_files_db();
     let mut projects_root: String = default_projects_root();
     let mut search_files = false;
+    let mut sort_recent = false;
     // START_BLOCK_PARSE_LINES
     for line in text.lines() {
         if let Some(v) = line.strip_prefix("pos=") {
@@ -343,6 +346,8 @@ fn parse_ini(text: &str) -> ParsedIni {
             }
         } else if let Some(v) = line.strip_prefix("searchfiles=") {
             search_files = v.trim() == "1";
+        } else if let Some(v) = line.strip_prefix("sort=") {
+            sort_recent = v.trim() == "recent";
         } else if let Some(v) = line.strip_prefix("os=") {
             section_order = v.split('\t').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
         } else if let Some(v) = line.strip_prefix("o=") {
@@ -385,7 +390,7 @@ fn parse_ini(text: &str) -> ParsedIni {
         }
     }
     // END_BLOCK_PARSE_LINES
-    ParsedIni { projects, proj_numbers, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, search_port, chats_db, files_db, projects_root, search_files }
+    ParsedIni { projects, proj_numbers, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, search_port, chats_db, files_db, projects_root, search_files, sort_recent }
 }
 
 impl Config {
@@ -412,6 +417,7 @@ impl Config {
             files_db: p.files_db,
             projects_root: p.projects_root,
             search_files: p.search_files,
+            sort_recent: p.sort_recent,
             cfg_path,
         }
     }
@@ -429,6 +435,7 @@ impl Config {
         out += &format!("filesdb={}\n", self.files_db);
         out += &format!("projectsroot={}\n", self.projects_root);
         out += &format!("searchfiles={}\n", if self.search_files { 1 } else { 0 });
+        out += &format!("sort={}\n", if self.sort_recent { "recent" } else { "alpha" });
         for block in &self.collapsed {
             out += &format!("c={}\n", block);
         }
@@ -583,6 +590,14 @@ impl Config {
         self.proj_numbers.get(path).copied()
     }
 
+    pub fn is_sort_recent(&self) -> bool {
+        self.sort_recent
+    }
+
+    pub fn set_sort_recent(&mut self, v: bool) {
+        self.sort_recent = v;
+    }
+
     // Цвет по ключу-идентичности (полный путь), с откатом на fallback (имя) — back-compat со старым конфигом.
     pub fn color_idx_for(&self, key: &str, fallback: &str) -> usize {
         if self.projects.contains_key(key) {
@@ -637,6 +652,7 @@ mod tests {
             files_db: String::new(),
             projects_root: String::new(),
             search_files: false,
+            sort_recent: false,
             cfg_path: PathBuf::new(),
         }
     }
@@ -668,6 +684,15 @@ mod tests {
         c.set_color("D:\\a\\claudebar", 5);
         assert_eq!(c.color_idx_for("D:\\a\\claudebar", "claudebar"), 5);
         assert_eq!(c.color_idx_for("claudebar", "claudebar"), 3); // окно без пути -> старое
+    }
+
+    #[test]
+    fn sort_mode_roundtrip() {
+        let mut c = cfg(vec![]);
+        assert!(!c.is_sort_recent()); // дефолт alpha
+        c.set_sort_recent(true);
+        assert!(parse_ini(&c.serialize(None)).sort_recent); // round-trip
+        assert!(!parse_ini("font=X\t14\t400").sort_recent); // нет ключа -> alpha
     }
 
     #[test]
