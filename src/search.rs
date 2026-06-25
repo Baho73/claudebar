@@ -284,6 +284,29 @@ pub fn snippet_for(db: &str, query: &str, folder: &str) -> Option<String> {
     conn.query_row(sql, params![fts, folder], |r| r.get::<_, String>(0)).ok()
 }
 
+// START_CONTRACT: folder_for_project
+//   PURPOSE: Папка проекта по имени окна — для пункта меню «Скопировать ссылку / Открыть в проводнике» (Phase-14).
+//   INPUTS: { chats_db: &str; name: &str - имя проекта/окна }
+//   OUTPUTS: { Option<String> - первый project_folder, чей basename == name (регистронезависимо), иначе None }
+//   SIDE_EFFECTS: чтение chats_db read-only
+// END_CONTRACT: folder_for_project
+pub fn folder_for_project(chats_db: &str, name: &str) -> Option<String> {
+    let want = name.trim().to_lowercase();
+    if want.is_empty() {
+        return None;
+    }
+    let conn = Connection::open_with_flags(chats_db, OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+    let mut stmt = conn.prepare("SELECT DISTINCT project_folder FROM chunks WHERE source='chat'").ok()?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0)).ok()?;
+    for folder in rows.flatten() {
+        let base = folder.rsplit(|c| c == '\\' || c == '/').next().unwrap_or(&folder).to_lowercase();
+        if base == want {
+            return Some(folder);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,6 +337,27 @@ mod tests {
         // пусто / только исключение -> None
         assert_eq!(fts_query("   ").as_deref(), None);
         assert_eq!(fts_query("-только").as_deref(), None);
+    }
+
+    #[test]
+    fn folder_for_project_matches_basename() {
+        let path = std::env::temp_dir().join("clfind_folder_test.db");
+        let _ = std::fs::remove_file(&path);
+        let p = path.to_str().unwrap();
+        {
+            let conn = Connection::open(p).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE chunks(id INTEGER PRIMARY KEY, project_folder TEXT, source TEXT, ref TEXT, location TEXT, text TEXT);",
+            )
+            .unwrap();
+            conn.execute("INSERT INTO chunks(project_folder,source,ref,location,text) VALUES ('D:\\Python\\claudebar','chat','s','0','t')", []).unwrap();
+            conn.execute("INSERT INTO chunks(project_folder,source,ref,location,text) VALUES ('D:\\Python\\other','file','f','x','t')", []).unwrap();
+        }
+        assert_eq!(folder_for_project(p, "claudebar").as_deref(), Some("D:\\Python\\claudebar"));
+        assert_eq!(folder_for_project(p, "CLAUDEBAR").as_deref(), Some("D:\\Python\\claudebar")); // регистронезависимо
+        assert_eq!(folder_for_project(p, "нет-такого").as_deref(), None);
+        assert_eq!(folder_for_project(p, "other").as_deref(), None); // 'other' только в files (source='file')
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

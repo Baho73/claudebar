@@ -598,7 +598,7 @@
 
     <Phase-14 name="Действия по ПКМ: ссылка и проводник" status="pending">
       <goal>В контекстном меню окна (ПКМ) два пункта: «Скопировать ссылку» и «Открыть в проводнике». По типу окна (NameMode): проект -&gt; папка проекта; документ -&gt; сам файл (Explorer с выделением). Утверждён пользователем (gg).</goal>
-      <step-1 module="M-SEARCH" status="pending" verification="V-M-SEARCH">folder_for_project(chats_db, name) -&gt; Option&lt;String&gt;: SELECT DISTINCT project_folder (source='chat'), матч basename==name регистронезависимо, первый. Чистая, read-only; тест против temp-БД (найден/регистр/None)</step-1>
+      <step-1 module="M-SEARCH" status="done" verification="V-M-SEARCH">folder_for_project(chats_db, name) -&gt; Option&lt;String&gt;: SELECT DISTINCT project_folder (source='chat'), матч basename==name регистронезависимо, первый. Чистая, read-only; тест против temp-БД (найден/регистр/None)</step-1>
       <step-2 module="M-MAIN" status="pending" verification="V-M-MAIN">Фоновая карта doc_paths (basename.lower -&gt; полный путь) из Windows Recent .lnk (переиспользует collect_history_docs/resolve_lnk в COM-потоке); строится при старте и обновляется по таймеру; UI читает готовую</step-2>
       <step-3 module="M-MAIN" status="pending" verification="V-M-MAIN">show_menu: по apps[app].mode выбрать цель (Project: folder_for_project; Document/DocumentLast: doc_paths; Whole/None: пусто); пункты ID_COPY_LINK/ID_OPEN_DIR (MF_GRAYED если цели нет). handle_command: copy -&gt; clipboard (CF_UNICODETEXT); open -&gt; папка ShellExecute / файл explorer /select</step-3>
       <checkpoint>
