@@ -178,7 +178,7 @@
         <scenario-5 kind="success">Phase-13 Ф-B: tracking-подсказка (dwell ~0.5с) — полный путь/имя на строках окон/недавних, путь+сниппет (snippet_for) для чат-результатов, правила синтаксиса над строкой поиска; уход курсора прячет (WM_MOUSELEAVE)</scenario-5>
         <scenario-6 kind="success">Phase-13 Ф-C: меню «Искать в файлах» включает scope -> spawn_files_index (COM-резолв .lnk из Recent в фоновом потоке с CoInitializeEx, ensure_files_index) -> поиск через search_bm25 находит и в файлах; выключение возвращает только чаты</scenario-6>
         <scenario-7 kind="regression">ПКМ по строке окна / клик «⚙»: контекстное меню (TrackPopupMenu, модальный цикл) НЕ закрывается само через ~0.5с и тултип не всплывает поверх. Механизм: флаг MENU_ACTIVE выставлен вокруг TrackPopupMenu; WM_TIMER при нём ничего не делает (ни show_tooltip по dwell ~0.5с, ни refresh/resize по ~1с — любой из них закрывал меню). KillTimer ненадёжен: не удаляет уже синтезированное WM_TIMER из очереди. Smoke: правый клик, подержать без движения мыши &gt;1с — меню остаётся, тултипа нет</scenario-7>
-        <scenario-8 kind="success">Phase-14: ПКМ по VS Code/Cursor -> «Скопировать ссылку» кладёт путь папки проекта в буфер, «Открыть в проводнике» открывает папку. ПКМ по Word/Excel/MS Project -> «ссылка» = полный путь файла, «проводник» = Explorer с выделением файла (/select). ПКМ по терминалу/Проводнику или нерезолвимому пути -> оба пункта MF_GRAYED. doc_paths строится в фоне (COM-поток), UI не морозится</scenario-8>
+        <scenario-8 kind="success">Phase-14: ПКМ по VS Code/Cursor -> «Скопировать ссылку» кладёт путь папки проекта в буфер, «Открыть в проводнике» открывает папку. ПКМ по Word/Excel/MS Project -> «ссылка» = полный путь файла, «проводник» = Explorer с выделением файла (/select). ПКМ по терминалу/Проводнику или нерезолвимому пути -> оба пункта MF_GRAYED. doc_paths И кэш папок проектов (PROJ_FOLDERS/project_folders) строятся в фоне; ПКМ матчит по basename в памяти — D-02: синхронного открытия SQLite на UI-потоке при правом клике больше нет</scenario-8>
       </scenarios>
     </V-M-MAIN>
     <V-M-SEARCH MODULE="M-SEARCH" PRIORITY="high">
@@ -195,7 +195,7 @@
         <scenario-4 kind="success">aggregate_to_folders: чанки нескольких папок -> дедуп по папке, флаги bm25/dense, лучший чанк; color_of(bm25-only)=жёлтый, (dense-only)=синий</scenario-4>
         <scenario-5 kind="success">parse_dense_response: JSON демона -> папки с dense-скором (ручной разбор, как recent.rs)</scenario-5>
         <scenario-6 kind="dormant">Оркестрация dense-fallback (пустой BM25 -> M-SDAEMON) — ОТЛОЖЕНО (Phase-13): search() = BM25-only, dense-ветка усыплена. Проверять при оживлении dense-модуля (Python)</scenario-6>
-        <scenario-8 kind="success">folder_for_project (Phase-14): temp-БД с project_folder «D:\Python\claudebar» (source='chat'); запрос «claudebar» -> Some(папка), «CLAUDEBAR» -> Some (регистронезависимо по basename), «нет-такого» -> None. Тест folder_for_project_*</scenario-8>
+        <scenario-8 kind="success">project_folders + folder_for_project (Phase-14): temp-БД (прод-схема) с project_folder «D:\Python\claudebar» (source='chat') и «D:\Python\other» (source='file'); project_folders -> только chat-папка (file отброшен); чистый folder_for_project(&folders, name) -> «claudebar»/«CLAUDEBAR» Some (регистронезависимо), «нет-такого»/«other» None. Тест project_folders_and_match</scenario-8>
       </scenarios>
     </V-M-SEARCH>
     <V-M-SDAEMON MODULE="M-SDAEMON" PRIORITY="medium" STATUS="dormant">

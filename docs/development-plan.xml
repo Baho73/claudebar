@@ -282,7 +282,8 @@
         <export-fts_query PURPOSE="Чистое: ввод -&gt; FTS5 MATCH (токены \w+, последний как префикс term*); защита от инъекции" />
         <export-bm25_search PURPOSE="rusqlite: своя claudebar_chats.db (ro) FTS5 MATCH -&gt; чанки (folder, score)" />
         <export-snippet_for PURPOSE="rusqlite: фраза-сниппет (FTS5 snippet) лучшего совпадения в папке — для тултипа" />
-        <export-folder_for_project PURPOSE="Чистое (ro): папка проекта по basename имени окна — для меню «ссылка/проводник» (Phase-14)" />
+        <export-project_folders PURPOSE="DB-скан (ro): DISTINCT project_folder 'chat' — фоновый кэш меню (Phase-14; D-02: не на UI)" />
+        <export-folder_for_project PURPOSE="Чистое: матч папки по basename в кэше project_folders — для меню «ссылка/проводник» (Phase-14)" />
         <export-aggregate_to_folders PURPOSE="Чистое: чанки -&gt; папки с флагами bm25/dense, цветом и лучшим чанком" />
         <export-parse_dense_response PURPOSE="Чистое: JSON демона -&gt; папки с dense-скором (ручной разбор; dormant до оживления dense)" />
         <export-search PURPOSE="BM25-only по своей базе; dense-fallback отложен (M-SDAEMON dormant, cmd/port игнорируются)" />

@@ -1236,14 +1236,19 @@ unsafe fn resolve_lnk(lnk: &std::path::Path) -> Option<String> {
 // Карта basename(lowercase) -> полный путь файла из Windows Recent (.lnk резолв).
 // Меню документа (Word/Excel/MS Project) читает её на UI-потоке; строится в фоне (COM).
 static DOC_PATHS: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+// Папки проектов из чат-индекса (D-02): фон делает DB-скан, ПКМ матчит по basename в памяти —
+// чтобы не открывать SQLite синхронно на UI-потоке при каждом правом клике (лаг под пишущим индексатором).
+static PROJ_FOLDERS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static DOC_PATHS_BUILDING: AtomicBool = AtomicBool::new(false);
 
-// Построить/освежить карту doc_paths в фоне (резолв .lnk Recent через COM, не морозит UI).
+// Построить/освежить в фоне карты для меню «ссылка/проводник»: пути документов (резолв .lnk Recent
+// через COM) и папки проектов (DB-скан chats_db). Не морозит UI.
 fn spawn_doc_paths() {
     if DOC_PATHS_BUILDING.swap(true, Ordering::SeqCst) {
         return;
     }
-    std::thread::spawn(|| {
+    let chats_db = APP.with(|c| c.borrow().as_ref().map(|a| a.config.chats_db.clone()).unwrap_or_default());
+    std::thread::spawn(move || {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         }
@@ -1257,6 +1262,11 @@ fn spawn_doc_paths() {
         if let Ok(mut g) = DOC_PATHS.lock() {
             *g = map;
         }
+        // папки проектов из чат-индекса (полный скан — здесь, в фоне, не на UI)
+        let folders = search::project_folders(&chats_db);
+        if let Ok(mut g) = PROJ_FOLDERS.lock() {
+            *g = folders;
+        }
         unsafe {
             CoUninitialize();
         }
@@ -1268,6 +1278,12 @@ fn spawn_doc_paths() {
 fn doc_path_for(name: &str) -> Option<String> {
     let key = name.trim().to_lowercase();
     DOC_PATHS.lock().ok()?.get(&key).cloned()
+}
+
+// Папка проекта по имени окна — чистый матч по кэшу PROJ_FOLDERS (без БД, безопасно на UI).
+fn proj_folder_for(name: &str) -> Option<String> {
+    let folders = PROJ_FOLDERS.lock().ok()?;
+    search::folder_for_project(&folders, name)
 }
 
 // Положить текст в буфер обмена (CF_UNICODETEXT). При успехе владение hmem уходит буферу.
@@ -1383,7 +1399,7 @@ fn menu_link_for(a: &App, wi: usize) -> Option<(String, bool)> {
     let it = a.items.get(wi)?;
     match a.config.apps.get(it.app)?.mode {
         config::NameMode::Project { .. } => {
-            search::folder_for_project(&a.config.chats_db, &it.name).map(|f| (f, false))
+            proj_folder_for(&it.name).map(|f| (f, false)) // кэш PROJ_FOLDERS, без БД на UI (D-02)
         }
         config::NameMode::Document | config::NameMode::DocumentLast => {
             doc_path_for(&it.name).map(|p| (p, true))

@@ -284,27 +284,42 @@ pub fn snippet_for(db: &str, query: &str, folder: &str) -> Option<String> {
     conn.query_row(sql, params![fts, folder], |r| r.get::<_, String>(0)).ok()
 }
 
+// basename папки в нижнем регистре (разделители \ и /).
+fn basename_lower(p: &str) -> String {
+    p.rsplit(|c| c == '\\' || c == '/').next().unwrap_or(p).to_lowercase()
+}
+
+// START_CONTRACT: project_folders
+//   PURPOSE: Все папки проектов из чат-индекса (DISTINCT) — фоновый DB-скан для карты меню (Phase-14).
+//   INPUTS: { chats_db: &str }
+//   OUTPUTS: { Vec<String> - уникальные project_folder источника 'chat' (пусто при ошибке/отсутствии БД) }
+//   SIDE_EFFECTS: чтение chats_db read-only. ВЫЗЫВАТЬ В ФОНЕ — полный скан, не на UI-потоке.
+// END_CONTRACT: project_folders
+pub fn project_folders(chats_db: &str) -> Vec<String> {
+    let Ok(conn) = Connection::open_with_flags(chats_db, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
+        return Vec::new();
+    };
+    let Ok(mut stmt) = conn.prepare("SELECT DISTINCT project_folder FROM chunks WHERE source='chat'") else {
+        return Vec::new();
+    };
+    let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) else {
+        return Vec::new();
+    };
+    rows.flatten().collect()
+}
+
 // START_CONTRACT: folder_for_project
-//   PURPOSE: Папка проекта по имени окна — для пункта меню «Скопировать ссылку / Открыть в проводнике» (Phase-14).
-//   INPUTS: { chats_db: &str; name: &str - имя проекта/окна }
-//   OUTPUTS: { Option<String> - первый project_folder, чей basename == name (регистронезависимо), иначе None }
-//   SIDE_EFFECTS: чтение chats_db read-only
+//   PURPOSE: Папка проекта по имени окна — чистый матч по basename для меню «ссылка/проводник» (Phase-14).
+//   INPUTS: { folders: &[String] - кэш project_folders; name: &str - имя проекта/окна }
+//   OUTPUTS: { Option<String> - первая папка, чей basename == name (регистронезависимо), иначе None }
+//   SIDE_EFFECTS: нет (чистая, без БД) — безопасна на UI-потоке.
 // END_CONTRACT: folder_for_project
-pub fn folder_for_project(chats_db: &str, name: &str) -> Option<String> {
+pub fn folder_for_project(folders: &[String], name: &str) -> Option<String> {
     let want = name.trim().to_lowercase();
     if want.is_empty() {
         return None;
     }
-    let conn = Connection::open_with_flags(chats_db, OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
-    let mut stmt = conn.prepare("SELECT DISTINCT project_folder FROM chunks WHERE source='chat'").ok()?;
-    let rows = stmt.query_map([], |r| r.get::<_, String>(0)).ok()?;
-    for folder in rows.flatten() {
-        let base = folder.rsplit(|c| c == '\\' || c == '/').next().unwrap_or(&folder).to_lowercase();
-        if base == want {
-            return Some(folder);
-        }
-    }
-    None
+    folders.iter().find(|f| basename_lower(f) == want).cloned()
 }
 
 #[cfg(test)]
@@ -357,15 +372,19 @@ mod tests {
     }
 
     #[test]
-    fn folder_for_project_matches_basename() {
+    fn project_folders_and_match() {
         let path = std::env::temp_dir().join("clbar_folder_test.db");
         let _ = std::fs::remove_file(&path);
         let p = path.to_str().unwrap();
         seed_db(p, &[("D:\\Python\\claudebar", "chat", "t"), ("D:\\Python\\other", "file", "x")]);
-        assert_eq!(folder_for_project(p, "claudebar").as_deref(), Some("D:\\Python\\claudebar"));
-        assert_eq!(folder_for_project(p, "CLAUDEBAR").as_deref(), Some("D:\\Python\\claudebar")); // регистронезависимо
-        assert_eq!(folder_for_project(p, "нет-такого").as_deref(), None);
-        assert_eq!(folder_for_project(p, "other").as_deref(), None); // 'other' только в files (source='file')
+        // DB-скан: только source='chat' ('other' из files отброшен)
+        let folders = project_folders(p);
+        assert_eq!(folders, vec!["D:\\Python\\claudebar".to_string()]);
+        // чистый матч по basename (без БД), регистронезависимо
+        assert_eq!(folder_for_project(&folders, "claudebar").as_deref(), Some("D:\\Python\\claudebar"));
+        assert_eq!(folder_for_project(&folders, "CLAUDEBAR").as_deref(), Some("D:\\Python\\claudebar"));
+        assert_eq!(folder_for_project(&folders, "нет-такого").as_deref(), None);
+        assert_eq!(folder_for_project(&folders, "other").as_deref(), None);
         let _ = std::fs::remove_file(&path);
     }
 
