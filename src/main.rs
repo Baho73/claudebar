@@ -17,6 +17,8 @@ mod sdaemon;
 mod search;
 mod settings;
 mod signal;
+#[allow(dead_code)] // transcribe используется M-VOICE (Phase-19); чистые функции покрыты тестами
+mod stt;
 mod win_enum;
 
 use std::cell::{Cell, RefCell};
