@@ -354,7 +354,7 @@
       <verification-ref>V-M-INDEX</verification-ref>
     </M-INDEX>
 
-    <M-AUDIO NAME="Audio" TYPE="INTEGRATION" LAYER="2" ORDER="8" STATUS="planned">
+    <M-AUDIO NAME="Audio" TYPE="INTEGRATION" LAYER="2" ORDER="8" STATUS="implemented">
       <contract>
         <purpose>Захват аудио с микрофона по умолчанию (cpal) в WAV 16-bit PCM mono в память: старт по началу диктовки, стоп возвращает байты WAV для распознавания. Phase-18.</purpose>
         <inputs><param name="(start)" type="устройство ввода по умолчанию" /></inputs>
@@ -372,7 +372,7 @@
       <verification-ref>V-M-AUDIO</verification-ref>
     </M-AUDIO>
 
-    <M-STT NAME="SpeechToText" TYPE="INTEGRATION" LAYER="2" ORDER="9" STATUS="planned">
+    <M-STT NAME="SpeechToText" TYPE="INTEGRATION" LAYER="2" ORDER="9" STATUS="implemented">
       <contract>
         <purpose>Синхронное распознавание: POST WAV на whisper-dictate /transcribe (localhost http через std::net::TcpStream, без HTTP-крейта), разбор {"text"}. multipart с опц. language/hotwords/initial_prompt. Phase-18.</purpose>
         <inputs><param name="url" type="&amp;str" /><param name="wav" type="&amp;[u8]" /><param name="opts" type="language/hotwords/initial_prompt" /></inputs>
@@ -390,7 +390,7 @@
       <verification-ref>V-M-STT</verification-ref>
     </M-STT>
 
-    <M-TRANSFORM NAME="Transform" TYPE="CORE_LOGIC" LAYER="2" ORDER="10" STATUS="planned">
+    <M-TRANSFORM NAME="Transform" TYPE="CORE_LOGIC" LAYER="2" ORDER="10" STATUS="implemented">
       <contract>
         <purpose>Пост-обработка распознанного текста перед вставкой: хардкод-чистка типового мусора Whisper (галлюцинации на тишине, повторы, пробелы) + кастомный словарь пост-заменой (wrong-&gt;right) + шов под внешний API (переформ./перевод, default off — фаза D). Phase-18.</purpose>
         <inputs><param name="text" type="&amp;str" /><param name="vocab" type="&amp;[(String,String)]" /></inputs>
@@ -407,7 +407,7 @@
       <verification-ref>V-M-TRANSFORM</verification-ref>
     </M-TRANSFORM>
 
-    <M-PASTE NAME="Paste" TYPE="UTILITY" LAYER="2" ORDER="11" STATUS="planned">
+    <M-PASTE NAME="Paste" TYPE="UTILITY" LAYER="2" ORDER="11" STATUS="implemented">
       <contract>
         <purpose>Вставка текста в активное поле: сохранить прежний буфер обмена, положить текст (CF_UNICODETEXT), сымитировать Ctrl+V (SendInput) в foreground-окно, вернуть прежний буфер. Win32-фичи уже подключены (DataExchange/Memory/KeyboardAndMouse). Phase-18.</purpose>
         <inputs><param name="text" type="&amp;str" /></inputs>
@@ -806,13 +806,13 @@
       </checkpoint>
     </Phase-17>
 
-    <Phase-18 name="Голосовой ввод: конвейер (audio-stt-transform-paste)" status="pending">
+    <Phase-18 name="Голосовой ввод: конвейер (audio-stt-transform-paste)" status="done">
       <goal>Строительные блоки голосового ввода (замена Blabby.AI): конфиг+парсинг хоткея/словаря, захват аудио (cpal), синхронный STT к whisper-dictate (:8771), чистка+словарь, вставка через буфер. Каждый блок юнит-тестируется; UI-оркестрация — Phase-19. Спек docs/superpowers/specs/2026-06-27-voice-input-design.md. Утверждён (gg afk).</goal>
-      <step-1 module="M-CONFIG" status="pending" verification="V-M-CONFIG">Ключи ini: voice_hotkey=Ctrl+Space, whisper_url=http://127.0.0.1:8771/transcribe, voice_language=ru, vocab (wrong=right;...), hotwords/initial_prompt (опц.), transform/transform_url. Чистые parse_hotkey(&amp;str)-&gt;(mods,vk) и parse_vocab(&amp;str)-&gt;Vec&lt;(String,String)&gt;. Тесты на оба</step-1>
-      <step-2 module="M-AUDIO" status="pending" verification="V-M-AUDIO">Новый src/audio.rs (cpal 0.15): start_recording (дефолтный микрофон -&gt; Recorder), Recorder::stop -&gt; WAV-байты; чистая encode_wav(&amp;[i16],rate,ch). Сборка cpal под GNU проверена спайком (risk-31). Тест encode_wav (RIFF-заголовок/размеры)</step-2>
-      <step-3 module="M-STT" status="pending" verification="V-M-STT">Новый src/stt.rs: transcribe (POST multipart WAV на /transcribe через TcpStream, без HTTP-крейта) + чистые build_multipart/parse_text(serde_json)/parse_url. Тесты на чистые + ручной round-trip против :8771</step-3>
-      <step-4 module="M-TRANSFORM" status="pending" verification="V-M-TRANSFORM">Новый src/transform.rs: чистые clean_whisper (хардкод-список галлюцинаций + повторы/пробелы), apply_vocab (пост-замена словаря), process (clean-&gt;vocab). Тесты на все три</step-4>
-      <step-5 module="M-PASTE" status="pending" verification="V-M-PASTE">Новый src/paste.rs: paste_text (сохранить буфер -&gt; set_clipboard -&gt; SendInput Ctrl+V -&gt; вернуть буфер), set_clipboard/get_clipboard. Win32-фичи уже есть. Ручной smoke</step-5>
+      <step-1 module="M-CONFIG" status="done" verification="V-M-CONFIG">Ключи ini: voice_hotkey=Ctrl+Space, whisper_url=http://127.0.0.1:8771/transcribe, voice_language=ru, vocab (wrong=right;...), hotwords/initial_prompt (опц.), transform/transform_url. Чистые parse_hotkey(&amp;str)-&gt;(mods,vk) и parse_vocab(&amp;str)-&gt;Vec&lt;(String,String)&gt;. Тесты на оба</step-1>
+      <step-2 module="M-AUDIO" status="done" verification="V-M-AUDIO">Новый src/audio.rs (cpal 0.15): start_recording (дефолтный микрофон -&gt; Recorder), Recorder::stop -&gt; WAV-байты; чистая encode_wav(&amp;[i16],rate,ch). Сборка cpal под GNU проверена спайком (risk-31). Тест encode_wav (RIFF-заголовок/размеры)</step-2>
+      <step-3 module="M-STT" status="done" verification="V-M-STT">Новый src/stt.rs: transcribe (POST multipart WAV на /transcribe через TcpStream, без HTTP-крейта) + чистые build_multipart/parse_text(serde_json)/parse_url. Тесты на чистые + ручной round-trip против :8771</step-3>
+      <step-4 module="M-TRANSFORM" status="done" verification="V-M-TRANSFORM">Новый src/transform.rs: чистые clean_whisper (хардкод-список галлюцинаций + повторы/пробелы), apply_vocab (пост-замена словаря), process (clean-&gt;vocab). Тесты на все три</step-4>
+      <step-5 module="M-PASTE" status="done" verification="V-M-PASTE">Новый src/paste.rs: paste_text (сохранить буфер -&gt; set_clipboard -&gt; SendInput Ctrl+V -&gt; вернуть буфер), set_clipboard/get_clipboard. Win32-фичи уже есть. Ручной smoke</step-5>
       <checkpoint>
         <tests>cargo test зелёные (parse_hotkey/parse_vocab; encode_wav; build_multipart/parse_text/parse_url; clean_whisper/apply_vocab/process); cargo build под GNU с cpal</tests>
         <smoke>M-STT round-trip: sample.wav -&gt; transcribe(:8771) -&gt; ожидаемый русский текст; M-PASTE: текст вставляется Ctrl+V в Блокнот, буфер восстановлен</smoke>

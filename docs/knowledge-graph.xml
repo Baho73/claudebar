@@ -209,7 +209,7 @@
       </annotations>
     </M-INDEX>
 
-    <M-AUDIO NAME="Audio" TYPE="INTEGRATION" STATUS="planned">
+    <M-AUDIO NAME="Audio" TYPE="INTEGRATION" STATUS="implemented">
       <purpose>Захват аудио с микрофона по умолчанию (cpal) в WAV 16-bit PCM mono в память для голосового ввода: start_recording -&gt; Recorder, Recorder::stop -&gt; WAV-байты. Phase-18.</purpose>
       <path>src/audio.rs</path>
       <depends>none</depends>
@@ -222,7 +222,7 @@
       </annotations>
     </M-AUDIO>
 
-    <M-STT NAME="SpeechToText" TYPE="INTEGRATION" STATUS="planned">
+    <M-STT NAME="SpeechToText" TYPE="INTEGRATION" STATUS="implemented">
       <purpose>Синхронное распознавание: POST WAV на whisper-dictate /transcribe (localhost http через std::net::TcpStream, без HTTP-крейта), разбор {"text"}. Опц. language/hotwords/initial_prompt. Phase-18.</purpose>
       <path>src/stt.rs</path>
       <depends>none</depends>
@@ -235,7 +235,7 @@
       </annotations>
     </M-STT>
 
-    <M-TRANSFORM NAME="Transform" TYPE="CORE_LOGIC" STATUS="planned">
+    <M-TRANSFORM NAME="Transform" TYPE="CORE_LOGIC" STATUS="implemented">
       <purpose>Пост-обработка текста перед вставкой: хардкод-чистка мусора Whisper (галлюцинации/повторы/пробелы) + кастомный словарь пост-заменой (wrong-&gt;right) + шов под внешний API (off в v1). Phase-18.</purpose>
       <path>src/transform.rs</path>
       <depends>none</depends>
@@ -247,7 +247,7 @@
       </annotations>
     </M-TRANSFORM>
 
-    <M-PASTE NAME="Paste" TYPE="UTILITY" STATUS="planned">
+    <M-PASTE NAME="Paste" TYPE="UTILITY" STATUS="implemented">
       <purpose>Вставка текста в активное поле: сохранить буфер обмена, положить текст (CF_UNICODETEXT), Ctrl+V (SendInput) в foreground-окно, вернуть прежний буфер. Win32-фичи уже подключены. Phase-18.</purpose>
       <path>src/paste.rs</path>
       <depends>none</depends>
