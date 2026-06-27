@@ -1,16 +1,16 @@
 // FILE: src/render.rs
-// VERSION: 1.11.0
+// VERSION: 1.12.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Построение строк-секций и отрисовка панели (GDI, двойной буфер) с группировкой по приложению.
 //   SCOPE: геометрия/цвета, Row, build_rows, paint (секции+иконки+окна+недавние+подсветка звоночка), resize, row_at.
-//   DEPENDS: M-CONFIG (палитра, цвета/метки, свёрнутость), M-WINENUM (WinItem), M-RECENT (RecentDoc), M-ICON (иконки секций), App.bell (набор звенящих имён проектов)
+//   DEPENDS: M-CONFIG (палитра, цвета/метки, свёрнутость), M-WINENUM (WinItem), M-RECENT (RecentDoc), M-ICON (иконки секций), M-VOICE (App.voice.state() для полосы-индикатора), App.bell (набор звенящих имён проектов)
 //   LINKS: M-RENDER
 //   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS
 // END_MODULE_CONTRACT
 //
 // START_MODULE_MAP
-//   Row, Zone, W, HEAD, ROW - модель строк, зоны клика и геометрия
+//   Row, Zone, W, HEAD, ROW, STRIP - модель строк, зоны клика и геометрия (STRIP — полоса голосового индикатора внизу)
 //   build_rows        - сгруппировать окна в строки секций с учётом свёрнутости и ручного порядка
 //   paint             - отрисовать строки (секции + окна + ✕/ручки + подсветка drag)
 //   resize            - подогнать высоту окна под число строк
@@ -20,7 +20,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.11.0 - Phase-12 polish: поле поиска постоянно в шапке (не по клику 🔍); «≡» слева — ручка drag; индикатор совпадения = иконка в цветной рамке (draw_framed_icon, 🟡 BM25 / 🔵 dense) вместо тонкой полосы; иконки в «Найдено ещё» (icon::path_icon).
+//   LAST_CHANGE: v1.12.0 - Phase-19 step-3: индикатор голосового ввода — полоса STRIP в самом низу окна (resize +STRIP к высоте); paint: запись = ярко-красная полоса (C_VOICE_REC), распознавание = бегущий золотой сегмент (anim_frame), idle = сливается с фоном. Читает app.voice.state() (M-VOICE).
+//   v1.11.0 - Phase-12 polish: поле поиска постоянно в шапке (не по клику 🔍); «≡» слева — ручка drag; индикатор совпадения = иконка в цветной рамке (draw_framed_icon, 🟡 BM25 / 🔵 dense) вместо тонкой полосы; иконки в «Найдено ещё» (icon::path_icon).
 //   v1.10.0 - Phase-12 Step 4: глиф «🔍» в шапке; подсветка совпавших открытых папок цветной полосой (🟡 BM25 / 🔵 dense); Row::SearchHeader/SearchResult + блок «Найдено ещё»; чистые folder_project/search_color_for/search_result_rows.
 //   v1.9.0 - Phase-9 Step 3: глиф «⚙» (настройки) в шапке слева от «✕»; pub HEAD_BTN_W — общая ширина кнопок шапки.
 //   v1.8.0 - fix: перетаскивание необнаружимо. В режиме reorder хватается вся строка (не только ручка), шапка показывает подсказку «↕ Порядок».
@@ -49,6 +50,7 @@ use std::collections::HashSet;
 pub const W: i32 = 252;
 pub const HEAD: i32 = 24;
 pub const ROW: i32 = 30;
+pub const STRIP: i32 = 6; // высота индикатора голосового ввода в самом низу окна — Phase-19
 const SWATCH: i32 = 14;
 const CLOSE_W: i32 = 24; // ширина правой зоны кнопки ✕ на строке окна
 const VISIBLE_RECENT: usize = 6; // сколько недавних показывать до «показать все»
@@ -88,6 +90,7 @@ const C_BORDER: (u8, u8, u8) = (40, 54, 90);
 const C_REC: (u8, u8, u8) = (170, 182, 206);
 const C_BELL: (u8, u8, u8) = (70, 56, 22); // фон строки со «звоночком» — тёплое тёмное золото
 const C_BELL_BAR: (u8, u8, u8) = (246, 189, 22); // левая полоса-индикатор «звоночка»
+const C_VOICE_REC: (u8, u8, u8) = (242, 58, 47); // ярко-красная полоса «идёт запись» (Phase-19)
 const C_SRCH_BM25: (u8, u8, u8) = (245, 200, 40); // жёлтая полоса поиска: совпадение по словам (BM25)
 const C_SRCH_DENSE: (u8, u8, u8) = (91, 143, 249); // синяя полоса поиска: совпадение по смыслу (dense)
 
@@ -424,6 +427,27 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
         }
     }
 
+    // индикатор голосового ввода — полоса в самом низу окна (Phase-19)
+    let sy = h - STRIP;
+    match app.voice.state() {
+        crate::voice::VoiceState::Recording => {
+            // ярко: идёт запись
+            fill(mem, RECT { left: 0, top: sy, right: w, bottom: h }, C_VOICE_REC);
+        }
+        crate::voice::VoiceState::Transcribing => {
+            // распознавание: бегущий сегмент (индетерминированный прогресс) поверх фона
+            let seg = 48;
+            let span = (w + seg).max(1);
+            let pos = ((app.anim_frame as i32 * 16) % span) - seg;
+            let l = pos.max(0);
+            let r = (pos + seg).min(w);
+            if r > l {
+                fill(mem, RECT { left: l, top: sy, right: r, bottom: h }, C_BELL_BAR);
+            }
+        }
+        crate::voice::VoiceState::Idle => {} // полоса сливается с фоном панели
+    }
+
     let pen = CreatePen(PS_SOLID, 1, rgb(C_BORDER.0, C_BORDER.1, C_BORDER.2));
     let oldpen = SelectObject(mem, pen);
     let oldbr = SelectObject(mem, GetStockObject(NULL_BRUSH));
@@ -447,7 +471,7 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
 // END_CONTRACT: resize
 pub unsafe fn resize(hwnd: HWND, app: &mut App) {
     let n = app.rows.len().max(1) as i32;
-    let h = HEAD + ROW * n;
+    let h = HEAD + ROW * n + STRIP;
     if h != app.last_h {
         app.last_h = h;
         let _ = SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, W, h, SWP_NOMOVE | SWP_NOACTIVATE);

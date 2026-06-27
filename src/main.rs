@@ -1837,7 +1837,7 @@ fn main() -> Result<()> {
         // visible_start_pos в этом случае возвращает дефолт на первичном экране.
         let sw = GetSystemMetrics(SM_CXSCREEN);
         let n = app.rows.len().max(1) as i32;
-        let h = render::HEAD + render::ROW * n;
+        let h = render::HEAD + render::ROW * n + render::STRIP;
         let default_pos = (sw - render::W - 20, 40);
         let (vx, vy, vw, vh) = (
             GetSystemMetrics(SM_XVIRTUALSCREEN),
