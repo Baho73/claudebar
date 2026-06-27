@@ -21,8 +21,9 @@ mod settings;
 mod signal;
 #[allow(dead_code)] // transcribe используется M-VOICE (Phase-19); чистые функции покрыты тестами
 mod stt;
-#[allow(dead_code)] // process используется M-VOICE (Phase-19); чистые функции покрыты тестами
 mod transform;
+#[allow(dead_code)] // Voice используется M-MAIN ниже в этой же фазе (step-2); next_state покрыт тестом
+mod voice;
 mod win_enum;
 
 use std::cell::{Cell, RefCell};
