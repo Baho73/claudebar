@@ -259,7 +259,7 @@
       </annotations>
     </M-PASTE>
 
-    <M-VOICE NAME="Voice" TYPE="CORE_LOGIC" STATUS="planned">
+    <M-VOICE NAME="Voice" TYPE="CORE_LOGIC" STATUS="implemented">
       <purpose>Оркестрация голосового ввода (стейт-машина idle-&gt;recording-&gt;transcribing): toggle стартует/останавливает запись (M-AUDIO); на стопе worker-поток (M-STT -&gt; M-TRANSFORM); результат в UI через PostMessage(WM_APP_VOICE_DONE) — вставку делает M-MAIN. UI не морозим. Phase-19.</purpose>
       <path>src/voice.rs</path>
       <depends>M-AUDIO, M-STT, M-TRANSFORM, M-CONFIG</depends>

@@ -424,7 +424,7 @@
       <verification-ref>V-M-PASTE</verification-ref>
     </M-PASTE>
 
-    <M-VOICE NAME="Voice" TYPE="CORE_LOGIC" LAYER="3" ORDER="2" STATUS="planned">
+    <M-VOICE NAME="Voice" TYPE="CORE_LOGIC" LAYER="3" ORDER="2" STATUS="implemented">
       <contract>
         <purpose>Оркестрация голосового ввода (стейт-машина idle-&gt;recording-&gt;transcribing): toggle-хоткей стартует/останавливает запись (M-AUDIO); на стопе спавнит worker-поток (M-STT -&gt; M-TRANSFORM), результат отдаёт в UI через PostMessage(WM_APP_VOICE_DONE); M-MAIN вставляет (M-PASTE). UI не морозим. Phase-19.</purpose>
         <inputs><param name="toggle" type="нажатие хоткея" /><param name="cfg" type="whisper_url/language/vocab" /></inputs>
@@ -822,11 +822,11 @@
       </checkpoint>
     </Phase-18>
 
-    <Phase-19 name="Голосовой ввод: оркестрация + UI (M-VOICE/M-MAIN/M-RENDER)" status="pending">
+    <Phase-19 name="Голосовой ввод: оркестрация + UI (M-VOICE/M-MAIN/M-RENDER)" status="done">
       <goal>Связать конвейер в рабочий MVP: стейт-машина M-VOICE, глобальный хоткей и WM_APP-вставка в M-MAIN, индикатор «яркая полоса внизу окна при записи + бегущие точки при транскрипции» в M-RENDER. End-to-end диктовка.</goal>
-      <step-1 module="M-VOICE" status="pending" verification="V-M-VOICE">Новый src/voice.rs: стейт-машина idle/recording/transcribing; toggle (старт/стоп записи + спавн worker stt-&gt;transform); on_done; чистая next_state. Тест переходов</step-1>
-      <step-2 module="M-MAIN" status="pending" verification="V-M-MAIN">RegisterHotKey(voice_hotkey) при старте (грациозно при занятости); WM_HOTKEY -&gt; M-VOICE.toggle; запомнить foreground HWND на старте записи; WM_APP_VOICE_DONE -&gt; M-PASTE.paste_text в целевое окно; флаг записи/transcribing в paint</step-2>
-      <step-3 module="M-RENDER" status="pending" verification="V-M-RENDER">Индикатор в самом низу окна: высота окна +полоса; recording -&gt; ярко подсвечена; transcribing -&gt; dots_for_frame (механика busy); idle -&gt; скрыта. Раскладка строк со сдвигом вверх</step-3>
+      <step-1 module="M-VOICE" status="done" verification="V-M-VOICE">Новый src/voice.rs: стейт-машина idle/recording/transcribing; toggle (старт/стоп записи + спавн worker stt-&gt;transform); on_done; чистая next_state. Тест переходов</step-1>
+      <step-2 module="M-MAIN" status="done" verification="V-M-MAIN">RegisterHotKey(voice_hotkey) при старте (грациозно при занятости); WM_HOTKEY -&gt; M-VOICE.toggle; запомнить foreground HWND на старте записи; WM_APP_VOICE_DONE -&gt; M-PASTE.paste_text в целевое окно; флаг записи/transcribing в paint</step-2>
+      <step-3 module="M-RENDER" status="done" verification="V-M-RENDER">Индикатор в самом низу окна: высота окна +полоса; recording -&gt; ярко подсвечена; transcribing -&gt; dots_for_frame (механика busy); idle -&gt; скрыта. Раскладка строк со сдвигом вверх</step-3>
       <checkpoint>
         <tests>cargo test зелёные (next_state); cargo build --release под GNU</tests>
         <smoke>Хоткей Ctrl+Space в Word/чате -&gt; яркая полоса -&gt; говоришь -&gt; хоткей -&gt; точки -&gt; текст вставлен в поле; буфер восстановлен; UI не подвисал; конфликт хоткея -&gt; грациозно</smoke>
