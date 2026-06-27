@@ -146,6 +146,15 @@
       <Priority>high</Priority>
       <RelatedFlows>DF-SEARCH-BM25, DF-SEARCH-DENSE</RelatedFlows>
     </UC-011>
+    <UC-012>
+      <Actor>User</Actor>
+      <Action>Зажимает (toggle) глобальный хоткей Ctrl+Space, диктует фразу голосом, нажимает хоткей повторно</Action>
+      <Goal>Вставить надиктованный текст в активное поле любого приложения (Word, чат, редактор) без печати — локально, бесплатно, приватно (замена платного Blabby.AI)</Goal>
+      <Preconditions>Запущен локальный контейнер whisper-dictate (:8771, faster-whisper на GPU); есть микрофон по умолчанию</Preconditions>
+      <AcceptanceCriteria>1-е нажатие хоткея запускает запись (яркая полоса внизу окна панели); 2-е — останавливает; речь распознаётся локально (русский), типовой мусор Whisper вычищается, применяется кастомный словарь пост-замены; текст вставляется Ctrl+V туда, где стоял курсор; прежний буфер обмена восстановлен; UI панели не подвисает (распознавание в фоне, индикатор — бегущие точки); недоступный контейнер не роняет панель</AcceptanceCriteria>
+      <Priority>high</Priority>
+      <RelatedFlows>DF-VOICE</RelatedFlows>
+    </UC-012>
   </UseCases>
 
   <NonGoals>

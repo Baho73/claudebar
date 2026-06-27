@@ -232,6 +232,63 @@
         <scenario-6 kind="success">Ф-C: extract_text — txt/md дают текст, .mpp/неизвестное -&gt; None; strip_xml_text оставляет текстовые узлы; ensure_files_index пишет source='file', FTS5 находит слово, инкремент по mtime</scenario-6>
       </scenarios>
     </V-M-INDEX>
+    <V-M-AUDIO MODULE="M-AUDIO" PRIORITY="high">
+      <test-files><file>src/audio.rs (#[cfg(test)])</file></test-files>
+      <module-checks>
+        <check-1>cargo test audio (encode_wav)</check-1>
+        <check-2>Ручной smoke: start_recording -&gt; речь -&gt; stop -&gt; WAV распознаётся</check-2>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">encode_wav: &amp;[i16] из N сэмплов, rate, ch -&gt; RIFF/fmt/data: размер RIFF=36+2N, fmt PCM(1)/mono/16бит, byterate/blockalign верны, data-чанк=2N</scenario-1>
+        <scenario-2 kind="failure">Нет устройства ввода -&gt; start_recording -&gt; NO_INPUT_DEVICE (Err), без краха</scenario-2>
+      </scenarios>
+    </V-M-AUDIO>
+    <V-M-STT MODULE="M-STT" PRIORITY="high">
+      <test-files><file>src/stt.rs (#[cfg(test)])</file></test-files>
+      <module-checks>
+        <check-1>cargo test stt (build_multipart/parse_text/parse_url)</check-1>
+        <check-2>Ручной round-trip против :8771: sample.wav -&gt; ожидаемый русский текст</check-2>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">build_multipart: boundary, поля language/hotwords, файл -&gt; корректное тело (Content-Disposition, CRLF, завершающий boundary--)</scenario-1>
+        <scenario-2 kind="success">parse_text: {"text":"привет","duration":1.9} -&gt; Some("привет"); {} / пусто / битый JSON -&gt; None</scenario-2>
+        <scenario-3 kind="success">parse_url: http://127.0.0.1:8771/transcribe -&gt; ("127.0.0.1",8771,"/transcribe"); порт по умолчанию 80 если опущен</scenario-3>
+        <scenario-4 kind="failure">Контейнер недоступен -&gt; transcribe -&gt; Err(CONNECT_FAILED), панель не падает</scenario-4>
+      </scenarios>
+    </V-M-STT>
+    <V-M-TRANSFORM MODULE="M-TRANSFORM" PRIORITY="high">
+      <test-files><file>src/transform.rs (#[cfg(test)])</file></test-files>
+      <module-checks>
+        <check-1>cargo test transform</check-1>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">clean_whisper: «  привет   мир.  » -&gt; «Привет мир.»; повтор «да да да» -&gt; «да»; двойные пробелы схлопнуты</scenario-1>
+        <scenario-2 kind="success">clean_whisper выкидывает галлюцинации: весь вывод == «Продолжение следует...» / «Спасибо за просмотр» / «[музыка]» -&gt; «»; хвостовая титр-строка отрезана</scenario-2>
+        <scenario-3 kind="success">apply_vocab: [(«клодбар»,«ClaudeBar»)] на «открой клодбар» -&gt; «открой ClaudeBar» (регистронезависимо, по границе слова; «клодбарный» не трогается)</scenario-3>
+        <scenario-4 kind="success">process: clean_whisper -&gt; apply_vocab в связке; пустой вход -&gt; «»</scenario-4>
+      </scenarios>
+    </V-M-TRANSFORM>
+    <V-M-PASTE MODULE="M-PASTE" PRIORITY="medium">
+      <test-files><file>src/paste.rs (Win32 — ручной smoke)</file></test-files>
+      <module-checks>
+        <check-1>Ручной smoke: paste_text в Блокнот вставляет текст; прежний буфер обмена восстановлен</check-1>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">paste_text: текст оказался в активном поле (Ctrl+V); get_clipboard до/после совпадает (буфер восстановлен)</scenario-1>
+        <scenario-2 kind="failure">Пустой текст -&gt; no-op (буфер не трогается, Ctrl+V не шлётся)</scenario-2>
+      </scenarios>
+    </V-M-PASTE>
+    <V-M-VOICE MODULE="M-VOICE" PRIORITY="high">
+      <test-files><file>src/voice.rs (#[cfg(test)])</file></test-files>
+      <module-checks>
+        <check-1>cargo test voice (next_state)</check-1>
+        <check-2>Ручной smoke: end-to-end хоткей -&gt; запись -&gt; распознавание -&gt; вставка</check-2>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">next_state: Idle+toggle-&gt;Recording; Recording+toggle-&gt;Transcribing; Transcribing+done-&gt;Idle; Transcribing+toggle-&gt;Transcribing (игнор)</scenario-1>
+        <scenario-2 kind="failure">STT вернул Err -&gt; состояние возвращается в Idle, индикатор гаснет, вставки нет</scenario-2>
+      </scenarios>
+    </V-M-VOICE>
   </ModuleVerification>
 
   <PhaseGates>
@@ -336,6 +393,26 @@
         <evidence-5>graph/plan/verification синхронны; grace lint = 0</evidence-5>
       </required-evidence>
     </Gate-Phase-13>
+    <Gate-Phase-18 PHASE="Phase-18">
+      <goal>Конвейер голосового ввода по кускам: конфиг/хоткей/словарь, захват аудио (cpal), синхронный STT, чистка+словарь, вставка</goal>
+      <commands><command-1>cargo test</command-1><command-2>cargo build --release</command-2></commands>
+      <required-evidence>
+        <evidence-1>Юнит-тесты parse_hotkey/parse_vocab; encode_wav; build_multipart/parse_text/parse_url; clean_whisper/apply_vocab/process — зелёные</evidence-1>
+        <evidence-2>cargo build --release с cpal проходит под GNU-тулчейном (risk-31 снят спайком 2026-06-28); exe запускается</evidence-2>
+        <evidence-3>Smoke: M-STT round-trip sample.wav-&gt;:8771 даёт русский текст; M-PASTE вставляет в Блокнот, буфер восстановлен</evidence-3>
+        <evidence-4>graph/plan/verification синхронны; grace lint = 0</evidence-4>
+      </required-evidence>
+    </Gate-Phase-18>
+    <Gate-Phase-19 PHASE="Phase-19">
+      <goal>Рабочий MVP диктовки: хоткей -&gt; запись (яркая полоса внизу) -&gt; распознавание (точки) -&gt; вставка в активное поле</goal>
+      <commands><command-1>cargo test</command-1><command-2>cargo build --release</command-2></commands>
+      <required-evidence>
+        <evidence-1>Юнит-тест next_state (переходы стейт-машины) зелёный</evidence-1>
+        <evidence-2>Smoke end-to-end: Ctrl+Space в Word/чате -&gt; яркая полоса внизу -&gt; речь -&gt; хоткей -&gt; бегущие точки -&gt; текст вставлен; буфер восстановлен; UI не подвисал</evidence-2>
+        <evidence-3>Конфликт хоткея (занят) -&gt; грациозно (лог, без краха); недоступный контейнер -&gt; idle без вставки</evidence-3>
+        <evidence-4>graph/plan/verification синхронны; grace lint = 0; M-VOICE/M-AUDIO/M-STT/M-TRANSFORM/M-PASTE STATUS implemented</evidence-4>
+      </required-evidence>
+    </Gate-Phase-19>
   </PhaseGates>
 
   <FailurePackets>

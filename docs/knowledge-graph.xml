@@ -60,7 +60,10 @@
         <fn-project_number PURPOSE="Реестр полный путь -> стабильный № (ключ pn=); assign (первый свободный для basename, persisted, не переназначать) + lookup — Phase-15" />
         <fn-color_label_by_path PURPOSE="Цвет/метка ключуются полным путём проекта с fallback на basename (back-compat) — Phase-15" />
         <fn-sort_mode PURPOSE="Режим порядка окон sort=alpha|recent (is/set, ключ sort=, деф. alpha) — Phase-16" />
-        <type-Config PURPOSE="Корень конфигурации: apps, проекты, секции, недавние, порядок, позиция, шрифт, реестр номеров путей, sort" />
+        <fn-voice PURPOSE="Конфиг голосового ввода: voice_hotkey/whisper_url/voice_language/vocab/hotwords/initial_prompt/transform (ключи в ini) — Phase-18" />
+        <fn-parse_hotkey PURPOSE="Чистое: 'Ctrl+Space' -> (mods, vk) для RegisterHotKey — тестируемо — Phase-18" />
+        <fn-parse_vocab PURPOSE="Чистое: 'клодбар=ClaudeBar;висперикс=WhisperX' -> Vec&lt;(wrong,right)&gt; — словарь пост-замены — Phase-18" />
+        <type-Config PURPOSE="Корень конфигурации: apps, проекты, секции, недавние, порядок, позиция, шрифт, реестр номеров путей, sort, голос" />
         <type-AppDef PURPOSE="Определение приложения: proc + proc_alts, class (фильтр окна), имя блока, NameMode, расширения" />
         <type-NameMode PURPOSE="Извлечение имени: Project{suffix} | Document | DocumentLast | Whole — v0.4" />
         <type-ProjConf PURPOSE="Настройки проекта: индекс цвета, метка" />
@@ -206,6 +209,69 @@
       </annotations>
     </M-INDEX>
 
+    <M-AUDIO NAME="Audio" TYPE="INTEGRATION" STATUS="planned">
+      <purpose>Захват аудио с микрофона по умолчанию (cpal) в WAV 16-bit PCM mono в память для голосового ввода: start_recording -&gt; Recorder, Recorder::stop -&gt; WAV-байты. Phase-18.</purpose>
+      <path>src/audio.rs</path>
+      <depends>none</depends>
+      <verification-ref>V-M-AUDIO</verification-ref>
+      <annotations>
+        <fn-start_recording PURPOSE="Начать захват с дефолтного микрофона (cpal); Recorder-хэндл (поток + общий буфер сэмплов)" />
+        <fn-stop PURPOSE="Recorder::stop: остановить поток, вернуть WAV-байты (encode_wav)" />
+        <fn-encode_wav PURPOSE="Чистое: &amp;[i16]+rate+channels -&gt; WAV-байты (RIFF/fmt/data) — тестируемо" />
+        <type-Recorder PURPOSE="Хэндл записи: cpal Stream + общий буфер сэмплов + rate/channels" />
+      </annotations>
+    </M-AUDIO>
+
+    <M-STT NAME="SpeechToText" TYPE="INTEGRATION" STATUS="planned">
+      <purpose>Синхронное распознавание: POST WAV на whisper-dictate /transcribe (localhost http через std::net::TcpStream, без HTTP-крейта), разбор {"text"}. Опц. language/hotwords/initial_prompt. Phase-18.</purpose>
+      <path>src/stt.rs</path>
+      <depends>none</depends>
+      <verification-ref>V-M-STT</verification-ref>
+      <annotations>
+        <fn-transcribe PURPOSE="POST multipart WAV на /transcribe (TcpStream) -&gt; текст; ошибка соединения -&gt; Err без краха" />
+        <fn-build_multipart PURPOSE="Чистое: boundary+поля+WAV -&gt; тело multipart/form-data — тестируемо" />
+        <fn-parse_text PURPOSE="Чистое: JSON ответа -&gt; text (serde_json; пусто/ошибка -&gt; None)" />
+        <fn-parse_url PURPOSE="Чистое: http://host:port/path -&gt; (host, port, path) для TcpStream" />
+      </annotations>
+    </M-STT>
+
+    <M-TRANSFORM NAME="Transform" TYPE="CORE_LOGIC" STATUS="planned">
+      <purpose>Пост-обработка текста перед вставкой: хардкод-чистка мусора Whisper (галлюцинации/повторы/пробелы) + кастомный словарь пост-заменой (wrong-&gt;right) + шов под внешний API (off в v1). Phase-18.</purpose>
+      <path>src/transform.rs</path>
+      <depends>none</depends>
+      <verification-ref>V-M-TRANSFORM</verification-ref>
+      <annotations>
+        <fn-clean_whisper PURPOSE="Чистое: trim, схлопывание пробелов/повторов, выкидывание известных галлюцинаций Whisper (список-константа)" />
+        <fn-apply_vocab PURPOSE="Чистое: пост-замена по словарю wrong-&gt;right (регистронезависимо, по словам) — кастомный словарь" />
+        <fn-process PURPOSE="Чистое: clean_whisper -&gt; apply_vocab (внешний transform off в v1)" />
+      </annotations>
+    </M-TRANSFORM>
+
+    <M-PASTE NAME="Paste" TYPE="UTILITY" STATUS="planned">
+      <purpose>Вставка текста в активное поле: сохранить буфер обмена, положить текст (CF_UNICODETEXT), Ctrl+V (SendInput) в foreground-окно, вернуть прежний буфер. Win32-фичи уже подключены. Phase-18.</purpose>
+      <path>src/paste.rs</path>
+      <depends>none</depends>
+      <verification-ref>V-M-PASTE</verification-ref>
+      <annotations>
+        <fn-paste_text PURPOSE="Сохранить буфер -&gt; set_clipboard -&gt; SendInput Ctrl+V -&gt; восстановить буфер; пустой текст -&gt; no-op" />
+        <fn-set_clipboard PURPOSE="Положить строку в буфер (CF_UNICODETEXT, GlobalAlloc/Lock; GlobalFree на путях ошибки)" />
+        <fn-get_clipboard PURPOSE="Прочитать текущий текст буфера (для сохранения/возврата) -&gt; Option&lt;String&gt;" />
+      </annotations>
+    </M-PASTE>
+
+    <M-VOICE NAME="Voice" TYPE="CORE_LOGIC" STATUS="planned">
+      <purpose>Оркестрация голосового ввода (стейт-машина idle-&gt;recording-&gt;transcribing): toggle стартует/останавливает запись (M-AUDIO); на стопе worker-поток (M-STT -&gt; M-TRANSFORM); результат в UI через PostMessage(WM_APP_VOICE_DONE) — вставку делает M-MAIN. UI не морозим. Phase-19.</purpose>
+      <path>src/voice.rs</path>
+      <depends>M-AUDIO, M-STT, M-TRANSFORM, M-CONFIG</depends>
+      <verification-ref>V-M-VOICE</verification-ref>
+      <annotations>
+        <fn-toggle PURPOSE="Idle -&gt; старт записи; Recording -&gt; стоп + спавн worker (stt+transform), state=Transcribing" />
+        <fn-on_done PURPOSE="Завершение worker: текст готов -&gt; в UI (M-MAIN вставит), state=Idle" />
+        <fn-next_state PURPOSE="Чистое: переход стейт-машины (cur, event) -&gt; next — тестируемо" />
+        <type-VoiceState PURPOSE="Idle | Recording | Transcribing" />
+      </annotations>
+    </M-VOICE>
+
     <CrossLink from="M-MAIN" to="M-WINENUM" relation="опрашивает окна по таймеру" />
     <CrossLink from="M-MAIN" to="M-RENDER" relation="делегирует отрисовку и обработку кликов" />
     <CrossLink from="M-MAIN" to="M-CONFIG" relation="загружает/сохраняет конфигурацию" />
@@ -223,5 +289,12 @@
     <CrossLink from="M-MAIN" to="M-SEARCH" relation="окошко поиска в шапке: ввод/Enter/Esc запускают поиск, debounce live BM25; folder_for_project для пункта меню «ссылка/проводник» (Phase-14)" />
     <CrossLink from="M-RENDER" to="M-SEARCH" relation="читает результаты поиска для подсветки папок (жёлтый/синий) и блока «Найдено ещё»" />
     <CrossLink from="M-MAIN" to="M-INDEX" relation="запускает авто-индексацию в фоне при старте и по таймеру; пути баз/корень индексации передаёт параметрами из M-CONFIG" />
+    <CrossLink from="M-MAIN" to="M-VOICE" relation="RegisterHotKey(voice_hotkey); WM_HOTKEY -&gt; M-VOICE.toggle; WM_APP_VOICE_DONE приносит распознанный текст — Phase-19" />
+    <CrossLink from="M-MAIN" to="M-PASTE" relation="на WM_APP_VOICE_DONE вставляет текст в запомненное foreground-окно (UI-поток) — Phase-19" />
+    <CrossLink from="M-VOICE" to="M-AUDIO" relation="старт/стоп захвата микрофона; стоп даёт WAV-байты — Phase-18/19" />
+    <CrossLink from="M-VOICE" to="M-STT" relation="worker: POST WAV на /transcribe -&gt; текст — Phase-19" />
+    <CrossLink from="M-VOICE" to="M-TRANSFORM" relation="worker: clean_whisper + apply_vocab перед отдачей в UI — Phase-19" />
+    <CrossLink from="M-VOICE" to="M-CONFIG" relation="whisper_url/language/vocab/hotwords для запроса и обработки — Phase-19" />
+    <CrossLink from="M-RENDER" to="M-VOICE" relation="читает состояние (recording/transcribing) для индикатора-полосы внизу окна — Phase-19" />
   </Project>
 </KnowledgeGraph>

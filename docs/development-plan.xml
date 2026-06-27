@@ -35,6 +35,14 @@
     <risk-28 phase="Phase-17">Зависший .busy: Claude убит без Stop -&gt; файл остаётся, строка вечно мигает. Митигация (доводка): keep-alive — PostToolUse-хук обновляет mtime .busy на каждом инструменте, так что точки держатся всю длинную работу; staleness 90с -&gt; мёртвая сессия гаснет за ~1.5 мин. Цена keep-alive: спавн powershell на каждый инструмент (минор; убрать PostToolUse -&gt; точки гаснут 90с от старта промпта).</risk-28>
     <risk-29 phase="Phase-17">Стоимость перерисовки анимации. Митигация: ID_ANIM_TIMER запускается только при непустом busy и гасится в простое; перерисовка всего окна на кадр (~3 кадра/с) терпима.</risk-29>
     <risk-30 phase="Phase-17">UserPromptSubmit спавнит powershell на каждый промпт -&gt; лёгкая задержка submit (как bell на Stop). Принято как минор; быстрый текстовый ответ даёт короткое мигание точек (не баг).</risk-30>
+    <risk-31 phase="Phase-18">cpal под windows-gnu: первая аудио-зависимость. Проверено спайком 2026-06-28 (cpal 0.15.3 собирается чисто под stable-x86_64-pc-windows-gnu, 49с). Снято.</risk-31>
+    <risk-32 phase="Phase-18">Микрофон = устройство ввода по умолчанию; выбор устройства в UI отложен. Нет устройства -&gt; start_recording -&gt; NO_INPUT_DEVICE, диктовка no-op без краха.</risk-32>
+    <risk-33 phase="Phase-18">Вставка затирает буфер обмена пользователя. Митигация: M-PASTE сохраняет прежний текст буфера и возвращает после Ctrl+V.</risk-33>
+    <risk-34 phase="Phase-18">Дообученная модель не держит hotwords/initial_prompt (подтверждено smoke контейнера 2026-06-27 — мусор/пустота). Митигация: кастомный словарь = apply_vocab (пост-замена), hotwords/initial_prompt по умолчанию не шлём; включать только при смене MODEL контейнера на базовую turbo.</risk-34>
+    <risk-35 phase="Phase-19">Конфликт хоткея Ctrl+Space (IME/автодополнение в редакторах). Митигация: комбинация настраивается в ini (parse_hotkey); RegisterHotKey занят -&gt; лог + грациозно (без краха).</risk-35>
+    <risk-36 phase="Phase-19">Цель вставки. Панель WS_EX_NOACTIVATE — фокус не крадётся, foreground остаётся целевым полем. Запоминаем GetForegroundWindow на старте записи; если это наше окно — пропускаем (вставлять некуда).</risk-36>
+    <risk-37 phase="Phase-19">Длинная диктовка = долгий синхронный STT. Митигация: POST в worker-потоке (UI не морозится), индикатор «бегущие точки» при transcribing; таймаут сокета.</risk-37>
+    <risk-38 phase="Phase-18">cpal тянет windows 0.54 параллельно проектной 0.58 — две версии крейта в дереве зависимостей. Принято: cargo допускает; +размер. Изолировано в M-AUDIO.</risk-38>
   </ArchitectureNotes>
 
   <DependencyRationale>
@@ -58,6 +66,16 @@
       <blast-radius>Импортируется только в M-SEARCH — изолировано</blast-radius>
       <note>HTTP-клиент демона (M-SDAEMON) НОВОГО крейта не требует: localhost POST через std::net::TcpStream вручную; JSON ответа парсится вручную (как M-RECENT workspace.json)</note>
     </dep-rusqlite>
+    <dep-cpal crate="cpal" version="0.15" phase="Phase-18">
+      <duplicate>Нет: в графе нет захвата аудио; cpal — де-факто кроссплатформенный аудио-крейт для Rust (grace module find — совпадений нет)</duplicate>
+      <size>cpal тянет свою windows 0.54 (рядом с проектной 0.58) + dasp_sample; +неск. сотен КБ к exe; используется только в M-AUDIO</size>
+      <maintenance>RustAudio/cpal активно поддерживается; широко используется (основа rodio и др.)</maintenance>
+      <license>cpal Apache-2.0 ИЛИ MIT — совместимо с MIT проекта</license>
+      <security>Тонкая обёртка над WASAPI (Win32); известных критичных CVE нет</security>
+      <blast-radius>Импортируется только в M-AUDIO — изолировано</blast-radius>
+      <verified>Сборка под windows-gnu проверена спайком 2026-06-28 (cpal 0.15.3, чисто, 49с) — risk-31 снят</verified>
+      <note>HTTP к whisper-dictate (M-STT) НОВОГО крейта не требует: localhost POST через std::net::TcpStream вручную; JSON ответа — serde_json (уже подключён)</note>
+    </dep-cpal>
     <dep-serde_json crate="serde_json" version="1" phase="Phase-13">
       <duplicate>Нет: ручной разбор вложенного JSON транскриптов (content-массивы, tool-блоки) хрупок; для сигнал-файлов/dense хватало ручного, для транскриптов — нет (grace module find — совпадений нет)</duplicate>
       <size>Малый, чистый Rust без C-зависимостей, быстрая сборка</size>
@@ -335,6 +353,94 @@
       <target><source>src/index.rs</source><tests>src/index.rs (#[cfg(test)] на parse_transcript/chunk_text + ensure_index на temp dir с фейковыми jsonl)</tests></target>
       <verification-ref>V-M-INDEX</verification-ref>
     </M-INDEX>
+
+    <M-AUDIO NAME="Audio" TYPE="INTEGRATION" LAYER="2" ORDER="8" STATUS="planned">
+      <contract>
+        <purpose>Захват аудио с микрофона по умолчанию (cpal) в WAV 16-bit PCM mono в память: старт по началу диктовки, стоп возвращает байты WAV для распознавания. Phase-18.</purpose>
+        <inputs><param name="(start)" type="устройство ввода по умолчанию" /></inputs>
+        <outputs><param name="Vec&lt;u8&gt;" type="WAV 16-bit PCM mono" /></outputs>
+        <errors><error code="NO_INPUT_DEVICE" /><error code="STREAM_BUILD_FAILED" /></errors>
+      </contract>
+      <interface>
+        <export-start_recording PURPOSE="Начать захват с дефолтного микрофона (cpal); вернуть Recorder-хэндл (буфер сэмплов + поток)" />
+        <export-stop PURPOSE="Recorder::stop: остановить поток, вернуть WAV-байты (encode_wav из накопленных сэмплов)" />
+        <export-encode_wav PURPOSE="Чистое: &amp;[i16] + rate + channels -&gt; WAV-байты (RIFF/fmt/data заголовок) — тестируемо" />
+        <type-Recorder PURPOSE="Хэндл активной записи: cpal Stream + общий буфер сэмплов + частота/каналы" />
+      </interface>
+      <depends>none</depends>
+      <target><source>src/audio.rs</source><tests>src/audio.rs (#[cfg(test)] на encode_wav: RIFF-заголовок/размеры/PCM; захват — ручной smoke)</tests></target>
+      <verification-ref>V-M-AUDIO</verification-ref>
+    </M-AUDIO>
+
+    <M-STT NAME="SpeechToText" TYPE="INTEGRATION" LAYER="2" ORDER="9" STATUS="planned">
+      <contract>
+        <purpose>Синхронное распознавание: POST WAV на whisper-dictate /transcribe (localhost http через std::net::TcpStream, без HTTP-крейта), разбор {"text"}. multipart с опц. language/hotwords/initial_prompt. Phase-18.</purpose>
+        <inputs><param name="url" type="&amp;str" /><param name="wav" type="&amp;[u8]" /><param name="opts" type="language/hotwords/initial_prompt" /></inputs>
+        <outputs><param name="String" type="распознанный текст ('' = тишина)" /></outputs>
+        <errors><error code="CONNECT_FAILED" /><error code="HTTP_ERROR" /><error code="PARSE_FAILED" /></errors>
+      </contract>
+      <interface>
+        <export-transcribe PURPOSE="POST multipart WAV на /transcribe (TcpStream) -&gt; текст; ошибка соединения -&gt; Err без краха" />
+        <export-build_multipart PURPOSE="Чистое: boundary+поля+WAV -&gt; тело multipart/form-data (тестируемо)" />
+        <export-parse_text PURPOSE="Чистое: JSON ответа -&gt; text (serde_json; пусто/ошибка -&gt; None)" />
+        <export-parse_url PURPOSE="Чистое: http://host:port/path -&gt; (host, port, path) для TcpStream" />
+      </interface>
+      <depends>none</depends>
+      <target><source>src/stt.rs</source><tests>src/stt.rs (#[cfg(test)] на build_multipart/parse_text/parse_url; transcribe — ручной против :8771)</tests></target>
+      <verification-ref>V-M-STT</verification-ref>
+    </M-STT>
+
+    <M-TRANSFORM NAME="Transform" TYPE="CORE_LOGIC" LAYER="2" ORDER="10" STATUS="planned">
+      <contract>
+        <purpose>Пост-обработка распознанного текста перед вставкой: хардкод-чистка типового мусора Whisper (галлюцинации на тишине, повторы, пробелы) + кастомный словарь пост-заменой (wrong-&gt;right) + шов под внешний API (переформ./перевод, default off — фаза D). Phase-18.</purpose>
+        <inputs><param name="text" type="&amp;str" /><param name="vocab" type="&amp;[(String,String)]" /></inputs>
+        <outputs><param name="String" type="очищенный текст для вставки" /></outputs>
+        <errors><error code="none (чистые функции)" /></errors>
+      </contract>
+      <interface>
+        <export-clean_whisper PURPOSE="Чистое: trim, схлопывание пробелов/повторов, выкидывание известных галлюцинаций Whisper (список-константа); пустой -&gt; ''" />
+        <export-apply_vocab PURPOSE="Чистое: пост-замена по словарю wrong-&gt;right (регистронезависимо, по словам) — кастомный словарь (модель не держит hotwords)" />
+        <export-process PURPOSE="Чистое: clean_whisper -&gt; apply_vocab (внешний transform off в v1)" />
+      </interface>
+      <depends>none</depends>
+      <target><source>src/transform.rs</source><tests>src/transform.rs (#[cfg(test)] на clean_whisper/apply_vocab/process)</tests></target>
+      <verification-ref>V-M-TRANSFORM</verification-ref>
+    </M-TRANSFORM>
+
+    <M-PASTE NAME="Paste" TYPE="UTILITY" LAYER="2" ORDER="11" STATUS="planned">
+      <contract>
+        <purpose>Вставка текста в активное поле: сохранить прежний буфер обмена, положить текст (CF_UNICODETEXT), сымитировать Ctrl+V (SendInput) в foreground-окно, вернуть прежний буфер. Win32-фичи уже подключены (DataExchange/Memory/KeyboardAndMouse). Phase-18.</purpose>
+        <inputs><param name="text" type="&amp;str" /></inputs>
+        <outputs><param name="bool" type="успех вставки" /></outputs>
+        <errors><error code="CLIPBOARD_OPEN_FAILED" /><error code="EMPTY_TEXT_NOOP" /></errors>
+      </contract>
+      <interface>
+        <export-paste_text PURPOSE="Сохранить буфер -&gt; set_clipboard(text) -&gt; SendInput Ctrl+V -&gt; восстановить буфер; пустой текст -&gt; no-op" />
+        <export-set_clipboard PURPOSE="Положить строку в буфер обмена (CF_UNICODETEXT, GlobalAlloc/Lock; GlobalFree на путях ошибки)" />
+        <export-get_clipboard PURPOSE="Прочитать текущий текст буфера (для сохранения/возврата) -&gt; Option&lt;String&gt;" />
+      </interface>
+      <depends>none</depends>
+      <target><source>src/paste.rs</source><tests>src/paste.rs (Win32 clipboard/SendInput — ручной smoke; чистого ядра нет)</tests></target>
+      <verification-ref>V-M-PASTE</verification-ref>
+    </M-PASTE>
+
+    <M-VOICE NAME="Voice" TYPE="CORE_LOGIC" LAYER="3" ORDER="2" STATUS="planned">
+      <contract>
+        <purpose>Оркестрация голосового ввода (стейт-машина idle-&gt;recording-&gt;transcribing): toggle-хоткей стартует/останавливает запись (M-AUDIO); на стопе спавнит worker-поток (M-STT -&gt; M-TRANSFORM), результат отдаёт в UI через PostMessage(WM_APP_VOICE_DONE); M-MAIN вставляет (M-PASTE). UI не морозим. Phase-19.</purpose>
+        <inputs><param name="toggle" type="нажатие хоткея" /><param name="cfg" type="whisper_url/language/vocab" /></inputs>
+        <outputs><param name="WM_APP_VOICE_DONE" type="текст для вставки (в UI-поток)" /></outputs>
+        <errors><error code="ALREADY_TRANSCRIBING_IGNORE" /><error code="STT_FAILED_TO_IDLE" /></errors>
+      </contract>
+      <interface>
+        <export-toggle PURPOSE="Переключатель: Idle -&gt; старт записи; Recording -&gt; стоп + спавн worker (stt+transform), state=Transcribing" />
+        <export-on_done PURPOSE="Завершение worker: текст готов -&gt; вернуть в UI (M-MAIN вставит), state=Idle" />
+        <export-next_state PURPOSE="Чистое: переход стейт-машины (cur, event) -&gt; next — тестируемо" />
+        <type-VoiceState PURPOSE="Idle | Recording | Transcribing" />
+      </interface>
+      <depends>M-AUDIO, M-STT, M-TRANSFORM, M-CONFIG</depends>
+      <target><source>src/voice.rs</source><tests>src/voice.rs (#[cfg(test)] на next_state переходы; конвейер — ручной smoke)</tests></target>
+      <verification-ref>V-M-VOICE</verification-ref>
+    </M-VOICE>
   </Modules>
 
   <DataFlow>
@@ -349,6 +455,13 @@
       <step-2>aggregate_to_folders -&gt; папки (жёлтый BM25); snippet_for даёт фразу-сниппет для тултипа</step-2>
       <evidence>Подсветка папок вживую; тултип чат-результата показывает сниппет; Python не задействован</evidence>
     </DF-SEARCH-OWN>
+    <DF-VOICE NAME="Голосовой ввод" TRIGGER="Глобальный хоткей (Ctrl+Space, toggle)">
+      <step-1>1-е нажатие: M-MAIN WM_HOTKEY -&gt; M-VOICE.toggle -&gt; M-AUDIO.start_recording (дефолтный микрофон); индикатор — яркая полоса внизу окна</step-1>
+      <step-2>2-е нажатие: toggle -&gt; Recorder::stop -&gt; WAV; спавн worker-потока; state=Transcribing (бегущие точки)</step-2>
+      <step-3>Worker: M-STT.transcribe (POST /transcribe :8771) -&gt; текст; M-TRANSFORM.process (clean_whisper + apply_vocab)</step-3>
+      <step-4>PostMessage(WM_APP_VOICE_DONE); M-MAIN на UI-потоке -&gt; M-PASTE.paste_text в foreground-окно (Ctrl+V); state=Idle</step-4>
+      <evidence>Сказанное появляется текстом в активном поле (Word/чат); буфер обмена восстановлен; UI не подвисал</evidence>
+    </DF-VOICE>
     <DF-SWITCH NAME="Переключение на окно" TRIGGER="ЛКМ по строке окна">
       <step-1>hit_test определяет строку окна и её HWND</step-1>
       <step-2>M-ACTIVATE.activate выводит окно на передний план</step-2>
@@ -692,6 +805,36 @@
         <on-fail>grace-fix; откат коммитом</on-fail>
       </checkpoint>
     </Phase-17>
+
+    <Phase-18 name="Голосовой ввод: конвейер (audio-stt-transform-paste)" status="pending">
+      <goal>Строительные блоки голосового ввода (замена Blabby.AI): конфиг+парсинг хоткея/словаря, захват аудио (cpal), синхронный STT к whisper-dictate (:8771), чистка+словарь, вставка через буфер. Каждый блок юнит-тестируется; UI-оркестрация — Phase-19. Спек docs/superpowers/specs/2026-06-27-voice-input-design.md. Утверждён (gg afk).</goal>
+      <step-1 module="M-CONFIG" status="pending" verification="V-M-CONFIG">Ключи ini: voice_hotkey=Ctrl+Space, whisper_url=http://127.0.0.1:8771/transcribe, voice_language=ru, vocab (wrong=right;...), hotwords/initial_prompt (опц.), transform/transform_url. Чистые parse_hotkey(&amp;str)-&gt;(mods,vk) и parse_vocab(&amp;str)-&gt;Vec&lt;(String,String)&gt;. Тесты на оба</step-1>
+      <step-2 module="M-AUDIO" status="pending" verification="V-M-AUDIO">Новый src/audio.rs (cpal 0.15): start_recording (дефолтный микрофон -&gt; Recorder), Recorder::stop -&gt; WAV-байты; чистая encode_wav(&amp;[i16],rate,ch). Сборка cpal под GNU проверена спайком (risk-31). Тест encode_wav (RIFF-заголовок/размеры)</step-2>
+      <step-3 module="M-STT" status="pending" verification="V-M-STT">Новый src/stt.rs: transcribe (POST multipart WAV на /transcribe через TcpStream, без HTTP-крейта) + чистые build_multipart/parse_text(serde_json)/parse_url. Тесты на чистые + ручной round-trip против :8771</step-3>
+      <step-4 module="M-TRANSFORM" status="pending" verification="V-M-TRANSFORM">Новый src/transform.rs: чистые clean_whisper (хардкод-список галлюцинаций + повторы/пробелы), apply_vocab (пост-замена словаря), process (clean-&gt;vocab). Тесты на все три</step-4>
+      <step-5 module="M-PASTE" status="pending" verification="V-M-PASTE">Новый src/paste.rs: paste_text (сохранить буфер -&gt; set_clipboard -&gt; SendInput Ctrl+V -&gt; вернуть буфер), set_clipboard/get_clipboard. Win32-фичи уже есть. Ручной smoke</step-5>
+      <checkpoint>
+        <tests>cargo test зелёные (parse_hotkey/parse_vocab; encode_wav; build_multipart/parse_text/parse_url; clean_whisper/apply_vocab/process); cargo build под GNU с cpal</tests>
+        <smoke>M-STT round-trip: sample.wav -&gt; transcribe(:8771) -&gt; ожидаемый русский текст; M-PASTE: текст вставляется Ctrl+V в Блокнот, буфер восстановлен</smoke>
+        <flows>DF-VOICE шаги 2-4 по кускам</flows>
+        <artifacts>graph/plan/verification синхронны; grace lint=0</artifacts>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-18>
+
+    <Phase-19 name="Голосовой ввод: оркестрация + UI (M-VOICE/M-MAIN/M-RENDER)" status="pending">
+      <goal>Связать конвейер в рабочий MVP: стейт-машина M-VOICE, глобальный хоткей и WM_APP-вставка в M-MAIN, индикатор «яркая полоса внизу окна при записи + бегущие точки при транскрипции» в M-RENDER. End-to-end диктовка.</goal>
+      <step-1 module="M-VOICE" status="pending" verification="V-M-VOICE">Новый src/voice.rs: стейт-машина idle/recording/transcribing; toggle (старт/стоп записи + спавн worker stt-&gt;transform); on_done; чистая next_state. Тест переходов</step-1>
+      <step-2 module="M-MAIN" status="pending" verification="V-M-MAIN">RegisterHotKey(voice_hotkey) при старте (грациозно при занятости); WM_HOTKEY -&gt; M-VOICE.toggle; запомнить foreground HWND на старте записи; WM_APP_VOICE_DONE -&gt; M-PASTE.paste_text в целевое окно; флаг записи/transcribing в paint</step-2>
+      <step-3 module="M-RENDER" status="pending" verification="V-M-RENDER">Индикатор в самом низу окна: высота окна +полоса; recording -&gt; ярко подсвечена; transcribing -&gt; dots_for_frame (механика busy); idle -&gt; скрыта. Раскладка строк со сдвигом вверх</step-3>
+      <checkpoint>
+        <tests>cargo test зелёные (next_state); cargo build --release под GNU</tests>
+        <smoke>Хоткей Ctrl+Space в Word/чате -&gt; яркая полоса -&gt; говоришь -&gt; хоткей -&gt; точки -&gt; текст вставлен в поле; буфер восстановлен; UI не подвисал; конфликт хоткея -&gt; грациозно</smoke>
+        <flows>DF-VOICE end-to-end</flows>
+        <artifacts>graph/plan/verification синхронны; grace lint=0; M-VOICE/M-AUDIO/M-STT/M-TRANSFORM/M-PASTE STATUS implemented</artifacts>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-19>
   </ImplementationOrder>
 
   <ExecutionPolicy>
