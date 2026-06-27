@@ -1,5 +1,5 @@
 // FILE: src/config.rs
-// VERSION: 1.12.0
+// VERSION: 1.13.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Конфигурация: приложения (по процессу и классу окна), настройки проектов (цвет, метка), свёрнутость секций, «показать все» недавних, позиция, шрифт панели.
 //   SCOPE: палитра, авто-цвет, AppDef (proc/proc_alts/class)/NameMode (вкл. Whole), дефолтный набор приложений (редакторы, Office, терминалы, Проводник), свёрнутость секций, раскрытие/showall недавних, шрифт (font_face/font_size/font_weight), парсинг/сериализация ini.
@@ -23,10 +23,14 @@
 //   default_apps  - встроенный набор приложений
 //   section_index_order / window_rank - применение ручного порядка
 //   move_section / move_window         - перестановка при drag-reorder
+//   voice_hotkey / whisper_url / voice_language / vocab / hotwords / initial_prompt - конфиг голосового ввода (Phase-18)
+//   parse_hotkey  - чистое: "Ctrl+Space" -> (модификаторы, VK) для RegisterHotKey
+//   parse_vocab   - чистое: "wrong=right;..." -> Vec<(что, на что)> словаря пост-замены
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.12.0 - Phase-13 доводка: персист scope «+Файлы» (search_files, ключ searchfiles=).
+//   LAST_CHANGE: v1.13.0 - Phase-18 step-1: голосовой ввод — ключи ini (voicehotkey/whisperurl/voicelang/vocab/hotwords/initialprompt) + чистые parse_hotkey/parse_vocab. transform/transform_url отложены в Phase-D (YAGNI).
+//   v1.12.0 - Phase-13 доводка: персист scope «+Файлы» (search_files, ключ searchfiles=).
 //   v1.11.0 - Phase-13 Ф-A step-2: свои базы (chats_db/files_db, дефолт %APPDATA%\claudebar) + projects_root (дефолт %USERPROFILE%\.claude\projects); ключи chatsdb=/filesdb=/projectsroot=. search_* остаются dormant (dense отложен).
 //   v1.10.0 - Phase-12 Step 1: конфиг поиска (search_db/search_cmd/search_port; ключи searchdb=/searchcmd=/searchport=) для M-SEARCH/M-SDAEMON.
 //   v1.9.0 - fix(grace-fix): visible_start_pos — стартовая позиция с учётом мониторов. После смены конфигурации мониторов сохранённая pos= оказывалась вне виртуального экрана, окно создавалось за экраном (видно лишь в панели задач). M-MAIN теперь клампит через SM_*VIRTUALSCREEN.
@@ -56,6 +60,17 @@ pub const DEFAULT_FONT_WEIGHT: i32 = 600; // полужирный — текущ
 // Поиск по чатам (Phase-12): команда запуска dense-демона clfind и его порт.
 pub const DEFAULT_SEARCH_CMD: &str = "D:\\Python\\clfind\\.venv\\Scripts\\pythonw.exe -m clfind.cli serve";
 pub const DEFAULT_SEARCH_PORT: u16 = 8799;
+
+// Голосовой ввод (Phase-18): глобальный хоткей диктовки, URL контейнера whisper-dictate, язык.
+pub const DEFAULT_VOICE_HOTKEY: &str = "Ctrl+Space";
+pub const DEFAULT_WHISPER_URL: &str = "http://127.0.0.1:8771/transcribe";
+pub const DEFAULT_VOICE_LANG: &str = "ru";
+
+// Модификаторы RegisterHotKey (значения Win32 MOD_*); держим локально, чтобы config не тянул UI-импорты.
+pub const MOD_ALT: u32 = 0x0001;
+pub const MOD_CONTROL: u32 = 0x0002;
+pub const MOD_SHIFT: u32 = 0x0004;
+pub const MOD_WIN: u32 = 0x0008;
 
 // Путь к индексу clfind по умолчанию: %USERPROFILE%\.clfind\clfind.db.
 fn default_search_db() -> String {
@@ -141,6 +156,12 @@ pub struct Config {
     pub projects_root: String, // корень транскриптов Claude Code для индексации — Phase-13
     pub search_files: bool, // scope «+Файлы»: искать и в claudebar_files.db (ключ searchfiles=) — Phase-13
     pub sort_recent: bool, // порядок окон: true=recent (позже открыто -> ниже), false=alpha (по имени; ключ sort=) — Phase-16
+    pub voice_hotkey: String, // глобальный хоткей диктовки (ключ voicehotkey=, деф. Ctrl+Space) — Phase-18
+    pub whisper_url: String, // URL whisper-dictate /transcribe (ключ whisperurl=) — Phase-18
+    pub voice_language: String, // язык распознавания (ключ voicelang=, деф. ru) — Phase-18
+    pub vocab: String, // словарь пост-замены "wrong=right;..." (ключ vocab=) — Phase-18
+    pub hotwords: String, // опц. модельный hotwords (ключ hotwords=; пусто = не слать) — Phase-18
+    pub initial_prompt: String, // опц. модельный initial_prompt (ключ initialprompt=) — Phase-18
     pub cfg_path: PathBuf,
 }
 
@@ -264,6 +285,12 @@ struct ParsedIni {
     projects_root: String,
     search_files: bool,
     sort_recent: bool,
+    voice_hotkey: String,
+    whisper_url: String,
+    voice_language: String,
+    vocab: String,
+    hotwords: String,
+    initial_prompt: String,
 }
 
 fn parse_ini(text: &str) -> ParsedIni {
@@ -286,6 +313,12 @@ fn parse_ini(text: &str) -> ParsedIni {
     let mut projects_root: String = default_projects_root();
     let mut search_files = false;
     let mut sort_recent = false;
+    let mut voice_hotkey: String = DEFAULT_VOICE_HOTKEY.to_string();
+    let mut whisper_url: String = DEFAULT_WHISPER_URL.to_string();
+    let mut voice_language: String = DEFAULT_VOICE_LANG.to_string();
+    let mut vocab = String::new();
+    let mut hotwords = String::new();
+    let mut initial_prompt = String::new();
     // START_BLOCK_PARSE_LINES
     for line in text.lines() {
         if let Some(v) = line.strip_prefix("pos=") {
@@ -348,6 +381,24 @@ fn parse_ini(text: &str) -> ParsedIni {
             search_files = v.trim() == "1";
         } else if let Some(v) = line.strip_prefix("sort=") {
             sort_recent = v.trim() == "recent";
+        } else if let Some(v) = line.strip_prefix("voicehotkey=") {
+            if !v.trim().is_empty() {
+                voice_hotkey = v.trim().to_string();
+            }
+        } else if let Some(v) = line.strip_prefix("whisperurl=") {
+            if !v.trim().is_empty() {
+                whisper_url = v.trim().to_string();
+            }
+        } else if let Some(v) = line.strip_prefix("voicelang=") {
+            if !v.trim().is_empty() {
+                voice_language = v.trim().to_string();
+            }
+        } else if let Some(v) = line.strip_prefix("vocab=") {
+            vocab = v.to_string();
+        } else if let Some(v) = line.strip_prefix("hotwords=") {
+            hotwords = v.to_string();
+        } else if let Some(v) = line.strip_prefix("initialprompt=") {
+            initial_prompt = v.to_string();
         } else if let Some(v) = line.strip_prefix("os=") {
             section_order = v.split('\t').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
         } else if let Some(v) = line.strip_prefix("o=") {
@@ -390,7 +441,7 @@ fn parse_ini(text: &str) -> ParsedIni {
         }
     }
     // END_BLOCK_PARSE_LINES
-    ParsedIni { projects, proj_numbers, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, search_port, chats_db, files_db, projects_root, search_files, sort_recent }
+    ParsedIni { projects, proj_numbers, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, search_port, chats_db, files_db, projects_root, search_files, sort_recent, voice_hotkey, whisper_url, voice_language, vocab, hotwords, initial_prompt }
 }
 
 impl Config {
@@ -418,6 +469,12 @@ impl Config {
             projects_root: p.projects_root,
             search_files: p.search_files,
             sort_recent: p.sort_recent,
+            voice_hotkey: p.voice_hotkey,
+            whisper_url: p.whisper_url,
+            voice_language: p.voice_language,
+            vocab: p.vocab,
+            hotwords: p.hotwords,
+            initial_prompt: p.initial_prompt,
             cfg_path,
         }
     }
@@ -436,6 +493,18 @@ impl Config {
         out += &format!("projectsroot={}\n", self.projects_root);
         out += &format!("searchfiles={}\n", if self.search_files { 1 } else { 0 });
         out += &format!("sort={}\n", if self.sort_recent { "recent" } else { "alpha" });
+        out += &format!("voicehotkey={}\n", self.voice_hotkey);
+        out += &format!("whisperurl={}\n", self.whisper_url);
+        out += &format!("voicelang={}\n", self.voice_language);
+        if !self.vocab.is_empty() {
+            out += &format!("vocab={}\n", self.vocab);
+        }
+        if !self.hotwords.is_empty() {
+            out += &format!("hotwords={}\n", self.hotwords);
+        }
+        if !self.initial_prompt.is_empty() {
+            out += &format!("initialprompt={}\n", self.initial_prompt);
+        }
         for block in &self.collapsed {
             out += &format!("c={}\n", block);
         }
@@ -623,6 +692,80 @@ fn base_key(path: &str) -> String {
     path.trim_end_matches(['\\', '/']).rsplit(['\\', '/']).next().unwrap_or(path).to_lowercase()
 }
 
+// START_CONTRACT: parse_hotkey
+//   PURPOSE: Разобрать строку комбинации ("Ctrl+Space", "Ctrl+Alt+D") в (модификаторы, VK-код) для RegisterHotKey.
+//   INPUTS: { s: &str — части через '+', регистронезависимо }
+//   OUTPUTS: { Option<(u32 mods, u32 vk)> — None если клавиша не распознана или нет модификатора }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: parse_hotkey
+pub fn parse_hotkey(s: &str) -> Option<(u32, u32)> {
+    let mut mods = 0u32;
+    let mut vk: Option<u32> = None;
+    for part in s.split('+') {
+        let p = part.trim();
+        if p.is_empty() {
+            continue;
+        }
+        match p.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => mods |= MOD_CONTROL,
+            "alt" => mods |= MOD_ALT,
+            "shift" => mods |= MOD_SHIFT,
+            "win" | "super" => mods |= MOD_WIN,
+            key => vk = key_vk(key),
+        }
+    }
+    match vk {
+        Some(k) if mods != 0 => Some((mods, k)),
+        _ => None,
+    }
+}
+
+// Имя клавиши (нижний регистр) -> VK-код. Подмножество, достаточное для хоткеев диктовки.
+fn key_vk(k: &str) -> Option<u32> {
+    Some(match k {
+        "space" => 0x20,
+        "enter" | "return" => 0x0D,
+        "tab" => 0x09,
+        s if s.len() == 1 => {
+            let c = s.chars().next().unwrap().to_ascii_uppercase();
+            if c.is_ascii_alphanumeric() {
+                c as u32
+            } else {
+                return None;
+            }
+        }
+        s if s.starts_with('f') && s.len() > 1 => {
+            let n: u32 = s[1..].parse().ok()?;
+            if (1..=24).contains(&n) {
+                0x70 + (n - 1)
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    })
+}
+
+// START_CONTRACT: parse_vocab
+//   PURPOSE: Разобрать строку словаря пост-замены "wrong=right;wrong2=right2" в пары.
+//   INPUTS: { s: &str — пары через ';', ключ и значение через первое '=' }
+//   OUTPUTS: { Vec<(String, String)> — (что заменить, на что); пустые/битые пропускаются }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: parse_vocab
+pub fn parse_vocab(s: &str) -> Vec<(String, String)> {
+    s.split(';')
+        .filter_map(|pair| {
+            let (w, r) = pair.split_once('=')?;
+            let (w, r) = (w.trim(), r.trim());
+            if w.is_empty() || r.is_empty() {
+                None
+            } else {
+                Some((w.to_string(), r.to_string()))
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -653,6 +796,12 @@ mod tests {
             projects_root: String::new(),
             search_files: false,
             sort_recent: false,
+            voice_hotkey: DEFAULT_VOICE_HOTKEY.to_string(),
+            whisper_url: DEFAULT_WHISPER_URL.to_string(),
+            voice_language: DEFAULT_VOICE_LANG.to_string(),
+            vocab: String::new(),
+            hotwords: String::new(),
+            initial_prompt: String::new(),
             cfg_path: PathBuf::new(),
         }
     }
@@ -693,6 +842,51 @@ mod tests {
         c.set_sort_recent(true);
         assert!(parse_ini(&c.serialize(None)).sort_recent); // round-trip
         assert!(!parse_ini("font=X\t14\t400").sort_recent); // нет ключа -> alpha
+    }
+
+    #[test]
+    fn parse_hotkey_cases() {
+        assert_eq!(parse_hotkey("Ctrl+Space"), Some((MOD_CONTROL, 0x20)));
+        assert_eq!(parse_hotkey("ctrl+alt+d"), Some((MOD_CONTROL | MOD_ALT, b'D' as u32)));
+        assert_eq!(parse_hotkey("Ctrl+Shift+F5"), Some((MOD_CONTROL | MOD_SHIFT, 0x74)));
+        assert_eq!(parse_hotkey("Win+Z"), Some((MOD_WIN, b'Z' as u32)));
+        assert_eq!(parse_hotkey("Space"), None); // без модификатора
+        assert_eq!(parse_hotkey("Ctrl+нет"), None); // неизвестная клавиша
+        assert_eq!(parse_hotkey(""), None);
+    }
+
+    #[test]
+    fn parse_vocab_pairs() {
+        let v = parse_vocab("клодбар=ClaudeBar; висперикс = WhisperX ;=skip;bad");
+        assert_eq!(
+            v,
+            vec![
+                ("клодбар".to_string(), "ClaudeBar".to_string()),
+                ("висперикс".to_string(), "WhisperX".to_string()),
+            ]
+        );
+        assert!(parse_vocab("").is_empty());
+    }
+
+    #[test]
+    fn voice_config_roundtrip_and_defaults() {
+        // дефолты без ключей
+        let p = parse_ini("");
+        assert_eq!(p.voice_hotkey, DEFAULT_VOICE_HOTKEY);
+        assert_eq!(p.whisper_url, DEFAULT_WHISPER_URL);
+        assert_eq!(p.voice_language, "ru");
+        assert!(p.vocab.is_empty());
+        // round-trip
+        let mut c = cfg(vec![]);
+        c.voice_hotkey = "Ctrl+Alt+V".into();
+        c.whisper_url = "http://127.0.0.1:9000/transcribe".into();
+        c.voice_language = "en".into();
+        c.vocab = "клодбар=ClaudeBar".into();
+        let p2 = parse_ini(&c.serialize(None));
+        assert_eq!(p2.voice_hotkey, "Ctrl+Alt+V");
+        assert_eq!(p2.whisper_url, "http://127.0.0.1:9000/transcribe");
+        assert_eq!(p2.voice_language, "en");
+        assert_eq!(p2.vocab, "клодбар=ClaudeBar");
     }
 
     #[test]

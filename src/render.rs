@@ -651,6 +651,12 @@ mod tests {
             projects_root: String::new(),
             search_files: false,
             sort_recent: false,
+            voice_hotkey: String::new(),
+            whisper_url: String::new(),
+            voice_language: String::new(),
+            vocab: String::new(),
+            hotwords: String::new(),
+            initial_prompt: String::new(),
             cfg_path: std::path::PathBuf::new(),
         }
     }
@@ -728,6 +734,12 @@ mod tests {
             projects_root: String::new(),
             search_files: false,
             sort_recent: false,
+            voice_hotkey: String::new(),
+            whisper_url: String::new(),
+            voice_language: String::new(),
+            vocab: String::new(),
+            hotwords: String::new(),
+            initial_prompt: String::new(),
             cfg_path: std::path::PathBuf::new(),
         };
         // 2 окна VS Code (app 0) + 1 окно Word (app 2)
@@ -799,6 +811,12 @@ mod tests {
             projects_root: String::new(),
             search_files: false,
             sort_recent: false,
+            voice_hotkey: String::new(),
+            whisper_url: String::new(),
+            voice_language: String::new(),
+            vocab: String::new(),
+            hotwords: String::new(),
+            initial_prompt: String::new(),
             cfg_path: std::path::PathBuf::new(),
         };
         cfg.toggle_collapsed("VS Code");
