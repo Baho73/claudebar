@@ -88,11 +88,8 @@ impl Voice {
         self.state
     }
 
-    pub fn is_active(&self) -> bool {
-        self.state != VoiceState::Idle
-    }
-
     // Переключатель по хоткею: старт записи / стоп+распознавание / игнор (занято).
+    // Состояние меняем через next_state (единый источник переходов), но только при успехе side-effect.
     pub fn toggle(&mut self, hwnd: HWND, cfg: &crate::config::Config) {
         match self.state {
             VoiceState::Idle => {
@@ -100,7 +97,7 @@ impl Voice {
                 match crate::audio::start_recording() {
                     Ok(r) => {
                         self.rec = Some(r);
-                        self.state = VoiceState::Recording;
+                        self.state = next_state(self.state, VoiceEvent::Toggle); // -> Recording
                     }
                     Err(e) => eprintln!("[M-VOICE][toggle][START_REC] {e}"),
                 }
@@ -113,7 +110,7 @@ impl Voice {
                     return;
                 };
                 let wav = rec.stop();
-                self.state = VoiceState::Transcribing;
+                self.state = next_state(self.state, VoiceEvent::Toggle); // -> Transcribing
                 self.spawn_worker(hwnd, cfg, wav);
                 // END_BLOCK_STOP_REC
             }
@@ -123,7 +120,7 @@ impl Voice {
 
     // Вернуть в Idle (после доставки текста в UI и вставки).
     pub fn on_done(&mut self) {
-        self.state = VoiceState::Idle;
+        self.state = next_state(self.state, VoiceEvent::Done);
     }
 
     // START_BLOCK_SPAWN_WORKER

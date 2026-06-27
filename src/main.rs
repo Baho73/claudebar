@@ -4,10 +4,8 @@
 //! ЛКМ по строке — перейти в окно. ПКМ — задать цвет и метку. Привязка по имени проекта.
 
 mod activate;
-#[allow(dead_code)] // используется M-VOICE (Phase-19); до подключения функции захвата не вызываются
 mod audio;
 mod config;
-#[allow(dead_code)] // paste_text используется M-MAIN (Phase-19) на WM_APP_VOICE_DONE
 mod paste;
 mod icon;
 mod index;
@@ -19,10 +17,8 @@ mod sdaemon;
 mod search;
 mod settings;
 mod signal;
-#[allow(dead_code)] // transcribe используется M-VOICE (Phase-19); чистые функции покрыты тестами
 mod stt;
 mod transform;
-#[allow(dead_code)] // Voice используется M-MAIN ниже в этой же фазе (step-2); next_state покрыт тестом
 mod voice;
 mod win_enum;
 
@@ -39,8 +35,8 @@ use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    EnableWindow, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE,
-    TRACKMOUSEEVENT, VK_DOWN, VK_ESCAPE, VK_RETURN, VK_UP,
+    EnableWindow, RegisterHotKey, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, UnregisterHotKey,
+    HOT_KEY_MODIFIERS, MOD_NOREPEAT, TME_LEAVE, TRACKMOUSEEVENT, VK_DOWN, VK_ESCAPE, VK_RETURN, VK_UP,
 };
 use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
 use windows::Win32::System::Com::{
@@ -59,6 +55,7 @@ const ID_TIP_TIMER: usize = 3; // dwell-таймер подсказки (~0.5с)
 const TIP_DELAY: u32 = 500; // мс выдержки перед показом подсказки
 const ID_ANIM_TIMER: usize = 4; // таймер анимации бегущих точек busy (Phase-17)
 const ANIM_MS: u32 = 350; // мс между кадрами анимации точек
+const HOTKEY_VOICE: i32 = 1; // id глобального хоткея диктовки (RegisterHotKey) — Phase-19
 const TIP_SEARCHBOX: i32 = -2; // tip_row: курсор над строкой поиска -> правила
 const C_TIP_BG: u32 = 0x00E1FFFF; // фон подсказки (инфо-жёлтый, RGB 255,255,225)
 const C_TIP_TXT: u32 = 0x00202020; // тёмный текст подсказки
@@ -134,6 +131,8 @@ pub(crate) struct App {
     pub(crate) hist_list: HWND, // выпадающий список истории (child LISTBOX, скрыт)
     pub(crate) reorder: bool, // режим перетаскивания: ручки видны, ✕ скрыт
     pub(crate) drag: Option<i32>, // индекс перетаскиваемой строки во время drag
+    pub(crate) voice: voice::Voice, // голосовой ввод: стейт-машина + активный Recorder — Phase-19
+    pub(crate) voice_target: HWND, // окно-получатель вставки (foreground на старте записи) — Phase-19
 }
 
 thread_local! {
@@ -207,7 +206,9 @@ fn refresh_items(app: &mut App) -> bool {
 
 // Включить/выключить таймер анимации точек: идёт только пока есть busy (в простое не мигаем) — Phase-17.
 fn update_anim_timer(hwnd: HWND, app: &App) {
-    let active = !app.busy.is_empty() || !app.busy_paths.is_empty();
+    let active = !app.busy.is_empty()
+        || !app.busy_paths.is_empty()
+        || app.voice.state() == voice::VoiceState::Transcribing; // бегущие точки при распознавании — Phase-19
     unsafe {
         if active {
             let _ = SetTimer(hwnd, ID_ANIM_TIMER, ANIM_MS, None);
@@ -666,6 +667,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 LRESULT(0)
             }
             WM_DESTROY => {
+                let _ = UnregisterHotKey(hwnd, HOTKEY_VOICE); // снять глобальный хоткей диктовки — Phase-19
                 APP.with(|c| {
                     if let Some(app) = c.borrow().as_ref() {
                         app.config.save(hwnd);
@@ -692,6 +694,55 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 // индекс готов -> вернуть обычную подсказку и перезапросить поиск
                 set_search_cue(w!("Поиск по чатам…"));
                 run_live_search(hwnd);
+                LRESULT(0)
+            }
+            WM_HOTKEY if wp.0 as i32 == HOTKEY_VOICE => {
+                // голосовой ввод (Phase-19): toggle записи/распознавания
+                APP.with(|c| {
+                    if let Some(a) = c.borrow_mut().as_mut() {
+                        // на старте записи запомнить окно-получатель вставки (не нашу панель)
+                        if a.voice.state() == voice::VoiceState::Idle {
+                            let fg = GetForegroundWindow();
+                            if fg != hwnd {
+                                a.voice_target = fg;
+                            }
+                        }
+                        a.voice.toggle(hwnd, &a.config);
+                        update_anim_timer(hwnd, a);
+                    }
+                });
+                let _ = InvalidateRect(hwnd, None, FALSE);
+                LRESULT(0)
+            }
+            m if m == voice::WM_APP_VOICE_DONE => {
+                // распознавание готово: забрать текст (Box<String> из worker) и вставить в целевое окно
+                let text = if lp.0 != 0 {
+                    *Box::from_raw(lp.0 as *mut String)
+                } else {
+                    String::new()
+                };
+                let target = APP.with(|c| {
+                    c.borrow_mut()
+                        .as_mut()
+                        .map(|a| {
+                            a.voice.on_done();
+                            a.voice_target
+                        })
+                        .unwrap_or(HWND(std::ptr::null_mut()))
+                });
+                if !text.is_empty() {
+                    // вернуть фокус в исходное поле, если он увёлся, и вставить
+                    if !target.0.is_null() && GetForegroundWindow() != target {
+                        activate::activate(target);
+                    }
+                    paste::paste_text(&text);
+                }
+                APP.with(|c| {
+                    if let Some(a) = c.borrow().as_ref() {
+                        update_anim_timer(hwnd, a);
+                    }
+                });
+                let _ = InvalidateRect(hwnd, None, FALSE);
                 LRESULT(0)
             }
             _ => DefWindowProcW(hwnd, msg, wp, lp),
@@ -1735,6 +1786,7 @@ fn main() -> Result<()> {
         let font_face = config.font_face.clone();
         let font_size = config.font_size;
         let font_weight = config.font_weight;
+        let voice_hotkey = config.voice_hotkey.clone(); // для RegisterHotKey после создания окна — Phase-19
 
         let mut app = App {
             hinst,
@@ -1761,6 +1813,8 @@ fn main() -> Result<()> {
             hist_list: HWND(std::ptr::null_mut()),
             reorder: false,
             drag: None,
+            voice: voice::Voice::new(),
+            voice_target: HWND(std::ptr::null_mut()),
         };
         if refresh_items(&mut app) {
             app.config.save_pos(); // окна ещё нет -> сохраняем с известной позицией
@@ -1822,6 +1876,16 @@ fn main() -> Result<()> {
             spawn_files_index(hwnd); // scope «+Файлы» сохранён -> построить индекс файлов
         }
         SetTimer(hwnd, 1, 1000, None);
+
+        // глобальный хоткей диктовки (Phase-19): ловится из любого окна, не только когда панель в фокусе
+        match config::parse_hotkey(&voice_hotkey) {
+            Some((mods, vk)) => {
+                if RegisterHotKey(hwnd, HOTKEY_VOICE, HOT_KEY_MODIFIERS(mods) | MOD_NOREPEAT, vk).is_err() {
+                    eprintln!("[M-MAIN][hotkey][REGISTER] комбинация занята другим приложением: {voice_hotkey}");
+                }
+            }
+            None => eprintln!("[M-MAIN][hotkey][PARSE] не разобрана комбинация: {voice_hotkey}"),
+        }
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
