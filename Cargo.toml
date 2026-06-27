@@ -13,6 +13,11 @@ features = ["bundled"]
 [dependencies.serde_json]
 version = "1"
 
+# Захват аудио с микрофона (M-AUDIO, голосовой ввод). Чистый windows-rs (WASAPI), без C —
+# сборка под windows-gnu проверена спайком 2026-06-28 (cpal 0.15.3).
+[dependencies.cpal]
+version = "0.15"
+
 [dependencies.calamine]
 version = "0.26"
 
