@@ -7,6 +7,8 @@ mod activate;
 #[allow(dead_code)] // используется M-VOICE (Phase-19); до подключения функции захвата не вызываются
 mod audio;
 mod config;
+#[allow(dead_code)] // paste_text используется M-MAIN (Phase-19) на WM_APP_VOICE_DONE
+mod paste;
 mod icon;
 mod index;
 mod recent;
