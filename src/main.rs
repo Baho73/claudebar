@@ -671,6 +671,48 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 }
                 LRESULT(0)
             }
+            WM_DISPLAYCHANGE => {
+                // Конфигурация мониторов сменилась на ходу: если окно осталось за
+                // пределами видимых экранов — вернуть его на видимый, иначе его не
+                // схватить мышью (WS_EX_TOOLWINDOW: нет в Alt+Tab/таскбаре).
+                let mut rc = RECT::default();
+                if GetWindowRect(hwnd, &mut rc).is_ok() {
+                    let default_pos = (GetSystemMetrics(SM_CXSCREEN) - render::W - 20, 40);
+                    let (vx, vy, vw, vh) = (
+                        GetSystemMetrics(SM_XVIRTUALSCREEN),
+                        GetSystemMetrics(SM_YVIRTUALSCREEN),
+                        GetSystemMetrics(SM_CXVIRTUALSCREEN),
+                        GetSystemMetrics(SM_CYVIRTUALSCREEN),
+                    );
+                    if let Some((x, y)) = config::recover_pos(
+                        (rc.left, rc.top),
+                        default_pos,
+                        render::W,
+                        rc.bottom - rc.top,
+                        vx,
+                        vy,
+                        vw,
+                        vh,
+                    ) {
+                        let _ = SetWindowPos(
+                            hwnd,
+                            HWND_TOPMOST,
+                            x,
+                            y,
+                            0,
+                            0,
+                            SWP_NOSIZE | SWP_NOACTIVATE,
+                        );
+                        APP.with(|c| {
+                            if let Some(app) = c.borrow_mut().as_mut() {
+                                app.config.pos = Some((x, y));
+                                app.config.save_pos();
+                            }
+                        });
+                    }
+                }
+                LRESULT(0)
+            }
             WM_DESTROY => {
                 let _ = UnregisterHotKey(hwnd, HOTKEY_VOICE); // снять глобальный хоткей диктовки — Phase-19
                 APP.with(|c| {

@@ -15,6 +15,7 @@
 //   NameMode      - извлечение имени: Project{suffix} | Document | DocumentLast | Whole
 //   set_font / font_face / font_size / font_weight - шрифт панели (ключ font=face⇥size⇥weight), дефолт Iosevka Fixed/16/600
 //   visible_start_pos - стартовая позиция окна с учётом конфигурации мониторов: дефолт, если saved вне виртуального экрана
+//   recover_pos       - рантайм-кламп уже открытого окна: Some(новая поз.), если вне видимости после смены мониторов; иначе None
 //   search_db / search_cmd / search_port - конфиг поиска по чатам: путь clfind.db, команда dense-демона, порт (ключи searchdb=/searchcmd=/searchport=) — Phase-12 (dormant: dense отложен)
 //   chats_db / files_db / projects_root - Phase-13: свои FTS5-базы (BM25 на Rust) и корень транскриптов (ключи chatsdb=/filesdb=/projectsroot=)
 //   ProjConf      - настройки проекта: индекс цвета (-1 = авто), метка
@@ -29,7 +30,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.13.0 - Phase-18 step-1: голосовой ввод — ключи ini (voicehotkey/whisperurl/voicelang/vocab/hotwords/initialprompt) + чистые parse_hotkey/parse_vocab. transform/transform_url отложены в Phase-D (YAGNI).
+//   LAST_CHANGE: v1.14.0 - fix(grace-fix): recover_pos — рантайм-кламп для уже открытого окна. visible_start_pos клампил только при старте; на смену мониторов на ходу окно улетало за экран и его не схватить (WS_EX_TOOLWINDOW). M-MAIN зовёт recover_pos на WM_DISPLAYCHANGE.
+//   v1.13.0 - Phase-18 step-1: голосовой ввод — ключи ini (voicehotkey/whisperurl/voicelang/vocab/hotwords/initialprompt) + чистые parse_hotkey/parse_vocab. transform/transform_url отложены в Phase-D (YAGNI).
 //   v1.12.0 - Phase-13 доводка: персист scope «+Файлы» (search_files, ключ searchfiles=).
 //   v1.11.0 - Phase-13 Ф-A step-2: свои базы (chats_db/files_db, дефолт %APPDATA%\claudebar) + projects_root (дефолт %USERPROFILE%\.claude\projects); ключи chatsdb=/filesdb=/projectsroot=. search_* остаются dormant (dense отложен).
 //   v1.10.0 - Phase-12 Step 1: конфиг поиска (search_db/search_cmd/search_port; ключи searchdb=/searchcmd=/searchport=) для M-SEARCH/M-SDAEMON.
@@ -216,6 +218,29 @@ pub fn visible_start_pos(
     } else {
         default
     }
+}
+
+// START_CONTRACT: recover_pos
+//   PURPOSE: На смену конфигурации мониторов на ходу решить, надо ли вернуть уже открытое окно в видимую область.
+//   INPUTS: { cur: (i32,i32) текущая позиция окна, default, win_w, win_h, virtual screen rect (vx,vy,vw,vh) }
+//   OUTPUTS: { Some(новая позиция), если окно вне видимости и его надо подвинуть; None — двигать не нужно }
+//   SIDE_EFFECTS: none (чистая арифметика)
+// END_CONTRACT: recover_pos
+/// Рантайм-аналог `visible_start_pos` для уже открытого окна: если текущая
+/// позиция оставляет слишком мало видимой площади (монитор отключён/переставлен) —
+/// вернуть скорректированную позицию; иначе `None` (окно не трогаем).
+pub fn recover_pos(
+    cur: (i32, i32),
+    default: (i32, i32),
+    win_w: i32,
+    win_h: i32,
+    vx: i32,
+    vy: i32,
+    vw: i32,
+    vh: i32,
+) -> Option<(i32, i32)> {
+    let fixed = visible_start_pos(Some(cur), default, win_w, win_h, vx, vy, vw, vh);
+    (fixed != cur).then_some(fixed)
 }
 
 // START_CONTRACT: default_apps
@@ -1051,6 +1076,21 @@ mod tests {
         );
         // None -> дефолт
         assert_eq!(visible_start_pos(None, default, w, h, vx, vy, vw, vh), default);
+    }
+
+    #[test]
+    fn recover_pos_pulls_back_after_monitor_disconnect() {
+        // regression: окно улетало за экран при смене мониторов на ходу и его не схватить.
+        let default = (1600, 40);
+        let (w, h) = (300, 600);
+        let (vx, vy, vw, vh) = (0, 0, 1920, 1080); // остался один монитор
+        // было на втором мониторе (x=3000), его отключили -> вернуть на видимый default
+        assert_eq!(
+            recover_pos((3000, 100), default, w, h, vx, vy, vw, vh),
+            Some(default)
+        );
+        // всё ещё достаточно видно -> не дёргать окно
+        assert_eq!(recover_pos((100, 100), default, w, h, vx, vy, vw, vh), None);
     }
 
     #[test]

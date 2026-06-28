@@ -14,7 +14,7 @@
       <verification-ref>V-M-MAIN</verification-ref>
       <annotations>
         <fn-main PURPOSE="Инициализация приложения и цикл сообщений" />
-        <fn-wndproc PURPOSE="Оконная процедура: WM_PAINT/TIMER/мышь/команды меню; зоны Close/RecentMore/DragHandle, режим reorder по ПКМ, «⚙» в шапке → меню настроек" />
+        <fn-wndproc PURPOSE="Оконная процедура: WM_PAINT/TIMER/мышь/команды меню; зоны Close/RecentMore/DragHandle, режим reorder по ПКМ, «⚙» в шапке → меню настроек; WM_DISPLAYCHANGE → config::recover_pos возвращает окно в видимую область при смене мониторов на ходу" />
         <fn-show_menu PURPOSE="Меню окна по ПКМ: цвет/метка + «Скопировать ссылку»/«Открыть в проводнике» (серые если путь не резолвится); гасит dwell-таймер тултипа перед TrackPopupMenu — Phase-14" />
         <fn-spawn_doc_paths PURPOSE="Фоновый COM-поток: карта basename->путь документов (Recent .lnk) + кэш папок проектов (search::project_folders) для меню — Phase-14; D-02: DB-скан в фоне, не на UI" />
         <fn-window_ordinal PURPOSE="Карта hwnd->ordinal (first-seen за сессию) для сортировки recent и «новое окно вниз» — Phase-16" />
@@ -55,6 +55,7 @@
         <fn-order PURPOSE="Ручной порядок секций (os=) и окон (o=): применение и перемещение — v0.3" />
         <fn-font PURPOSE="font_face/font_size: чтение и set_font; персист ключом font=face⇥size (деф. Iosevka Fixed, 16) — v0.4" />
         <fn-visible_start_pos PURPOSE="Чистое: стартовая позиция окна с учётом мониторов — saved, если видно на виртуальном экране, иначе default (фикс «окно за экраном» после смены мониторов)" />
+        <fn-recover_pos PURPOSE="Чистое: рантайм-кламп уже открытого окна — Some(новая поз.) если вне видимости после смены мониторов на ходу, иначе None; зовётся M-MAIN на WM_DISPLAYCHANGE" />
         <fn-search PURPOSE="search_db/search_cmd/search_port: конфиг поиска по чатам (ключи searchdb=/searchcmd=/searchport=) для M-SEARCH/M-SDAEMON — Phase-12" />
         <fn-default_apps PURPOSE="Встроенный набор: редакторы, Office + Windows Terminal, cmd, PowerShell, Git Bash, Проводник — v0.4" />
         <fn-project_number PURPOSE="Реестр полный путь -> стабильный № (ключ pn=); assign (первый свободный для basename, persisted, не переназначать) + lookup — Phase-15" />
