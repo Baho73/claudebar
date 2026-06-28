@@ -218,6 +218,10 @@
         <fn-start_recording PURPOSE="Начать захват с дефолтного микрофона (cpal); Recorder-хэндл (поток + общий буфер сэмплов)" />
         <fn-stop PURPOSE="Recorder::stop: остановить поток, вернуть WAV-байты (encode_wav)" />
         <fn-encode_wav PURPOSE="Чистое: &amp;[i16]+rate+channels -&gt; WAV-байты (RIFF/fmt/data) — тестируемо" />
+        <fn-trailing_silence PURPOSE="Recorder: секунд тишины в хвосте записи (для авто-стопа по молчанию) — Phase-19 доводка" />
+        <fn-had_speech PURPOSE="Recorder: была ли речь (сэмпл громче порога) — чтобы не резать медленный старт — Phase-19 доводка" />
+        <fn-duration PURPOSE="Recorder: длительность записи, сек — Phase-19 доводка" />
+        <fn-level PURPOSE="Recorder: текущий уровень микрофона 0..1 (пик ~100мс) — индикатор громкости — Phase-19 доводка" />
         <type-Recorder PURPOSE="Хэндл записи: cpal Stream + общий буфер сэмплов + rate/channels" />
       </annotations>
     </M-AUDIO>
@@ -265,9 +269,14 @@
       <depends>M-AUDIO, M-STT, M-TRANSFORM, M-CONFIG</depends>
       <verification-ref>V-M-VOICE</verification-ref>
       <annotations>
-        <fn-toggle PURPOSE="Idle -&gt; старт записи; Recording -&gt; стоп + спавн worker (stt+transform), state=Transcribing" />
+        <fn-toggle PURPOSE="Idle -&gt; старт записи (+звук); Recording -&gt; стоп + спавн worker (stt+transform), state=Transcribing" />
         <fn-on_done PURPOSE="Завершение worker: текст готов -&gt; в UI (M-MAIN вставит), state=Idle" />
         <fn-next_state PURPOSE="Чистое: переход стейт-машины (cur, event) -&gt; next — тестируемо" />
+        <fn-poll PURPOSE="Авто-стоп по тишине (из таймера): 2с тишины после речи или 8с без речи -&gt; стоп — Phase-19 доводка" />
+        <fn-level PURPOSE="Текущий уровень микрофона 0..1 (только при записи) — для индикатора громкости — Phase-19 доводка" />
+        <fn-cue_start PURPOSE="Короткий тон старта записи (Beep 1200Гц/70мс, в фоне) — Phase-19 доводка" />
+        <fn-cue_end PURPOSE="Короткий тон конца распознавания (Beep 760Гц/70мс, в фоне) — Phase-19 доводка" />
+        <fn-vlog PURPOSE="Диагностический лог голосового ввода в %APPDATA%\claudebar\voice.log (у exe нет консоли) — Phase-19 доводка" />
         <type-VoiceState PURPOSE="Idle | Recording | Transcribing" />
       </annotations>
     </M-VOICE>

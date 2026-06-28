@@ -43,6 +43,8 @@
     <risk-36 phase="Phase-19">Цель вставки. Панель WS_EX_NOACTIVATE — фокус не крадётся, foreground остаётся целевым полем. Запоминаем GetForegroundWindow на старте записи; если это наше окно — пропускаем (вставлять некуда).</risk-36>
     <risk-37 phase="Phase-19">Длинная диктовка = долгий синхронный STT. Митигация: POST в worker-потоке (UI не морозится), индикатор «бегущие точки» при transcribing; таймаут сокета.</risk-37>
     <risk-38 phase="Phase-18">cpal тянет windows 0.54 параллельно проектной 0.58 — две версии крейта в дереве зависимостей. Принято: cargo допускает; +размер. Изолировано в M-AUDIO.</risk-38>
+    <risk-39 phase="Phase-19">Поведенческий антивирус (Касперский) убивает процесс: глобальный хоткей + SendInput Ctrl+V (впрыск ввода) трактуется как кейлоггер. Подтверждено 2026-06-28 (процесс падал после WM_HOTKEY без panic). Митигация: добавить claudebar.exe в ДОВЕРЕННЫЕ программы Касперского с «не контролировать активность» (не просто исключение из проверки); добавить папку target\release, чтобы пересборки не переflagились. panic-hook пишет PANIC в voice.log — отличить реальный баг от убийства AV.</risk-39>
+    <risk-40 phase="Phase-19">Холодный старт WASAPI: первый start_recording за сессию ~8с (инициализация устройства). Прогрев в фоне отклонён — конкурентный start_recording дерётся за устройство. Принято как есть; ускорение отложено.</risk-40>
   </ArchitectureNotes>
 
   <DependencyRationale>
@@ -76,6 +78,7 @@
       <verified>Сборка под windows-gnu проверена спайком 2026-06-28 (cpal 0.15.3, чисто, 49с) — risk-31 снят</verified>
       <note>HTTP к whisper-dictate (M-STT) НОВОГО крейта не требует: localhost POST через std::net::TcpStream вручную; JSON ответа — serde_json (уже подключён)</note>
     </dep-cpal>
+    <new-features-phase19>Phase-19 доводка новых крейтов НЕ добавляет. Только feature к windows 0.58: Win32_System_Diagnostics_Debug (Beep — короткие тоны старта/конца диктовки). RegisterHotKey/UnregisterHotKey/SendInput/GetForegroundWindow — уже подключённые модули. Авто-стоп по тишине, индикатор уровня и диагностический лог — чистый std/GDI.</new-features-phase19>
     <dep-serde_json crate="serde_json" version="1" phase="Phase-13">
       <duplicate>Нет: ручной разбор вложенного JSON транскриптов (content-массивы, tool-блоки) хрупок; для сигнал-файлов/dense хватало ручного, для транскриптов — нет (grace module find — совпадений нет)</duplicate>
       <size>Малый, чистый Rust без C-зависимостей, быстрая сборка</size>
