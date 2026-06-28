@@ -30,7 +30,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.14.0 - fix(grace-fix): recover_pos — рантайм-кламп для уже открытого окна. visible_start_pos клампил только при старте; на смену мониторов на ходу окно улетало за экран и его не схватить (WS_EX_TOOLWINDOW). M-MAIN зовёт recover_pos на WM_DISPLAYCHANGE.
+//   LAST_CHANGE: v1.15.0 - Phase-20: опция voice_keep_clipboard (ключ voicekeepclip=, деф. true) — сохранять прежний буфер обмена после вставки диктовки. ⚙-галочка в M-MAIN; M-PASTE.paste_text(text, keep) восстанавливает буфер только при keep.
+//   v1.14.0 - fix(grace-fix): recover_pos — рантайм-кламп для уже открытого окна. visible_start_pos клампил только при старте; на смену мониторов на ходу окно улетало за экран и его не схватить (WS_EX_TOOLWINDOW). M-MAIN зовёт recover_pos на WM_DISPLAYCHANGE.
 //   v1.13.0 - Phase-18 step-1: голосовой ввод — ключи ini (voicehotkey/whisperurl/voicelang/vocab/hotwords/initialprompt) + чистые parse_hotkey/parse_vocab. transform/transform_url отложены в Phase-D (YAGNI).
 //   v1.12.0 - Phase-13 доводка: персист scope «+Файлы» (search_files, ключ searchfiles=).
 //   v1.11.0 - Phase-13 Ф-A step-2: свои базы (chats_db/files_db, дефолт %APPDATA%\claudebar) + projects_root (дефолт %USERPROFILE%\.claude\projects); ключи chatsdb=/filesdb=/projectsroot=. search_* остаются dormant (dense отложен).
@@ -164,6 +165,7 @@ pub struct Config {
     pub vocab: String, // словарь пост-замены "wrong=right;..." (ключ vocab=) — Phase-18
     pub hotwords: String, // опц. модельный hotwords (ключ hotwords=; пусто = не слать) — Phase-18
     pub initial_prompt: String, // опц. модельный initial_prompt (ключ initialprompt=) — Phase-18
+    pub voice_keep_clipboard: bool, // сохранять прежний буфер после вставки диктовки (ключ voicekeepclip=, деф. true) — Phase-20
     pub cfg_path: PathBuf,
 }
 
@@ -316,6 +318,7 @@ struct ParsedIni {
     vocab: String,
     hotwords: String,
     initial_prompt: String,
+    voice_keep_clipboard: bool,
 }
 
 fn parse_ini(text: &str) -> ParsedIni {
@@ -344,6 +347,7 @@ fn parse_ini(text: &str) -> ParsedIni {
     let mut vocab = String::new();
     let mut hotwords = String::new();
     let mut initial_prompt = String::new();
+    let mut voice_keep_clipboard = true; // деф. ВКЛ: после диктовки вернуть прежний буфер
     // START_BLOCK_PARSE_LINES
     for line in text.lines() {
         if let Some(v) = line.strip_prefix("pos=") {
@@ -406,6 +410,8 @@ fn parse_ini(text: &str) -> ParsedIni {
             search_files = v.trim() == "1";
         } else if let Some(v) = line.strip_prefix("sort=") {
             sort_recent = v.trim() == "recent";
+        } else if let Some(v) = line.strip_prefix("voicekeepclip=") {
+            voice_keep_clipboard = v.trim() != "0";
         } else if let Some(v) = line.strip_prefix("voicehotkey=") {
             if !v.trim().is_empty() {
                 voice_hotkey = v.trim().to_string();
@@ -466,7 +472,7 @@ fn parse_ini(text: &str) -> ParsedIni {
         }
     }
     // END_BLOCK_PARSE_LINES
-    ParsedIni { projects, proj_numbers, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, search_port, chats_db, files_db, projects_root, search_files, sort_recent, voice_hotkey, whisper_url, voice_language, vocab, hotwords, initial_prompt }
+    ParsedIni { projects, proj_numbers, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, search_port, chats_db, files_db, projects_root, search_files, sort_recent, voice_hotkey, whisper_url, voice_language, vocab, hotwords, initial_prompt, voice_keep_clipboard }
 }
 
 impl Config {
@@ -500,6 +506,7 @@ impl Config {
             vocab: p.vocab,
             hotwords: p.hotwords,
             initial_prompt: p.initial_prompt,
+            voice_keep_clipboard: p.voice_keep_clipboard,
             cfg_path,
         }
     }
@@ -521,6 +528,7 @@ impl Config {
         out += &format!("voicehotkey={}\n", self.voice_hotkey);
         out += &format!("whisperurl={}\n", self.whisper_url);
         out += &format!("voicelang={}\n", self.voice_language);
+        out += &format!("voicekeepclip={}\n", if self.voice_keep_clipboard { 1 } else { 0 });
         if !self.vocab.is_empty() {
             out += &format!("vocab={}\n", self.vocab);
         }
@@ -827,6 +835,7 @@ mod tests {
             vocab: String::new(),
             hotwords: String::new(),
             initial_prompt: String::new(),
+            voice_keep_clipboard: true,
             cfg_path: PathBuf::new(),
         }
     }
@@ -867,6 +876,17 @@ mod tests {
         c.set_sort_recent(true);
         assert!(parse_ini(&c.serialize(None)).sort_recent); // round-trip
         assert!(!parse_ini("font=X\t14\t400").sort_recent); // нет ключа -> alpha
+    }
+
+    #[test]
+    fn voice_keep_clipboard_roundtrip_default_true() {
+        // дефолт ВКЛ (нет ключа -> сохранять прежний буфер)
+        assert!(parse_ini("font=X\t14\t400").voice_keep_clipboard);
+        let mut c = cfg(vec![]);
+        assert!(c.voice_keep_clipboard);
+        c.voice_keep_clipboard = false; // выключили -> распознанный остаётся
+        assert!(!parse_ini(&c.serialize(None)).voice_keep_clipboard); // round-trip
+        assert!(parse_ini("voicekeepclip=1").voice_keep_clipboard);
     }
 
     #[test]

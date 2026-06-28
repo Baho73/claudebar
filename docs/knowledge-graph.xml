@@ -62,6 +62,7 @@
         <fn-color_label_by_path PURPOSE="Цвет/метка ключуются полным путём проекта с fallback на basename (back-compat) — Phase-15" />
         <fn-sort_mode PURPOSE="Режим порядка окон sort=alpha|recent (is/set, ключ sort=, деф. alpha) — Phase-16" />
         <fn-voice PURPOSE="Конфиг голосового ввода: voice_hotkey/whisper_url/voice_language/vocab/hotwords/initial_prompt/transform (ключи в ini) — Phase-18" />
+        <fn-voice_keep_clipboard PURPOSE="bool voice_keep_clipboard (ключ voicekeepclip=, деф. true): сохранять прежний буфер обмена после вставки диктовки — Phase-20" />
         <fn-parse_hotkey PURPOSE="Чистое: 'Ctrl+Space' -> (mods, vk) для RegisterHotKey — тестируемо — Phase-18" />
         <fn-parse_vocab PURPOSE="Чистое: 'клодбар=ClaudeBar;висперикс=WhisperX' -> Vec&lt;(wrong,right)&gt; — словарь пост-замены — Phase-18" />
         <type-Config PURPOSE="Корень конфигурации: apps, проекты, секции, недавние, порядок, позиция, шрифт, реестр номеров путей, sort, голос" />
@@ -258,7 +259,7 @@
       <depends>none</depends>
       <verification-ref>V-M-PASTE</verification-ref>
       <annotations>
-        <fn-paste_text PURPOSE="Сохранить буфер -&gt; set_clipboard -&gt; SendInput Ctrl+V -&gt; восстановить буфер; пустой текст -&gt; no-op" />
+        <fn-paste_text PURPOSE="paste_text(text, keep_clipboard): set_clipboard -&gt; SendInput Ctrl+V; при keep_clipboard сохранить и через ~400мс вернуть прежний буфер, иначе оставить распознанный; пустой текст -&gt; no-op — Phase-20" />
         <fn-set_clipboard PURPOSE="Положить строку в буфер (CF_UNICODETEXT, GlobalAlloc/Lock; GlobalFree на путях ошибки)" />
         <fn-get_clipboard PURPOSE="Прочитать текущий текст буфера (для сохранения/возврата) -&gt; Option&lt;String&gt;" />
       </annotations>
@@ -300,7 +301,7 @@
     <CrossLink from="M-RENDER" to="M-SEARCH" relation="читает результаты поиска для подсветки папок (жёлтый/синий) и блока «Найдено ещё»" />
     <CrossLink from="M-MAIN" to="M-INDEX" relation="запускает авто-индексацию в фоне при старте и по таймеру; пути баз/корень индексации передаёт параметрами из M-CONFIG" />
     <CrossLink from="M-MAIN" to="M-VOICE" relation="RegisterHotKey(voice_hotkey); WM_HOTKEY -&gt; M-VOICE.toggle; WM_APP_VOICE_DONE приносит распознанный текст — Phase-19" />
-    <CrossLink from="M-MAIN" to="M-PASTE" relation="на WM_APP_VOICE_DONE вставляет текст в запомненное foreground-окно (UI-поток) — Phase-19" />
+    <CrossLink from="M-MAIN" to="M-PASTE" relation="на WM_APP_VOICE_DONE вставляет текст в запомненное foreground-окно (UI-поток); передаёт keep_clipboard из M-CONFIG (⚙-галочка) — Phase-19/20" />
     <CrossLink from="M-VOICE" to="M-AUDIO" relation="старт/стоп захвата микрофона; стоп даёт WAV-байты — Phase-18/19" />
     <CrossLink from="M-VOICE" to="M-STT" relation="worker: POST WAV на /transcribe -&gt; текст — Phase-19" />
     <CrossLink from="M-VOICE" to="M-TRANSFORM" relation="worker: clean_whisper + apply_vocab перед отдачей в UI — Phase-19" />

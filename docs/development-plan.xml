@@ -838,6 +838,19 @@
         <on-fail>grace-fix; откат коммитом</on-fail>
       </checkpoint>
     </Phase-19>
+
+    <Phase-20 name="Опция: сохранять прежний буфер обмена (диктовка)" status="done">
+      <goal>Сделать восстановление буфера обмена после вставки диктовки управляемой опцией. Пользователь может скопировать текст, продиктовать, а затем вставить именно скопированное — прежний буфер не затирается надиктованным.</goal>
+      <step-1 module="M-CONFIG" status="done" verification="V-M-CONFIG">bool voice_keep_clipboard (ключ voicekeepclip=, деф. true): parse/serialize/round-trip; pub-поле (toggle напрямую, как search_files). Тест voice_keep_clipboard_roundtrip_default_true</step-1>
+      <step-2 module="M-PASTE" status="done" verification="V-M-PASTE">paste_text(text, keep_clipboard): при keep — сохранить и через ~400мс вернуть прежний буфер (как было), иначе оставить распознанный. Контракт обновлён. Ручной smoke</step-2>
+      <step-3 module="M-MAIN" status="done" verification="V-M-MAIN">⚙-меню: пункт-галочка «Сохранять прежний буфер обмена (диктовка)» (ID_KEEP_CLIP, MF_CHECKED) + toggle/save; WM_APP_VOICE_DONE передаёт флаг в paste_text</step-3>
+      <checkpoint>
+        <tests>cargo test зелёные (round-trip); cargo build --release под GNU</tests>
+        <smoke>Галочка снята: скопировать X -&gt; продиктовать -&gt; буфер = распознанный; галочка стоит: буфер = X (прежний восстановлен)</smoke>
+        <artifacts>graph/plan/verification синхронны; grace lint=0</artifacts>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-20>
   </ImplementationOrder>
 
   <ExecutionPolicy>

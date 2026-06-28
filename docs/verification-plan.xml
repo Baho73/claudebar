@@ -73,6 +73,7 @@
         <scenario-10 kind="success">Phase-15: реестр путь-&gt;№ (pn=) round-trip + СТАБИЛЬНОСТЬ — assign_number для нового пути даёт первый свободный № среди одноимённых basename; повторный вызов для того же пути возвращает ТОТ ЖЕ №; закрытие «(1)» не меняет № у «(2)». Цвет/метка по полному пути с fallback на basename (старый конфиг по basename продолжает работать)</scenario-10>
         <scenario-11 kind="success">Phase-16: sort=alpha|recent round-trip (set -> serialize -> parse); отсутствие ключа -> дефолт alpha</scenario-11>
         <scenario-12 kind="regression">При смене конфигурации мониторов НА ХОДУ (переключение/отключение экрана) окно остаётся за пределами видимых экранов и его не схватить (WS_EX_TOOLWINDOW: нет в Alt+Tab/таскбаре). Фикс: recover_pos(cur, default, win_w/h, virtual screen rect) -> Some(новая поз.), если видимой площади &lt; MIN_VISIBLE, иначе None; M-MAIN зовёт её на WM_DISPLAYCHANGE и при Some делает SetWindowPos + save_pos. Тест recover_pos_pulls_back_after_monitor_disconnect (вне экрана -> Some(default); видимое -> None). Ручной smoke: отключить второй монитор при окне на нём -> окно возвращается на первичный.</scenario-12>
+        <scenario-13 kind="success">Phase-20: voice_keep_clipboard round-trip — voicekeepclip= (0/1), деф. true (нет ключа -> сохранять прежний буфер). Тест voice_keep_clipboard_roundtrip_default_true (нет ключа/=1 -> true; выкл -> serialize/parse сохраняет false). Управляет восстановлением буфера в M-PASTE.paste_text.</scenario-13>
       </scenarios>
     </V-M-CONFIG>
     <V-M-WINENUM MODULE="M-WINENUM" PRIORITY="high">
@@ -275,8 +276,9 @@
         <check-1>Ручной smoke: paste_text в Блокнот вставляет текст; прежний буфер обмена восстановлен</check-1>
       </module-checks>
       <scenarios>
-        <scenario-1 kind="success">paste_text: текст оказался в активном поле (Ctrl+V); get_clipboard до/после совпадает (буфер восстановлен)</scenario-1>
+        <scenario-1 kind="success">paste_text(text, keep=true): текст оказался в активном поле (Ctrl+V); get_clipboard до/после совпадает (прежний буфер восстановлен через ~400мс)</scenario-1>
         <scenario-2 kind="failure">Пустой текст -&gt; no-op (буфер не трогается, Ctrl+V не шлётся)</scenario-2>
+        <scenario-3 kind="success">Phase-20 keep=false: после вставки в буфере остаётся РАСПОЗНАННЫЙ текст (прежний не восстанавливается). Ручной smoke: ⚙-галочку «Сохранять прежний буфер обмена» снять -&gt; скопировать X -&gt; продиктовать -&gt; буфер = распознанный; галочку поставить -&gt; буфер = X</scenario-3>
       </scenarios>
     </V-M-PASTE>
     <V-M-VOICE MODULE="M-VOICE" PRIORITY="high">

@@ -701,6 +701,7 @@ mod tests {
             vocab: String::new(),
             hotwords: String::new(),
             initial_prompt: String::new(),
+            voice_keep_clipboard: true,
             cfg_path: std::path::PathBuf::new(),
         }
     }
@@ -784,6 +785,7 @@ mod tests {
             vocab: String::new(),
             hotwords: String::new(),
             initial_prompt: String::new(),
+            voice_keep_clipboard: true,
             cfg_path: std::path::PathBuf::new(),
         };
         // 2 окна VS Code (app 0) + 1 окно Word (app 2)
@@ -861,6 +863,7 @@ mod tests {
             vocab: String::new(),
             hotwords: String::new(),
             initial_prompt: String::new(),
+            voice_keep_clipboard: true,
             cfg_path: std::path::PathBuf::new(),
         };
         cfg.toggle_collapsed("VS Code");

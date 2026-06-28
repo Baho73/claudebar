@@ -1,5 +1,5 @@
 // FILE: src/paste.rs
-// VERSION: 1.0.0
+// VERSION: 1.1.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Вставить текст в активное поле любого приложения: положить в буфер обмена и сымитировать Ctrl+V, не затерев буфер пользователя надолго.
 //   SCOPE: paste_text (сохранить буфер -> set_clipboard -> SendInput Ctrl+V -> отложенно вернуть прежний буфер); set_clipboard/get_clipboard (CF_UNICODETEXT).
@@ -10,13 +10,14 @@
 // END_MODULE_CONTRACT
 //
 // START_MODULE_MAP
-//   paste_text    - вставить текст в foreground-окно (Ctrl+V); пустой текст -> no-op; прежний буфер восстановить через ~400мс
+//   paste_text    - вставить текст в foreground-окно (Ctrl+V); пустой текст -> no-op; прежний буфер восстановить через ~400мс (если keep_clipboard)
 //   set_clipboard - положить строку в буфер (CF_UNICODETEXT); GlobalFree на путях ошибки
 //   get_clipboard - прочитать текущий текст буфера -> Option<String>
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.0.0 - Phase-18 step-5: вставка надиктованного текста. Буфер открываем без окна-владельца
+//   LAST_CHANGE: v1.1.0 - Phase-20: paste_text(text, keep_clipboard). keep=true восстанавливает прежний буфер (как было), keep=false оставляет распознанный текст. Флаг из M-CONFIG.voice_keep_clipboard (⚙-галочка).
+//   v1.0.0 - Phase-18 step-5: вставка надиктованного текста. Буфер открываем без окна-владельца
 //                (OpenClipboard null), чтобы восстановление шло из фонового потока. Восстановление отложено на
 //                ~400мс (целевое приложение успевает прочитать вставку). Win32, тестируется ручным smoke.
 // END_CHANGE_SUMMARY
@@ -126,16 +127,17 @@ unsafe fn send_ctrl_v() {
 
 // START_CONTRACT: paste_text
 //   PURPOSE: Вставить текст туда, где стоит курсор (активное поле foreground-окна).
-//   INPUTS: { text: &str }
+//   INPUTS: { text: &str; keep_clipboard: bool - true: вернуть прежний буфер после вставки; false: оставить распознанный текст }
 //   OUTPUTS: { bool - true, если буфер выставлен и Ctrl+V отправлен; false при пустом тексте/ошибке }
-//   SIDE_EFFECTS: меняет буфер обмена, шлёт ввод в активное окно; через ~400мс возвращает прежний буфер (фоновый поток)
-//   LINKS: M-MAIN (вызывает на WM_APP_VOICE_DONE в UI-потоке)
+//   SIDE_EFFECTS: меняет буфер обмена, шлёт ввод в активное окно; при keep_clipboard через ~400мс возвращает прежний буфер (фоновый поток)
+//   LINKS: M-MAIN (вызывает на WM_APP_VOICE_DONE в UI-потоке, флаг из M-CONFIG.voice_keep_clipboard)
 // END_CONTRACT: paste_text
-pub unsafe fn paste_text(text: &str) -> bool {
+pub unsafe fn paste_text(text: &str, keep_clipboard: bool) -> bool {
     if text.is_empty() {
         return false;
     }
-    let prev = get_clipboard();
+    // прежний буфер нужен только если его восстанавливаем
+    let prev = if keep_clipboard { get_clipboard() } else { None };
     if !set_clipboard(text) {
         return false;
     }

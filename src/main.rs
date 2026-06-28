@@ -82,6 +82,7 @@ const ID_ABOUT: usize = 31; // меню настроек: о программе
 const ID_TOGGLE_FILES: usize = 32; // меню настроек: искать и в файлах (history)
 const ID_FULLPATHS: usize = 33; // меню настроек: включить полные пути в заголовках редакторов (Phase-15)
 const ID_SORT: usize = 34; // меню настроек: сортировка окон по времени (recent) vs по имени (alpha) — Phase-16
+const ID_KEEP_CLIP: usize = 35; // меню настроек: сохранять прежний буфер обмена после диктовки — Phase-20
 const ID_SEARCH: usize = 40; // EDIT-поле поиска в шапке (WM_COMMAND EN_CHANGE)
 const SEARCH_MIN: usize = 3; // живой BM25 начинается с N символов
 const WM_APP_SEARCH: u32 = WM_APP + 1; // dense-результаты из фонового потока
@@ -790,8 +791,11 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     if !target.0.is_null() && GetForegroundWindow() != target {
                         activate::activate(target);
                     }
-                    let ok = paste::paste_text(&text);
-                    voice::vlog(&format!("paste_text -> {ok}"));
+                    let keep = APP.with(|c| {
+                        c.borrow().as_ref().map(|a| a.config.voice_keep_clipboard).unwrap_or(true)
+                    });
+                    let ok = paste::paste_text(&text, keep);
+                    voice::vlog(&format!("paste_text -> {ok} (keep_clip={keep})"));
                 }
                 APP.with(|c| {
                     if let Some(a) = c.borrow_mut().as_mut() {
@@ -1637,6 +1641,9 @@ unsafe fn show_settings_menu(hwnd: HWND) {
     let recent_on = APP.with(|c| c.borrow().as_ref().map(|a| a.config.is_sort_recent()).unwrap_or(false));
     let sflag = if recent_on { MF_STRING | MF_CHECKED } else { MF_STRING };
     let _ = AppendMenuW(menu, sflag, ID_SORT, w!("Сортировка по времени (новые внизу)"));
+    let keep_on = APP.with(|c| c.borrow().as_ref().map(|a| a.config.voice_keep_clipboard).unwrap_or(true));
+    let kflag = if keep_on { MF_STRING | MF_CHECKED } else { MF_STRING };
+    let _ = AppendMenuW(menu, kflag, ID_KEEP_CLIP, w!("Сохранять прежний буфер обмена (диктовка)"));
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
     let _ = AppendMenuW(menu, MF_STRING, ID_ABOUT, w!("О программе…"));
     let mut pt = POINT::default();
@@ -1708,6 +1715,16 @@ fn handle_command(hwnd: HWND, id: usize) {
         unsafe {
             let _ = InvalidateRect(hwnd, None, BOOL(0));
         }
+        return;
+    }
+    // настройки: сохранять ли прежний буфер обмена после вставки диктовки — Phase-20
+    if id == ID_KEEP_CLIP {
+        APP.with(|c| {
+            if let Some(a) = c.borrow_mut().as_mut() {
+                a.config.voice_keep_clipboard = !a.config.voice_keep_clipboard;
+                a.config.save(hwnd); // персист флага
+            }
+        });
         return;
     }
     // настройки: переключить scope «+Файлы» (history)
