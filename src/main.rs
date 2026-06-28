@@ -40,10 +40,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
+    CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_ALL, CLSCTX_INPROC_SERVER,
     COINIT_APARTMENTTHREADED, STGM_READ,
 };
-use windows::Win32::UI::Shell::{IShellLinkW, ShellExecuteW, ShellLink};
+use windows::Win32::UI::Shell::{
+    IShellLinkW, IShellWindows, IWebBrowserApp, ShellExecuteW, ShellLink, ShellWindows,
+};
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -612,6 +614,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 let (_, y) = xy(lp);
                 enum R {
                     Menu(usize),
+                    LinkOnly(String, bool), // путь, is_file — мини-меню копирования для недавних/закрытых строк
                     ToggleReorder,
                 }
                 let act = APP.with(|c| {
@@ -624,6 +627,15 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     match a.rows[i as usize] {
                         render::Row::Window { idx } => Some(R::Menu(idx)),
                         render::Row::Section { .. } => Some(R::ToggleReorder),
+                        // недавний/закрытый документ -> мини-меню «скопировать путь / открыть в проводнике»
+                        render::Row::Recent { ridx } => a
+                            .recent
+                            .get(ridx)
+                            .map(|d| R::LinkOnly(recent_path(d), matches!(d.open, recent::OpenCmd::Lnk(_)))),
+                        // закрытая папка-совпадение поиска («Найдено ещё»)
+                        render::Row::SearchResult { hit } => {
+                            a.search_hits.get(hit).map(|h| R::LinkOnly(h.folder.clone(), false))
+                        }
                         _ => None,
                     }
                 });
@@ -635,7 +647,15 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                                 a.menu_link = menu_link_for(a, wi); // путь для «ссылка/проводник» (Phase-14)
                             }
                         });
-                        show_menu(hwnd);
+                        show_menu(hwnd, false);
+                    }
+                    Some(R::LinkOnly(path, is_file)) => {
+                        APP.with(|c| {
+                            if let Some(a) = c.borrow_mut().as_mut() {
+                                a.menu_link = Some((path, is_file));
+                            }
+                        });
+                        show_menu(hwnd, true); // мини-меню: только копировать путь / открыть в проводнике
                     }
                     Some(R::ToggleReorder) => {
                         APP.with(|c| {
@@ -1599,25 +1619,84 @@ fn menu_link_for(a: &App, wi: usize) -> Option<(String, bool)> {
         config::NameMode::Document | config::NameMode::DocumentLast => {
             doc_path_for(&it.name).map(|p| (p, true))
         }
-        config::NameMode::Whole => None,
+        // Проводник (и т.п. «целый заголовок»): заголовок даёт лишь имя папки —
+        // реальный путь открытой папки берём через Shell COM по hwnd. Терминалы -> None.
+        config::NameMode::Whole => unsafe { explorer_folder_path(it.hwnd).map(|f| (f, false)) },
     }
 }
 
-unsafe fn show_menu(hwnd: HWND) {
+// file:///D:/Python/claudebar -> D:\Python\claudebar ; file://server/share -> \\server\share
+fn url_to_path(url: &str) -> Option<String> {
+    if let Some(rest) = url.strip_prefix("file:///") {
+        let p = percent_decode(rest).replace('/', "\\");
+        return (!p.is_empty()).then_some(p);
+    }
+    if let Some(rest) = url.strip_prefix("file://") {
+        let p = percent_decode(rest).replace('/', "\\");
+        return (!p.is_empty()).then(|| format!("\\\\{p}"));
+    }
+    None
+}
+
+// Декодировать %XX в URL (пробелы, кириллица и пр.). Прочее — как есть.
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 3 <= b.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+// Путь открытой папки окна Проводника через Shell COM (IShellWindows -> IWebBrowserApp по hwnd).
+unsafe fn explorer_folder_path(target: HWND) -> Option<String> {
+    let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED); // UI-поток; баланс CoUninitialize ниже
+    let result = (|| {
+        let shell: IShellWindows = CoCreateInstance(&ShellWindows, None, CLSCTX_ALL).ok()?;
+        let count = shell.Count().ok()?;
+        for i in 0..count {
+            let Ok(disp) = shell.Item(&VARIANT::from(i)) else { continue };
+            let Ok(wb) = disp.cast::<IWebBrowserApp>() else { continue };
+            if wb.HWND().unwrap_or_default().0 != target.0 as isize {
+                continue;
+            }
+            let url = wb.LocationURL().ok()?;
+            return url_to_path(&url.to_string());
+        }
+        None
+    })();
+    CoUninitialize();
+    result
+}
+
+// minimal=true (недавние/закрытые/результаты поиска): только «Скопировать ссылку»/«Открыть в проводнике»,
+// без палитры цветов и меток (они привязаны к проекту открытого окна).
+unsafe fn show_menu(hwnd: HWND, minimal: bool) {
     let menu = CreatePopupMenu().unwrap_or_default();
     // Phase-14: ссылка/проводник — в начале меню (до палитры); серые, если путь не резолвится
     let has_link = APP.with(|c| c.borrow().as_ref().map(|a| a.menu_link.is_some()).unwrap_or(false));
     let lflag = if has_link { MF_STRING } else { MF_STRING | MF_GRAYED };
     let _ = AppendMenuW(menu, lflag, ID_COPY_LINK, w!("Скопировать ссылку"));
     let _ = AppendMenuW(menu, lflag, ID_OPEN_DIR, w!("Открыть в проводнике"));
-    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
-    for (i, p) in PALETTE.iter().enumerate() {
-        let name: Vec<u16> = p.0.encode_utf16().chain(std::iter::once(0)).collect();
-        let _ = AppendMenuW(menu, MF_STRING, ID_COLOR_BASE + i, PCWSTR(name.as_ptr()));
+    if !minimal {
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+        for (i, p) in PALETTE.iter().enumerate() {
+            let name: Vec<u16> = p.0.encode_utf16().chain(std::iter::once(0)).collect();
+            let _ = AppendMenuW(menu, MF_STRING, ID_COLOR_BASE + i, PCWSTR(name.as_ptr()));
+        }
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+        let _ = AppendMenuW(menu, MF_STRING, ID_LABEL, w!("Метка…"));
+        let _ = AppendMenuW(menu, MF_STRING, ID_LABEL_CLEAR, w!("Убрать метку"));
     }
-    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
-    let _ = AppendMenuW(menu, MF_STRING, ID_LABEL, w!("Метка…"));
-    let _ = AppendMenuW(menu, MF_STRING, ID_LABEL_CLEAR, w!("Убрать метку"));
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
     // меню модальное: на время прячем тултип и глушим тики таймера (иначе меню закроется)
@@ -1974,4 +2053,29 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{percent_decode, url_to_path};
+
+    #[test]
+    fn url_to_path_local_and_unc() {
+        assert_eq!(url_to_path("file:///D:/Python/claudebar").as_deref(), Some("D:\\Python\\claudebar"));
+        // %20 -> пробел, кириллица %D0.. декодируется
+        assert_eq!(url_to_path("file:///C:/My%20Docs").as_deref(), Some("C:\\My Docs"));
+        // UNC
+        assert_eq!(url_to_path("file://server/share").as_deref(), Some("\\\\server\\share"));
+        // не file:// -> None
+        assert_eq!(url_to_path("http://x/y"), None);
+    }
+
+    #[test]
+    fn percent_decode_basic() {
+        assert_eq!(percent_decode("a%20b"), "a b");
+        assert_eq!(percent_decode("no-escapes"), "no-escapes");
+        assert_eq!(percent_decode("%41%42"), "AB");
+        // незавершённый % — как есть
+        assert_eq!(percent_decode("100%"), "100%");
+    }
 }

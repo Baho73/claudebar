@@ -851,6 +851,18 @@
         <on-fail>grace-fix; откат коммитом</on-fail>
       </checkpoint>
     </Phase-20>
+
+    <Phase-21 name="«Скопировать ссылку» для Проводника и неактивных строк" status="done">
+      <goal>Дать «Скопировать ссылку»/«Открыть в проводнике» там, где их не было: окна Проводника (заголовок отдаёт лишь имя папки) и неактивные строки — недавние/закрытые документы и закрытые результаты поиска.</goal>
+      <step-1 module="M-MAIN" status="done" verification="V-M-MAIN">explorer_folder_path(hwnd): Shell COM IShellWindows-&gt;IWebBrowserApp по hwnd -&gt; LocationURL; чистые url_to_path/percent_decode (file:// -&gt; путь) под cargo test. menu_link_for: NameMode::Whole -&gt; explorer_folder_path (терминалы дают None)</step-1>
+      <step-2 module="M-MAIN" status="done" verification="V-M-MAIN">ПКМ по Row::Recent/Row::SearchResult -&gt; мини-меню show_menu(minimal=true): только «Скопировать ссылку»/«Открыть в проводнике» (путь из recent_path / hit.folder), без палитры цветов</step-2>
+      <checkpoint>
+        <tests>cargo test зелёные (url_to_path/percent_decode); cargo build --release под GNU</tests>
+        <smoke>ПКМ по папке в секции Проводник -> путь в буфере / Explorer открывается; ПКМ по недавнему файлу -> /select; ПКМ по «Найдено ещё» -> путь папки</smoke>
+        <artifacts>graph/plan/verification синхронны; grace lint=0</artifacts>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-21>
   </ImplementationOrder>
 
   <ExecutionPolicy>

@@ -15,7 +15,8 @@
       <annotations>
         <fn-main PURPOSE="Инициализация приложения и цикл сообщений" />
         <fn-wndproc PURPOSE="Оконная процедура: WM_PAINT/TIMER/мышь/команды меню; зоны Close/RecentMore/DragHandle, режим reorder по ПКМ, «⚙» в шапке → меню настроек; WM_DISPLAYCHANGE → config::recover_pos возвращает окно в видимую область при смене мониторов на ходу" />
-        <fn-show_menu PURPOSE="Меню окна по ПКМ: цвет/метка + «Скопировать ссылку»/«Открыть в проводнике» (серые если путь не резолвится); гасит dwell-таймер тултипа перед TrackPopupMenu — Phase-14" />
+        <fn-show_menu PURPOSE="Меню по ПКМ: для открытого окна — цвет/метка + «Скопировать ссылку»/«Открыть в проводнике»; minimal=true (недавние/закрытые/результаты поиска) — только копировать путь/открыть в проводнике, без палитры. Гасит dwell-таймер тултипа перед TrackPopupMenu — Phase-14/21" />
+        <fn-explorer_folder_path PURPOSE="Путь открытой папки окна Проводника (NameMode::Whole) через Shell COM: IShellWindows -&gt; IWebBrowserApp по hwnd -&gt; LocationURL; чистые url_to_path/percent_decode (file:// -&gt; путь) тестируемы — для «Скопировать ссылку» в секции Проводник — Phase-21" />
         <fn-spawn_doc_paths PURPOSE="Фоновый COM-поток: карта basename->путь документов (Recent .lnk) + кэш папок проектов (search::project_folders) для меню — Phase-14; D-02: DB-скан в фоне, не на UI" />
         <fn-window_ordinal PURPOSE="Карта hwnd->ordinal (first-seen за сессию) для сортировки recent и «новое окно вниз» — Phase-16" />
         <fn-anim_timer PURPOSE="ID_ANIM_TIMER (~350мс): старт при непустом busy, kill в простое; anim_frame++ и InvalidateRect для бегущих точек — Phase-17" />
