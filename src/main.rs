@@ -208,7 +208,7 @@ fn refresh_items(app: &mut App) -> bool {
 fn update_anim_timer(hwnd: HWND, app: &App) {
     let active = !app.busy.is_empty()
         || !app.busy_paths.is_empty()
-        || app.voice.state() == voice::VoiceState::Transcribing; // бегущие точки при распознавании — Phase-19
+        || app.voice.state() != voice::VoiceState::Idle; // анимация полосы при записи/распознавании — Phase-19
     unsafe {
         if active {
             let _ = SetTimer(hwnd, ID_ANIM_TIMER, ANIM_MS, None);
@@ -375,10 +375,15 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     return LRESULT(0);
                 }
                 if wp.0 == ID_ANIM_TIMER {
-                    // кадр анимации бегущих точек busy (Phase-17)
+                    // кадр анимации индикатора + авто-стоп записи по тишине (Phase-17/19)
                     APP.with(|c| {
                         if let Some(a) = c.borrow_mut().as_mut() {
                             a.anim_frame = a.anim_frame.wrapping_add(1);
+                            if a.voice.poll(hwnd, &a.config) {
+                                // тишина -> авто-стоп: пересчитать таймер и высоту окна
+                                update_anim_timer(hwnd, a);
+                                render::resize(hwnd, a);
+                            }
                         }
                     });
                     let _ = InvalidateRect(hwnd, None, BOOL(0));
@@ -698,6 +703,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             }
             WM_HOTKEY if wp.0 as i32 == HOTKEY_VOICE => {
                 // голосовой ввод (Phase-19): toggle записи/распознавания
+                voice::vlog("WM_HOTKEY: голосовой хоткей пойман");
                 APP.with(|c| {
                     if let Some(a) = c.borrow_mut().as_mut() {
                         // на старте записи запомнить окно-получатель вставки (не нашу панель)
@@ -709,6 +715,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                         }
                         a.voice.toggle(hwnd, &a.config);
                         update_anim_timer(hwnd, a);
+                        render::resize(hwnd, a); // вырастить/сжать окно под баннер
                     }
                 });
                 let _ = InvalidateRect(hwnd, None, FALSE);
@@ -730,16 +737,24 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                         })
                         .unwrap_or(HWND(std::ptr::null_mut()))
                 });
+                voice::vlog(&format!(
+                    "WM_APP_VOICE_DONE: текст {} симв, target={:?}",
+                    text.chars().count(),
+                    target.0
+                ));
+                voice::cue_end(); // звук конца распознавания
                 if !text.is_empty() {
                     // вернуть фокус в исходное поле, если он увёлся, и вставить
                     if !target.0.is_null() && GetForegroundWindow() != target {
                         activate::activate(target);
                     }
-                    paste::paste_text(&text);
+                    let ok = paste::paste_text(&text);
+                    voice::vlog(&format!("paste_text -> {ok}"));
                 }
                 APP.with(|c| {
-                    if let Some(a) = c.borrow().as_ref() {
+                    if let Some(a) = c.borrow_mut().as_mut() {
                         update_anim_timer(hwnd, a);
+                        render::resize(hwnd, a); // сжать окно (баннер скрыт в Idle)
                     }
                 });
                 let _ = InvalidateRect(hwnd, None, FALSE);
@@ -1773,6 +1788,10 @@ fn rebuild_fonts(app: &mut App) {
 }
 
 fn main() -> Result<()> {
+    // диагностика: при panic (panic=abort) записать причину в voice.log перед падением
+    std::panic::set_hook(Box::new(|info| {
+        voice::vlog(&format!("PANIC: {info}"));
+    }));
     unsafe {
         let hmod = GetModuleHandleW(None)?;
         let hinst = HINSTANCE(hmod.0);
@@ -1837,7 +1856,7 @@ fn main() -> Result<()> {
         // visible_start_pos в этом случае возвращает дефолт на первичном экране.
         let sw = GetSystemMetrics(SM_CXSCREEN);
         let n = app.rows.len().max(1) as i32;
-        let h = render::HEAD + render::ROW * n + render::STRIP;
+        let h = render::HEAD + render::ROW * n + render::strip_h(app.voice.state());
         let default_pos = (sw - render::W - 20, 40);
         let (vx, vy, vw, vh) = (
             GetSystemMetrics(SM_XVIRTUALSCREEN),
@@ -1880,11 +1899,13 @@ fn main() -> Result<()> {
         // глобальный хоткей диктовки (Phase-19): ловится из любого окна, не только когда панель в фокусе
         match config::parse_hotkey(&voice_hotkey) {
             Some((mods, vk)) => {
-                if RegisterHotKey(hwnd, HOTKEY_VOICE, HOT_KEY_MODIFIERS(mods) | MOD_NOREPEAT, vk).is_err() {
-                    eprintln!("[M-MAIN][hotkey][REGISTER] комбинация занята другим приложением: {voice_hotkey}");
-                }
+                let ok = RegisterHotKey(hwnd, HOTKEY_VOICE, HOT_KEY_MODIFIERS(mods) | MOD_NOREPEAT, vk).is_ok();
+                voice::vlog(&format!(
+                    "RegisterHotKey '{voice_hotkey}' (mods={mods:#x} vk={vk:#x}) -> {}",
+                    if ok { "OK" } else { "ЗАНЯТ/ОШИБКА (хоткей не сработает)" }
+                ));
             }
-            None => eprintln!("[M-MAIN][hotkey][PARSE] не разобрана комбинация: {voice_hotkey}"),
+            None => voice::vlog(&format!("parse_hotkey не разобрал комбинацию: '{voice_hotkey}'")),
         }
 
         let mut msg = MSG::default();

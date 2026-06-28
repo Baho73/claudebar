@@ -17,7 +17,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.0.0 - Phase-18 step-2: захват аудио (cpal) + encode_wav. Микрофон по умолчанию,
+//   LAST_CHANGE: v1.1.0 - Phase-19 доводка: Recorder += trailing_silence/had_speech/duration (авто-стоп по тишине) + level (индикатор громкости, пик ~100мс).
+//   v1.0.0 - Phase-18 step-2: захват аудио (cpal) + encode_wav. Микрофон по умолчанию,
 //                микширование в моно (первый канал кадра), частота устройства как есть (whisper-dictate
 //                ресемплит через ffmpeg). Формат сэмплов f32/i16/u16 -> i16. Первая аудио-зависимость
 //                (cpal 0.15, сборка под windows-gnu проверена спайком).
@@ -26,6 +27,9 @@
 use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+// Порог амплитуды i16, выше которого сэмпл считается «звуком» (а не тишиной) — для авто-стопа.
+const LOUD_TH: i32 = 700;
 
 // START_CONTRACT: Recorder
 //   PURPOSE: Хэндл активной записи. Пока жив — cpal-поток пишет сэмплы в общий буфер; stop() завершает.
@@ -46,6 +50,40 @@ impl Recorder {
         drop(self._stream); // остановка захвата
         let samples = self.buf.lock().unwrap_or_else(|e| e.into_inner());
         encode_wav(&samples, self.rate, 1)
+    }
+
+    // Секунд тишины в хвосте записи (для авто-стопа по молчанию).
+    pub fn trailing_silence(&self) -> f32 {
+        let g = self.buf.lock().unwrap_or_else(|e| e.into_inner());
+        let mut n = 0usize;
+        for &s in g.iter().rev() {
+            if (s as i32).abs() > LOUD_TH {
+                break;
+            }
+            n += 1;
+        }
+        n as f32 / self.rate.max(1) as f32
+    }
+
+    // Была ли вообще речь (хоть один сэмпл громче порога) — чтобы не резать «медленный старт».
+    pub fn had_speech(&self) -> bool {
+        let g = self.buf.lock().unwrap_or_else(|e| e.into_inner());
+        g.iter().any(|&s| (s as i32).abs() > LOUD_TH)
+    }
+
+    // Длительность записи, сек.
+    pub fn duration(&self) -> f32 {
+        let g = self.buf.lock().unwrap_or_else(|e| e.into_inner());
+        g.len() as f32 / self.rate.max(1) as f32
+    }
+
+    // Текущий уровень входного сигнала (пик последних ~100мс), 0.0..1.0 — для индикатора громкости.
+    pub fn level(&self) -> f32 {
+        let g = self.buf.lock().unwrap_or_else(|e| e.into_inner());
+        let window = (self.rate / 10).max(1) as usize; // ~100мс
+        let start = g.len().saturating_sub(window);
+        let peak = g[start..].iter().map(|&s| (s as i32).unsigned_abs()).max().unwrap_or(0);
+        (peak as f32 / 32767.0).min(1.0)
     }
 }
 

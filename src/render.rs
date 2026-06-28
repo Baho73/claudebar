@@ -20,7 +20,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.12.0 - Phase-19 step-3: индикатор голосового ввода — полоса STRIP в самом низу окна (resize +STRIP к высоте); paint: запись = ярко-красная полоса (C_VOICE_REC), распознавание = бегущий золотой сегмент (anim_frame), idle = сливается с фоном. Читает app.voice.state() (M-VOICE).
+//   LAST_CHANGE: v1.13.0 - Phase-19 доводка: баннер-индикатор (динамическая высота strip_h: 0 в Idle, 22 активен) с надписью «● ЗАПИСЬ (ON AIR)» и шкалой уровня микрофона справа (зелёный/жёлтый); распознавание — «··· Распознаю…».
+//   v1.12.0 - Phase-19 step-3: индикатор голосового ввода — полоса STRIP в самом низу окна (resize +STRIP к высоте); paint: запись = ярко-красная полоса (C_VOICE_REC), распознавание = бегущий золотой сегмент (anim_frame), idle = сливается с фоном. Читает app.voice.state() (M-VOICE).
 //   v1.11.0 - Phase-12 polish: поле поиска постоянно в шапке (не по клику 🔍); «≡» слева — ручка drag; индикатор совпадения = иконка в цветной рамке (draw_framed_icon, 🟡 BM25 / 🔵 dense) вместо тонкой полосы; иконки в «Найдено ещё» (icon::path_icon).
 //   v1.10.0 - Phase-12 Step 4: глиф «🔍» в шапке; подсветка совпавших открытых папок цветной полосой (🟡 BM25 / 🔵 dense); Row::SearchHeader/SearchResult + блок «Найдено ещё»; чистые folder_project/search_color_for/search_result_rows.
 //   v1.9.0 - Phase-9 Step 3: глиф «⚙» (настройки) в шапке слева от «✕»; pub HEAD_BTN_W — общая ширина кнопок шапки.
@@ -50,7 +51,15 @@ use std::collections::HashSet;
 pub const W: i32 = 252;
 pub const HEAD: i32 = 24;
 pub const ROW: i32 = 30;
-pub const STRIP: i32 = 6; // высота индикатора голосового ввода в самом низу окна — Phase-19
+pub const STRIP: i32 = 22; // высота баннера голосового ввода, когда активен (запись/распознавание) — Phase-19
+
+// Высота индикатора голосового ввода для текущего состояния: 0 в простое (окно не растёт), баннер когда активен.
+pub fn strip_h(state: crate::voice::VoiceState) -> i32 {
+    match state {
+        crate::voice::VoiceState::Idle => 0,
+        _ => STRIP,
+    }
+}
 const SWATCH: i32 = 14;
 const CLOSE_W: i32 = 24; // ширина правой зоны кнопки ✕ на строке окна
 const VISIBLE_RECENT: usize = 6; // сколько недавних показывать до «показать все»
@@ -427,25 +436,36 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
         }
     }
 
-    // индикатор голосового ввода — полоса в самом низу окна (Phase-19)
-    let sy = h - STRIP;
-    match app.voice.state() {
-        crate::voice::VoiceState::Recording => {
-            // ярко: идёт запись
-            fill(mem, RECT { left: 0, top: sy, right: w, bottom: h }, C_VOICE_REC);
-        }
-        crate::voice::VoiceState::Transcribing => {
-            // распознавание: бегущий сегмент (индетерминированный прогресс) поверх фона
-            let seg = 48;
-            let span = (w + seg).max(1);
-            let pos = ((app.anim_frame as i32 * 16) % span) - seg;
-            let l = pos.max(0);
-            let r = (pos + seg).min(w);
-            if r > l {
-                fill(mem, RECT { left: l, top: sy, right: r, bottom: h }, C_BELL_BAR);
+    // индикатор голосового ввода — заметный баннер в самом низу окна (Phase-19)
+    let st = app.voice.state();
+    if st != crate::voice::VoiceState::Idle {
+        let sy = h - STRIP;
+        let recording = st == crate::voice::VoiceState::Recording;
+        let bg = if recording {
+            // идёт запись: ярко-красный, пульсирует (чтобы точно заметить)
+            if app.anim_frame % 2 == 1 { (150, 30, 24) } else { C_VOICE_REC }
+        } else {
+            C_BELL_BAR // распознавание: золотой
+        };
+        let fg = if recording { (255, 255, 255) } else { (40, 30, 10) };
+        fill(mem, RECT { left: 0, top: sy, right: w, bottom: h }, bg);
+        SetTextColor(mem, rgb(fg.0, fg.1, fg.2));
+        if recording {
+            // индикатор уровня микрофона справа — видеть, надо ли ближе к микрофону
+            let level = app.voice.level();
+            let (mx0, mx1) = (w - 88, w - 8);
+            let (my0, my1) = (sy + 6, h - 6);
+            fill(mem, RECT { left: mx0, top: my0, right: mx1, bottom: my1 }, (90, 22, 18)); // тёмная дорожка
+            let fw = (((mx1 - mx0) as f32) * level) as i32;
+            if fw > 0 {
+                // зелёный при достаточном уровне, иначе тускло-жёлтый («говорите громче / ближе»)
+                let c = if level > 0.15 { (110, 230, 120) } else { (240, 220, 120) };
+                fill(mem, RECT { left: mx0, top: my0, right: mx0 + fw, bottom: my1 }, c);
             }
+            dt(mem, "\u{25CF} ЗАПИСЬ (ON AIR)", RECT { left: 10, top: sy, right: mx0 - 6, bottom: h }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+        } else {
+            dt(mem, "\u{00B7}\u{00B7}\u{00B7} Распознаю\u{2026}", RECT { left: 10, top: sy, right: w - 6, bottom: h }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
         }
-        crate::voice::VoiceState::Idle => {} // полоса сливается с фоном панели
     }
 
     let pen = CreatePen(PS_SOLID, 1, rgb(C_BORDER.0, C_BORDER.1, C_BORDER.2));
@@ -471,7 +491,7 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
 // END_CONTRACT: resize
 pub unsafe fn resize(hwnd: HWND, app: &mut App) {
     let n = app.rows.len().max(1) as i32;
-    let h = HEAD + ROW * n + STRIP;
+    let h = HEAD + ROW * n + strip_h(app.voice.state());
     if h != app.last_h {
         app.last_h = h;
         let _ = SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, W, h, SWP_NOMOVE | SWP_NOACTIVATE);

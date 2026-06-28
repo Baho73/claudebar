@@ -20,16 +20,51 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.0.0 - Phase-19 step-1: стейт-машина голосового ввода. Recorder (!Send) живёт на UI-потоке
+//   LAST_CHANGE: v1.1.0 - Phase-19 доводка: авто-стоп по тишине (poll: 2с после речи / 8с без речи), короткие тоны старта/конца (Beep, в фоне), уровень микрофона (level), диагностический лог (vlog в voice.log). Подтверждено рабочим; валил поведенческий AV (Касперский), не баг.
+//   v1.0.0 - Phase-19 step-1: стейт-машина голосового ввода. Recorder (!Send) живёт на UI-потоке
 //                между нажатиями; распознавание (M-STT) + чистка (M-TRANSFORM) — в worker-потоке, результат
 //                в UI через PostMessage (lparam = Box<String>). HWND передаём в поток как isize.
 // END_CHANGE_SUMMARY
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::System::Diagnostics::Debug::Beep;
 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 
 // Сообщение «распознавание готово»: lparam = *mut String (Box::into_raw); WM_APP+1 занят поиском.
 pub const WM_APP_VOICE_DONE: u32 = WM_APP + 2;
+
+// Авто-стоп записи по молчанию (чтобы не писать часами, если забыл выключить).
+const SILENCE_STOP_SECS: f32 = 2.0; // была речь -> стоп после стольких секунд тишины
+const NO_SPEECH_CAP_SECS: f32 = 8.0; // речи вообще не было -> стоп через столько
+
+// Короткие тоны старта/конца диктовки (70мс; старт выше, конец ниже). В фоне — Beep блокирует на длительность.
+pub fn cue_start() {
+    std::thread::spawn(|| unsafe {
+        let _ = Beep(1200, 70);
+    });
+}
+pub fn cue_end() {
+    std::thread::spawn(|| unsafe {
+        let _ = Beep(760, 70);
+    });
+}
+
+// Диагностический лог голосового ввода в %APPDATA%\claudebar\voice.log (у exe нет консоли).
+pub fn vlog(msg: &str) {
+    use std::io::Write;
+    let dir = std::env::var_os("APPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_default()
+        .join("claudebar");
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("voice.log")) {
+        let t = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(f, "[{t}] {msg}");
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VoiceState {
@@ -88,6 +123,14 @@ impl Voice {
         self.state
     }
 
+    // Текущий уровень микрофона 0.0..1.0 (только во время записи) — для индикатора громкости.
+    pub fn level(&self) -> f32 {
+        match (self.state, &self.rec) {
+            (VoiceState::Recording, Some(rec)) => rec.level(),
+            _ => 0.0,
+        }
+    }
+
     // Переключатель по хоткею: старт записи / стоп+распознавание / игнор (занято).
     // Состояние меняем через next_state (единый источник переходов), но только при успехе side-effect.
     pub fn toggle(&mut self, hwnd: HWND, cfg: &crate::config::Config) {
@@ -98,25 +141,53 @@ impl Voice {
                     Ok(r) => {
                         self.rec = Some(r);
                         self.state = next_state(self.state, VoiceEvent::Toggle); // -> Recording
+                        vlog("toggle: Idle -> Recording (start_recording ok)");
+                        cue_start(); // звук «слушаю»
                     }
-                    Err(e) => eprintln!("[M-VOICE][toggle][START_REC] {e}"),
+                    Err(e) => vlog(&format!("toggle: start_recording FAILED: {e}")),
                 }
                 // END_BLOCK_START_REC
             }
-            VoiceState::Recording => {
-                // START_BLOCK_STOP_REC
-                let Some(rec) = self.rec.take() else {
-                    self.state = VoiceState::Idle;
-                    return;
-                };
-                let wav = rec.stop();
-                self.state = next_state(self.state, VoiceEvent::Toggle); // -> Transcribing
-                self.spawn_worker(hwnd, cfg, wav);
-                // END_BLOCK_STOP_REC
-            }
-            VoiceState::Transcribing => { /* занято — игнор */ }
+            VoiceState::Recording => self.stop_to_transcribe(hwnd, cfg, "хоткей"),
+            VoiceState::Transcribing => vlog("toggle: занято (Transcribing) — игнор"),
         }
     }
+
+    // START_BLOCK_STOP_REC
+    // Остановить запись и запустить распознавание (по хоткею или авто-стопу по тишине).
+    fn stop_to_transcribe(&mut self, hwnd: HWND, cfg: &crate::config::Config, why: &str) {
+        let Some(rec) = self.rec.take() else {
+            self.state = VoiceState::Idle;
+            vlog("stop: нет Recorder -> Idle");
+            return;
+        };
+        let wav = rec.stop();
+        self.state = next_state(self.state, VoiceEvent::Toggle); // -> Transcribing
+        vlog(&format!("stop ({why}): Recording -> Transcribing (wav {} байт)", wav.len()));
+        self.spawn_worker(hwnd, cfg, wav);
+    }
+    // END_BLOCK_STOP_REC
+
+    // START_BLOCK_POLL_SILENCE
+    // Авто-стоп по тишине: вызывается из таймера, пока идёт запись. true = состояние изменилось.
+    pub fn poll(&mut self, hwnd: HWND, cfg: &crate::config::Config) -> bool {
+        if self.state != VoiceState::Recording {
+            return false;
+        }
+        let stop = match &self.rec {
+            Some(rec) => {
+                (rec.had_speech() && rec.trailing_silence() >= SILENCE_STOP_SECS)
+                    || (!rec.had_speech() && rec.duration() >= NO_SPEECH_CAP_SECS)
+            }
+            None => false,
+        };
+        if stop {
+            self.stop_to_transcribe(hwnd, cfg, "тишина");
+            return true;
+        }
+        false
+    }
+    // END_BLOCK_POLL_SILENCE
 
     // Вернуть в Idle (после доставки текста в UI и вставки).
     pub fn on_done(&mut self) {
@@ -132,11 +203,16 @@ impl Voice {
         let prompt = cfg.initial_prompt.clone();
         let vocab = crate::config::parse_vocab(&cfg.vocab);
         let hwnd_i = hwnd.0 as isize; // HWND !Send -> переносим как isize
+        vlog(&format!("worker: POST {url} (wav {} байт, lang={lang})", wav.len()));
         std::thread::spawn(move || {
             let text = match crate::stt::transcribe(&url, &wav, &lang, &hot, &prompt) {
-                Ok(t) => crate::transform::process(&t, &vocab),
+                Ok(t) => {
+                    let out = crate::transform::process(&t, &vocab);
+                    vlog(&format!("worker: STT ok, raw={:?} -> out={:?}", t, out));
+                    out
+                }
                 Err(e) => {
-                    eprintln!("[M-VOICE][worker][STT] {e}");
+                    vlog(&format!("worker: STT FAILED: {e}"));
                     String::new()
                 }
             };
