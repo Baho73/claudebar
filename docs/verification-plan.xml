@@ -74,6 +74,7 @@
         <scenario-11 kind="success">Phase-16: sort=alpha|recent round-trip (set -> serialize -> parse); отсутствие ключа -> дефолт alpha</scenario-11>
         <scenario-12 kind="regression">При смене конфигурации мониторов НА ХОДУ (переключение/отключение экрана) окно остаётся за пределами видимых экранов и его не схватить (WS_EX_TOOLWINDOW: нет в Alt+Tab/таскбаре). Фикс: recover_pos(cur, default, win_w/h, virtual screen rect) -> Some(новая поз.), если видимой площади &lt; MIN_VISIBLE, иначе None; M-MAIN зовёт её на WM_DISPLAYCHANGE и при Some делает SetWindowPos + save_pos. Тест recover_pos_pulls_back_after_monitor_disconnect (вне экрана -> Some(default); видимое -> None). Ручной smoke: отключить второй монитор при окне на нём -> окно возвращается на первичный.</scenario-12>
         <scenario-13 kind="success">Phase-20: voice_keep_clipboard round-trip — voicekeepclip= (0/1), деф. true (нет ключа -> сохранять прежний буфер). Тест voice_keep_clipboard_roundtrip_default_true (нет ключа/=1 -> true; выкл -> serialize/parse сохраняет false). Управляет восстановлением буфера в M-PASTE.paste_text.</scenario-13>
+        <scenario-14 kind="success">Phase-22: voice_always_on round-trip — voicealwayson= (0/1), деф. false (нет ключа -> always-on ВЫКЛ). Тест voice_always_on_roundtrip_default_false (нет ключа/=0 -> false; вкл -> serialize/parse сохраняет true). Управляет персистентным Mic в M-VOICE.set_always_on.</scenario-14>
       </scenarios>
     </V-M-CONFIG>
     <V-M-WINENUM MODULE="M-WINENUM" PRIORITY="high">
@@ -238,12 +239,15 @@
     <V-M-AUDIO MODULE="M-AUDIO" PRIORITY="high">
       <test-files><file>src/audio.rs (#[cfg(test)])</file></test-files>
       <module-checks>
-        <check-1>cargo test audio (encode_wav)</check-1>
+        <check-1>cargo test audio (encode_wav, ring_keep, pre_roll_samples)</check-1>
         <check-2>Ручной smoke: start_recording -&gt; речь -&gt; stop -&gt; WAV распознаётся</check-2>
       </module-checks>
       <scenarios>
         <scenario-1 kind="success">encode_wav: &amp;[i16] из N сэмплов, rate, ch -&gt; RIFF/fmt/data: размер RIFF=36+2N, fmt PCM(1)/mono/16бит, byterate/blockalign верны, data-чанк=2N</scenario-1>
         <scenario-2 kind="failure">Нет устройства ввода -&gt; start_recording -&gt; NO_INPUT_DEVICE (Err), без краха</scenario-2>
+        <scenario-3 kind="success">Phase-22: ring_keep(len,cap) — len&lt;=cap -&gt; 0 (ничего не выкидываем); len&gt;cap -&gt; len-cap (держим кольцо &lt;= cap). Тест ring_keep_basic.</scenario-3>
+        <scenario-4 kind="success">Phase-22: pre_roll_samples(rate,ms) — 48000,500 -&gt; 24000; 16000,500 -&gt; 8000; 0мс -&gt; 0. Тест pre_roll_samples_basic.</scenario-4>
+        <scenario-5 kind="success">Phase-22 ручной smoke: always-on ВКЛ -&gt; хоткей -&gt; слово СРАЗУ после пика попадает в распознавание (pre-roll ловит начало, cold-start снят). disarm_take не роняет поток (повторная диктовка работает).</scenario-5>
       </scenarios>
     </V-M-AUDIO>
     <V-M-STT MODULE="M-STT" PRIORITY="high">
@@ -291,6 +295,7 @@
       <scenarios>
         <scenario-1 kind="success">next_state: Idle+toggle-&gt;Recording; Recording+toggle-&gt;Transcribing; Transcribing+done-&gt;Idle; Transcribing+toggle-&gt;Transcribing (игнор)</scenario-1>
         <scenario-2 kind="failure">STT вернул Err -&gt; состояние возвращается в Idle, индикатор гаснет, вставки нет</scenario-2>
+        <scenario-3 kind="success">Phase-22 ручной smoke: set_always_on(true) на Idle -&gt; persistent Mic стартует (индикатор ОС горит); хоткей -&gt; arm/disarm_take путь (тёплый поток, первое слово не теряется). set_always_on(false) -&gt; Mic дропается, индикатор гаснет, toggle падает на legacy Recorder (cold-start). Legacy-путь (галочка ВЫКЛ) end-to-end не сломан.</scenario-3>
       </scenarios>
     </V-M-VOICE>
   </ModuleVerification>

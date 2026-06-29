@@ -64,6 +64,7 @@
         <fn-sort_mode PURPOSE="Режим порядка окон sort=alpha|recent (is/set, ключ sort=, деф. alpha) — Phase-16" />
         <fn-voice PURPOSE="Конфиг голосового ввода: voice_hotkey/whisper_url/voice_language/vocab/hotwords/initial_prompt/transform (ключи в ini) — Phase-18" />
         <fn-voice_keep_clipboard PURPOSE="bool voice_keep_clipboard (ключ voicekeepclip=, деф. true): сохранять прежний буфер обмена после вставки диктовки — Phase-20" />
+        <fn-voice_always_on PURPOSE="bool voice_always_on (ключ voicealwayson=, деф. false): держать микрофон включённым постоянно (always-on + pre-roll, первое слово не теряется) — Phase-22" />
         <fn-parse_hotkey PURPOSE="Чистое: 'Ctrl+Space' -> (mods, vk) для RegisterHotKey — тестируемо — Phase-18" />
         <fn-parse_vocab PURPOSE="Чистое: 'клодбар=ClaudeBar;висперикс=WhisperX' -> Vec&lt;(wrong,right)&gt; — словарь пост-замены — Phase-18" />
         <type-Config PURPOSE="Корень конфигурации: apps, проекты, секции, недавние, порядок, позиция, шрифт, реестр номеров путей, sort, голос" />
@@ -226,6 +227,12 @@
         <fn-duration PURPOSE="Recorder: длительность записи, сек — Phase-19 доводка" />
         <fn-level PURPOSE="Recorder: текущий уровень микрофона 0..1 (пик ~100мс) — индикатор громкости — Phase-19 доводка" />
         <type-Recorder PURPOSE="Хэндл записи: cpal Stream + общий буфер сэмплов + rate/channels" />
+        <type-Mic PURPOSE="Персистентный always-on захват: cpal Stream крутится всегда + общий буфер с armed-флагом (кольцо pre-roll / запись) — Phase-22" />
+        <fn-start_persistent PURPOSE="Запустить always-on поток: callback пишет в буфер, при !armed обрезает перёд до cap (кольцо pre-roll) -&gt; Mic — Phase-22" />
+        <fn-arm PURPOSE="Mic::arm: перестать обрезать кольцо -&gt; копить (в буфере уже pre-roll ~500мс как голова записи) — Phase-22" />
+        <fn-disarm_take PURPOSE="Mic::disarm_take: собрать WAV из накопленного (pre-roll+live), сбросить буфер в кольцо; поток остаётся жив — Phase-22" />
+        <fn-ring_keep PURPOSE="Чистое: сколько сэмплов выкинуть с переда, чтобы кольцо держало &lt;= cap (len.saturating_sub(cap)) — тестируемо — Phase-22" />
+        <fn-pre_roll_samples PURPOSE="Чистое: rate*ms/1000 -&gt; число сэмплов pre-roll (const PRE_ROLL_MS=500) — тестируемо — Phase-22" />
       </annotations>
     </M-AUDIO>
 
@@ -272,7 +279,8 @@
       <depends>M-AUDIO, M-STT, M-TRANSFORM, M-CONFIG</depends>
       <verification-ref>V-M-VOICE</verification-ref>
       <annotations>
-        <fn-toggle PURPOSE="Idle -&gt; старт записи (+звук); Recording -&gt; стоп + спавн worker (stt+transform), state=Transcribing" />
+        <fn-toggle PURPOSE="Idle -&gt; старт записи (+звук); Recording -&gt; стоп + спавн worker (stt+transform), state=Transcribing. Phase-22: при always-on (Mic есть) -&gt; arm/disarm_take (тёплый поток+pre-roll), иначе Recorder cold-start" />
+        <fn-set_always_on PURPOSE="Старт/дроп персистентного Mic по галочке (только на Idle); ВКЛ = always-on микрофон + pre-roll, ВЫКЛ = legacy cold-start — Phase-22" />
         <fn-on_done PURPOSE="Завершение worker: текст готов -&gt; в UI (M-MAIN вставит), state=Idle" />
         <fn-next_state PURPOSE="Чистое: переход стейт-машины (cur, event) -&gt; next — тестируемо" />
         <fn-poll PURPOSE="Авто-стоп по тишине (из таймера): 2с тишины после речи или 8с без речи -&gt; стоп — Phase-19 доводка" />

@@ -45,6 +45,9 @@
     <risk-38 phase="Phase-18">cpal тянет windows 0.54 параллельно проектной 0.58 — две версии крейта в дереве зависимостей. Принято: cargo допускает; +размер. Изолировано в M-AUDIO.</risk-38>
     <risk-39 phase="Phase-19">Поведенческий антивирус (Касперский) убивает процесс: глобальный хоткей + SendInput Ctrl+V (впрыск ввода) трактуется как кейлоггер. Подтверждено 2026-06-28 (процесс падал после WM_HOTKEY без panic). Митигация: добавить claudebar.exe в ДОВЕРЕННЫЕ программы Касперского с «не контролировать активность» (не просто исключение из проверки); добавить папку target\release, чтобы пересборки не переflagились. panic-hook пишет PANIC в voice.log — отличить реальный баг от убийства AV.</risk-39>
     <risk-40 phase="Phase-19">Холодный старт WASAPI: первый start_recording за сессию ~8с (инициализация устройства). Прогрев в фоне отклонён — конкурентный start_recording дерётся за устройство. Принято как есть; ускорение отложено.</risk-40>
+    <risk-41 phase="Phase-22">Always-on микрофон: поток захвата крутится постоянно -&gt; индикатор микрофона ОС горит всегда и поведенческий AV (Касперский, уже нервный к claudebar — см. risk-39) может реагировать сильнее на непрерывный захват. Митигация: фича opt-in, по умолчанию ВЫКЛ (voice_always_on=false); включается осознанно галочкой; claudebar.exe в доверенных. Снимает cold-start (risk-40) когда включена.</risk-41>
+    <risk-42 phase="Phase-22">Realtime-callback дренит перёд Vec каждый тик, чтобы держать кольцо pre-roll (~500мс). O(n), n≈24к сэмплов @48кГц -&gt; копейки. ponytail: при росте порога перейти на VecDeque (помечено в коде).</risk-42>
+    <risk-43 phase="Phase-22">Тоггл галочки во время Recording -&gt; пересоздание/дроп Mic теряет текущую запись. Митигация: set_always_on применяется чисто на Idle (вне записи); смена в полёте логируется, без краха.</risk-43>
   </ArchitectureNotes>
 
   <DependencyRationale>
@@ -863,6 +866,20 @@
         <on-fail>grace-fix; откат коммитом</on-fail>
       </checkpoint>
     </Phase-21>
+
+    <Phase-22 name="Always-on микрофон + pre-roll (первое слово не теряется)" status="pending">
+      <goal>Убрать потерю первого слова из-за cold-start потока захвата (cpal стартует ~100-300мс, первый старт за сессию до ~8с — risk-40). Опционально (галочка, деф. ВЫКЛ) держать микрофон включённым постоянно: поток пишет в кольцевой буфер последних ~500мс; по хоткею кольцо становится «головой» записи (pre-roll), поток уже тёплый — cold-start исчезает.</goal>
+      <step-1 module="M-CONFIG" status="pending" verification="V-M-CONFIG">bool voice_always_on (ключ voicealwayson=, деф. false): parse(v=="1")/serialize/round-trip; pub-поле (toggle напрямую). Тест voice_always_on_roundtrip_default_false</step-1>
+      <step-2 module="M-AUDIO" status="pending" verification="V-M-AUDIO">Персистентный Mic: поток cpal крутится всегда, общий буфер; !armed -&gt; обрезать перёд до cap (кольцо pre-roll), armed -&gt; копить. arm() / disarm_take()-&gt;wav (сброс в кольцо, поток жив) / level/had_speech/trailing_silence/duration по armed-части. Чистые fn: ring_keep(len,cap)-&gt;drop_front, pre_roll_samples(rate,ms). const PRE_ROLL_MS=500. Тесты ring_keep/pre_roll_samples; smoke «слово сразу после пика ловится»</step-2>
+      <step-3 module="M-VOICE" status="pending" verification="V-M-VOICE">set_always_on(on): старт/дроп персистентного Mic (только на Idle). toggle ветвится: Mic есть -&gt; arm/disarm_take, иначе текущий путь (Recorder cold). level/poll читают активный источник. legacy-путь (выкл) не меняется</step-3>
+      <step-4 module="M-MAIN" status="pending" verification="V-M-MAIN">⚙-пункт-галочка «Микрофон всегда включён (pre-roll)» (ID_MIC_ALWAYS, MF_CHECKED) + toggle config.voice_always_on/save + voice.set_always_on; на старте App при voice_always_on -&gt; set_always_on(true)</step-4>
+      <checkpoint>
+        <tests>cargo test зелёные (ring_keep/pre_roll_samples/voice_always_on round-trip); cargo build --release под GNU (убить запущенный claudebar.exe перед release)</tests>
+        <smoke>Галочка ВКЛ: индикатор микрофона ОС горит; хоткей -&gt; слово СРАЗУ после пика попадает в распознавание (первое слово не теряется). Галочка ВЫКЛ: поведение как раньше (cold-start), индикатор гаснет</smoke>
+        <artifacts>graph/plan/verification синхронны; grace lint=0</artifacts>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-22>
   </ImplementationOrder>
 
   <ExecutionPolicy>
