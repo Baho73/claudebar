@@ -85,6 +85,7 @@ const ID_TOGGLE_FILES: usize = 32; // меню настроек: искать и
 const ID_FULLPATHS: usize = 33; // меню настроек: включить полные пути в заголовках редакторов (Phase-15)
 const ID_SORT: usize = 34; // меню настроек: сортировка окон по времени (recent) vs по имени (alpha) — Phase-16
 const ID_KEEP_CLIP: usize = 35; // меню настроек: сохранять прежний буфер обмена после диктовки — Phase-20
+const ID_MIC_ALWAYS: usize = 36; // меню настроек: микрофон всегда включён (always-on + pre-roll) — Phase-22
 const ID_SEARCH: usize = 40; // EDIT-поле поиска в шапке (WM_COMMAND EN_CHANGE)
 const SEARCH_MIN: usize = 3; // живой BM25 начинается с N символов
 const WM_APP_SEARCH: u32 = WM_APP + 1; // dense-результаты из фонового потока
@@ -1723,6 +1724,9 @@ unsafe fn show_settings_menu(hwnd: HWND) {
     let keep_on = APP.with(|c| c.borrow().as_ref().map(|a| a.config.voice_keep_clipboard).unwrap_or(true));
     let kflag = if keep_on { MF_STRING | MF_CHECKED } else { MF_STRING };
     let _ = AppendMenuW(menu, kflag, ID_KEEP_CLIP, w!("Сохранять прежний буфер обмена (диктовка)"));
+    let mic_on = APP.with(|c| c.borrow().as_ref().map(|a| a.config.voice_always_on).unwrap_or(false));
+    let mflag = if mic_on { MF_STRING | MF_CHECKED } else { MF_STRING };
+    let _ = AppendMenuW(menu, mflag, ID_MIC_ALWAYS, w!("Микрофон всегда включён (pre-roll)"));
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
     let _ = AppendMenuW(menu, MF_STRING, ID_ABOUT, w!("О программе…"));
     let mut pt = POINT::default();
@@ -1802,6 +1806,17 @@ fn handle_command(hwnd: HWND, id: usize) {
             if let Some(a) = c.borrow_mut().as_mut() {
                 a.config.voice_keep_clipboard = !a.config.voice_keep_clipboard;
                 a.config.save(hwnd); // персист флага
+            }
+        });
+        return;
+    }
+    // настройки: always-on микрофон (always-on + pre-roll) — Phase-22
+    if id == ID_MIC_ALWAYS {
+        APP.with(|c| {
+            if let Some(a) = c.borrow_mut().as_mut() {
+                a.config.voice_always_on = !a.config.voice_always_on;
+                a.config.save(hwnd); // персист флага
+                a.voice.set_always_on(a.config.voice_always_on); // старт/дроп персистентного Mic
             }
         });
         return;
@@ -1975,6 +1990,11 @@ fn main() -> Result<()> {
         };
         if refresh_items(&mut app) {
             app.config.save_pos(); // окна ещё нет -> сохраняем с известной позицией
+        }
+        // Phase-22: при включённой опции поднять always-on микрофон сразу на старте,
+        // чтобы первое слово ловилось без cold-start (поток уже тёплый к первому хоткею).
+        if app.config.voice_always_on {
+            app.voice.set_always_on(true);
         }
 
         let cls = w!("claudebar_wnd");
