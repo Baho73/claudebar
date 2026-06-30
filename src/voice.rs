@@ -252,12 +252,13 @@ impl Voice {
         let hot = cfg.hotwords.clone();
         let prompt = cfg.initial_prompt.clone();
         let vocab = crate::config::parse_vocab(&cfg.vocab);
+        let trail = cfg.voice_trailing_space; // хвостовой пробел после фразы — Phase-23
         let hwnd_i = hwnd.0 as isize; // HWND !Send -> переносим как isize
         vlog(&format!("worker: POST {url} (wav {} байт, lang={lang})", wav.len()));
         std::thread::spawn(move || {
             let text = match crate::stt::transcribe(&url, &wav, &lang, &hot, &prompt) {
                 Ok(t) => {
-                    let out = crate::transform::process(&t, &vocab);
+                    let out = crate::transform::process(&t, &vocab, trail);
                     vlog(&format!("worker: STT ok, raw={:?} -> out={:?}", t, out));
                     out
                 }

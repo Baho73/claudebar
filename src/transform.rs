@@ -1,5 +1,5 @@
 // FILE: src/transform.rs
-// VERSION: 1.0.0
+// VERSION: 1.1.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Пост-обработка распознанного текста перед вставкой: чистка типового мусора Whisper + кастомный словарь пост-заменой.
 //   SCOPE: clean_whisper (теги в скобках, повторы слов, галлюцинации-предложения, капитализация), apply_vocab (замена по словарю по границе слова, регистронезависимо), process (связка). Всё чистое.
@@ -12,11 +12,12 @@
 // START_MODULE_MAP
 //   clean_whisper - чистое: убрать [теги], схлопнуть повторы слов, выкинуть предложения-галлюцинации, капитализировать
 //   apply_vocab   - чистое: замена слов по словарю wrong->right (регистронезависимо, по границе слова)
-//   process       - чистое: clean_whisper -> apply_vocab
+//   process       - чистое: clean_whisper -> apply_vocab -> опц. хвостовой пробел
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.0.0 - Phase-18 step-4: чистка вывода Whisper (список галлюцинаций на тишине/шуме,
+//   LAST_CHANGE: v1.1.0 - Phase-23: process += trailing_space (опц. хвостовой пробел, чтобы следующая вставка диктовки не липла к точке). M-VOICE worker передаёт cfg.voice_trailing_space.
+//   v1.0.0 - Phase-18 step-4: чистка вывода Whisper (список галлюцинаций на тишине/шуме,
 //                повторы, скобочные теги, капитализация) + словарь пост-замены (модель не держит hotwords,
 //                словарь делаем текстом). Внешний transform (переформ./перевод) — Phase-D, тут шва нет (YAGNI).
 // END_CHANGE_SUMMARY
@@ -169,13 +170,18 @@ pub fn apply_vocab(text: &str, vocab: &[(String, String)]) -> String {
 }
 
 // START_CONTRACT: process
-//   PURPOSE: Полная пост-обработка перед вставкой: чистка мусора, затем словарь.
-//   INPUTS: { text: &str; vocab: &[(String, String)] }
-//   OUTPUTS: { String - готовый к вставке текст }
+//   PURPOSE: Полная пост-обработка перед вставкой: чистка мусора, словарь, опц. хвостовой пробел.
+//   INPUTS: { text: &str; vocab: &[(String, String)]; trailing_space: bool }
+//   OUTPUTS: { String - готовый к вставке текст; при trailing_space и непустом результате — пробел в хвосте (чтобы следующая вставка не липла к точке) }
 //   SIDE_EFFECTS: none
 // END_CONTRACT: process
-pub fn process(text: &str, vocab: &[(String, String)]) -> String {
-    apply_vocab(&clean_whisper(text), vocab)
+pub fn process(text: &str, vocab: &[(String, String)], trailing_space: bool) -> String {
+    let out = apply_vocab(&clean_whisper(text), vocab);
+    if trailing_space && !out.is_empty() {
+        out + " "
+    } else {
+        out
+    }
 }
 
 #[cfg(test)]
@@ -216,8 +222,20 @@ mod tests {
     #[test]
     fn process_pipeline() {
         let v = voc(&[("клодбар", "ClaudeBar")]);
-        assert_eq!(process("  открой   клодбар.  ", &v), "Открой ClaudeBar.");
-        assert_eq!(process("[музыка]", &v), "");
-        assert_eq!(process("", &v), "");
+        assert_eq!(process("  открой   клодбар.  ", &v, false), "Открой ClaudeBar.");
+        assert_eq!(process("[музыка]", &v, false), "");
+        assert_eq!(process("", &v, false), "");
+    }
+
+    #[test]
+    fn process_trailing_space() {
+        // ВКЛ: непустой результат получает хвостовой пробел (следующая вставка не липнет к точке)
+        assert_eq!(process("раз.", &[], true), "Раз. ");
+        assert_eq!(process("  привет мир  ", &[], true), "Привет мир ");
+        // ВЫКЛ: без пробела
+        assert_eq!(process("раз.", &[], false), "Раз.");
+        // пустой результат -> пробел НЕ клеим (нечего вставлять)
+        assert_eq!(process("[музыка]", &[], true), "");
+        assert_eq!(process("", &[], true), "");
     }
 }
