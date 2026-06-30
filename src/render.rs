@@ -698,6 +698,7 @@ mod tests {
             initial_prompt: String::new(),
             voice_keep_clipboard: true,
             voice_always_on: false,
+            voice_trailing_space: true,
             cfg_path: std::path::PathBuf::new(),
         }
     }
@@ -783,6 +784,7 @@ mod tests {
             initial_prompt: String::new(),
             voice_keep_clipboard: true,
             voice_always_on: false,
+            voice_trailing_space: true,
             cfg_path: std::path::PathBuf::new(),
         };
         // 2 окна VS Code (app 0) + 1 окно Word (app 2)
@@ -862,6 +864,7 @@ mod tests {
             initial_prompt: String::new(),
             voice_keep_clipboard: true,
             voice_always_on: false,
+            voice_trailing_space: true,
             cfg_path: std::path::PathBuf::new(),
         };
         cfg.toggle_collapsed("VS Code");
