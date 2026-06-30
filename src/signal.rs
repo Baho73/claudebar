@@ -1,5 +1,5 @@
 // FILE: src/signal.rs
-// VERSION: 1.2.0
+// VERSION: 1.3.0
 // START_MODULE_CONTRACT
 //   PURPOSE: «Звоночек» завершения ИИ: читать файлы-сигналы из %APPDATA%\claudebar\signals\, отдавать проекты для подсветки, гасить сигнал при фокусе окна проекта.
 //   SCOPE: путь папки сигналов, парсинг .signal (cwd проекта), ключ проекта (basename) + полный cwd, наборы «звенящих» (basename и cwd), сброс по фокусу с матчем по полному пути.
@@ -14,7 +14,9 @@
 //   signal_dir        - путь к %APPDATA%\claudebar\signals (создаётся при отсутствии)
 //   parse_signal      - извлечь cwd проекта из содержимого .signal
 //   project_key       - basename(cwd) в нижнем регистре — fallback-ключ сопоставления
-//   should_clear      - чистое: сигнал гасится, если окно в фокусе — этот проект (по полному пути, иначе basename)
+//   should_clear      - чистое: сигнал гасится, если окно в фокусе — этот проект (cwd == путь окна ИЛИ вложен, иначе basename)
+//   row_signaled      - чистое: «звенит/занят» ли строка для набора сигналов (cwd == путь ИЛИ вложен в путь; иначе basename)
+//   path_within       - чистое (приват): путь child == ancestor или внутри него по границе сегмента
 //   list_signals      - прочитать активные сигналы из папки
 //   bell_keys         - множество «звенящих» basename-ключей для paint (fallback)
 //   bell_cwds         - множество полных cwd активных сигналов — точная подсветка по пути (Phase-15)
@@ -25,7 +27,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.2.1 - Phase-17 hardening: staleness 600->90с + keep-alive (PostToolUse-хук обновляет .busy на каждом инструменте), чтобы точки держались всю длинную работу и гасли ~через 90с после смерти/Stop.
+//   LAST_CHANGE: v1.3.0 - fix(grace-fix): row_signaled + path_within — матч bell/busy строки, когда cwd сигнала ВЛОЖЕН в путь окна (Claude-сессия в подпапке открытого проекта, напр. окно D:\Python\Mosco, сессия D:\Python\Mosco\doc). Регрессия проявилась при включённом FULLPATHS: путь у строки появлялся -> матч становился только по точному пути, fallback на basename пропадал -> подсветка/точки гасли. should_clear тоже на path_within (фокус родителя гасит сигнал подпапки). D-06 (одноимённые в разных путях) сохранён.
+//   v1.2.1 - Phase-17 hardening: staleness 600->90с + keep-alive (PostToolUse-хук обновляет .busy на каждом инструменте), чтобы точки держались всю длинную работу и гасли ~через 90с после смерти/Stop.
 //   v1.2.0 - Phase-17 step-1: чтение .busy (индикатор работы) — list_ext(ext, ttl) + busy_keys/busy_cwds + is_stale (фильтр зависших по mtime >600с). list_signals переведён на list_ext.
 //   v1.1.0 - Phase-15 step-3: матч звоночка по полному cwd == WinItem.path (fallback basename); чинит коллизию одноимённых (D-06). Signal += cwd; should_clear(sig_cwd,sig_key,fg_path,fg_key); bell_cwds.
 //   v1.0.0 - Phase-4 Step 1: модуль сигналов «звоночка» (файловый IPC из Claude Code).
@@ -99,9 +102,34 @@ pub fn project_key(cwd: &str) -> String {
 // END_CONTRACT: should_clear
 pub fn should_clear(sig_cwd: &str, sig_key: &str, fg_path: Option<&str>, fg_key: &str) -> bool {
     match fg_path {
-        Some(p) => p.eq_ignore_ascii_case(sig_cwd), // точный матч по полному пути (Phase-15)
-        None => fg_key == sig_key,                  // окно без пути -> fallback на basename
+        Some(p) => path_within(sig_cwd, p), // cwd сигнала == путь окна ИЛИ вложен в него (сессия в подпапке)
+        None => fg_key == sig_key,          // окно без пути -> fallback на basename
     }
+}
+
+// START_CONTRACT: row_signaled
+//   PURPOSE: Чистое — «звенит/занят» ли строка для набора сигналов: путь строки == cwd сигнала ИЛИ cwd сигнала
+//            вложен в путь строки (Claude-сессия в подпапке открытого проекта: окно ...\Mosco, сессия ...\Mosco\doc).
+//            Без пути у строки — fallback на basename. Одноимённые в РАЗНЫХ путях не путаются (D-06).
+//   INPUTS: { row_path: Option<&str>; row_name: &str; sig_cwds: &HashSet<String> (lower); sig_keys: &HashSet<String> (lower) }
+//   OUTPUTS: { bool }
+//   SIDE_EFFECTS: none
+//   LINKS: M-RENDER (подсветка bell/busy строк), M-SIGNAL
+// END_CONTRACT: row_signaled
+pub fn row_signaled(row_path: Option<&str>, row_name: &str, sig_cwds: &HashSet<String>, sig_keys: &HashSet<String>) -> bool {
+    match row_path {
+        Some(p) => sig_cwds.iter().any(|c| path_within(c, p)),
+        None => sig_keys.contains(&row_name.to_lowercase()),
+    }
+}
+
+// Чистое: путь `child` это `ancestor` ИЛИ лежит ВНУТРИ него по границе сегмента (регистронезависимо).
+// d:\x\mosco\doc within d:\x\mosco -> true; d:\x\mosco within d:\x\mos -> false (не граница сегмента);
+// d:\y\mosco within d:\x\mosco -> false (D-06: одноимённые в разных путях не путаются).
+fn path_within(child: &str, ancestor: &str) -> bool {
+    let c = child.to_lowercase();
+    let a = ancestor.to_lowercase();
+    c == a || c.starts_with(&(a.clone() + "\\")) || c.starts_with(&(a + "/"))
 }
 
 // .busy старше этого возраста (с) считается зависшим и игнорируется. Keep-alive (PostToolUse-хук
@@ -274,6 +302,27 @@ mod tests {
         // окно без пути -> fallback на basename
         assert!(should_clear("d:\\a\\claudebar", "claudebar", None, "claudebar"));
         assert!(!should_clear("d:\\a\\claudebar", "claudebar", None, "other"));
+        // фокус окна-родителя гасит сигнал сессии в подпапке (cwd вложен в путь окна)
+        assert!(should_clear("d:\\python\\mosco\\doc", "doc", Some("D:\\Python\\Mosco"), "mosco"));
+    }
+
+    #[test]
+    fn row_signaled_matches_session_in_subfolder() {
+        // regression: при FULLPATHS (путь в заголовке) точки/звоночек пропали у проекта,
+        // где Claude-сессия запущена в ПОДПАПКЕ открытого проекта (окно D:\Python\Mosco, cwd D:\Python\Mosco\doc).
+        let cwds: HashSet<String> = ["d:\\python\\mosco\\doc".to_string()].into_iter().collect();
+        let keys: HashSet<String> = ["doc".to_string()].into_iter().collect();
+        // путь окна = корень проекта, cwd сессии вложен -> МАТЧ (точный contains не находил)
+        assert!(row_signaled(Some("D:\\Python\\Mosco"), "Mosco", &cwds, &keys));
+        // точное совпадение пути всё ещё матчит
+        assert!(row_signaled(Some("D:\\Python\\Mosco\\doc"), "doc", &cwds, &keys));
+        // D-06: одноимённый проект в ДРУГОМ пути НЕ зажигается
+        assert!(!row_signaled(Some("D:\\Other\\Mosco"), "Mosco", &cwds, &keys));
+        // префикс по имени, не по границе сегмента, НЕ матчит (D:\Python\Mos != ...\Mosco\doc)
+        assert!(!row_signaled(Some("D:\\Python\\Mos"), "Mos", &cwds, &keys));
+        // без пути у строки -> fallback на basename
+        assert!(row_signaled(None, "doc", &cwds, &keys));
+        assert!(!row_signaled(None, "mosco", &cwds, &keys));
     }
 
     #[test]

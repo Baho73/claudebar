@@ -146,6 +146,9 @@
         <scenario-5 kind="failure">Папка signals отсутствует -> пустой набор, без паники</scenario-5>
         <scenario-6 kind="success">Phase-15: should_clear гасит по полному cwd == путь окна в фокусе. Два одноимённых проекта (D:\a\claudebar, E:\b\claudebar): фокус на одном гасит ТОЛЬКО его сигнал, второй остаётся. Fallback на basename, если у окна нет пути. Тест should_clear_by_full_path</scenario-6>
         <scenario-7 kind="success">Phase-17: busy_cwds/busy_keys читают .busy (cwd lower + basename lower); is_stale(mtime, now, ttl=BUSY_STALE_SECS=90) -> свежий .busy в наборе, старше 90с игнорируется; keep-alive (PostToolUse обновляет mtime) держит точки всю длинную работу; матч окна по cwd==path (fallback basename). Тесты is_stale/busy-разбор</scenario-7>
+        <scenario-8 kind="regression">fix(grace-fix): при включённом FULLPATHS у строки появлялся путь -> матч bell/busy становился ТОЛЬКО по точному пути, fallback на basename пропадал. Если Claude-сессия в ПОДПАПКЕ открытого проекта (окно D:\Python\Mosco, cwd D:\Python\Mosco\doc) — ни точный путь, ни basename "doc" не совпадали со строкой "Mosco"/"D:\Python\Mosco" -> подсветка/точки гасли. Фикс: row_signaled/path_within — строка матчит, если cwd сигнала == путь окна ИЛИ ВЛОЖЕН в него (по границе сегмента); D-06 (одноимённые в разных путях) сохранён; should_clear тоже на path_within. Тест row_signaled_matches_session_in_subfolder (+ подпапка в should_clear_by_full_path)</scenario-8>
+      </scenarios>
+    </V-M-SIGNAL>
     <V-M-ICON MODULE="M-ICON" PRIORITY="low">
       <test-files><file>src/icon.rs (#[cfg(test)] на icon_from_path)</file></test-files>
       <module-checks>

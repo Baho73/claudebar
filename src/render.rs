@@ -1,9 +1,9 @@
 // FILE: src/render.rs
-// VERSION: 1.12.0
+// VERSION: 1.13.1
 // START_MODULE_CONTRACT
 //   PURPOSE: Построение строк-секций и отрисовка панели (GDI, двойной буфер) с группировкой по приложению.
 //   SCOPE: геометрия/цвета, Row, build_rows, paint (секции+иконки+окна+недавние+подсветка звоночка), resize, row_at.
-//   DEPENDS: M-CONFIG (палитра, цвета/метки, свёрнутость), M-WINENUM (WinItem), M-RECENT (RecentDoc), M-ICON (иконки секций), M-VOICE (App.voice.state() для полосы-индикатора), App.bell (набор звенящих имён проектов)
+//   DEPENDS: M-CONFIG (палитра, цвета/метки, свёрнутость), M-WINENUM (WinItem), M-RECENT (RecentDoc), M-ICON (иконки секций), M-VOICE (App.voice.state() для полосы-индикатора), M-SIGNAL (row_signaled — матч bell/busy строки), App.bell (набор звенящих имён проектов)
 //   LINKS: M-RENDER
 //   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS
@@ -20,7 +20,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.13.0 - Phase-19 доводка: баннер-индикатор (динамическая высота strip_h: 0 в Idle, 22 активен) с надписью «● ЗАПИСЬ (ON AIR)» и шкалой уровня микрофона справа (зелёный/жёлтый); распознавание — «··· Распознаю…».
+//   LAST_CHANGE: v1.13.1 - fix(grace-fix): подсветка bell/точки busy через signal::row_signaled вместо inline точного contains. Чинит регрессию при FULLPATHS: если Claude-сессия в подпапке открытого проекта (окно D:\Python\Mosco, cwd D:\Python\Mosco\doc), точный матч по пути не находил, fallback на basename пропадал -> подсветка гасла. DEPENDS += M-SIGNAL.
+//   v1.13.0 - Phase-19 доводка: баннер-индикатор (динамическая высота strip_h: 0 в Idle, 22 активен) с надписью «● ЗАПИСЬ (ON AIR)» и шкалой уровня микрофона справа (зелёный/жёлтый); распознавание — «··· Распознаю…».
 //   v1.12.0 - Phase-19 step-3: индикатор голосового ввода — полоса STRIP в самом низу окна (resize +STRIP к высоте); paint: запись = ярко-красная полоса (C_VOICE_REC), распознавание = бегущий золотой сегмент (anim_frame), idle = сливается с фоном. Читает app.voice.state() (M-VOICE).
 //   v1.11.0 - Phase-12 polish: поле поиска постоянно в шапке (не по клику 🔍); «≡» слева — ручка drag; индикатор совпадения = иконка в цветной рамке (draw_framed_icon, 🟡 BM25 / 🔵 dense) вместо тонкой полосы; иконки в «Найдено ещё» (icon::path_icon).
 //   v1.10.0 - Phase-12 Step 4: глиф «🔍» в шапке; подсветка совпавших открытых папок цветной полосой (🟡 BM25 / 🔵 dense); Row::SearchHeader/SearchResult + блок «Найдено ещё»; чистые folder_project/search_color_for/search_result_rows.
@@ -290,11 +291,8 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 let it: &WinItem = &app.items[*idx];
                 let id_key = it.path.as_deref().unwrap_or(&it.name); // идентичность: путь, иначе имя (Phase-15)
                 // START_BLOCK_ROW_BG_WINDOW
-                // звоночек: окно с путём — точный матч по cwd; без пути — по basename (Phase-15)
-                let belling = match it.path.as_deref() {
-                    Some(p) => app.bell_paths.contains(&p.to_lowercase()),
-                    None => app.bell.contains(&it.name.to_lowercase()),
-                };
+                // звоночек: путь окна == cwd сигнала ИЛИ cwd вложен в путь окна (сессия в подпапке); без пути — basename
+                let belling = crate::signal::row_signaled(it.path.as_deref(), &it.name, &app.bell_paths, &app.bell);
                 if it.hwnd == fg {
                     fill(mem, full, C_ACTIVE);
                 } else if belling {
@@ -334,11 +332,8 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 };
                 let disp = display_name(&it.name, it.path.as_deref().and_then(|p| app.config.number_for(p)));
                 dt(mem, &disp, RECT { left: 42, top, right: name_right, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
-                // индикатор работы: бегущие точки по низу строки, где Claude сейчас занят (Phase-17)
-                let busy = match it.path.as_deref() {
-                    Some(p) => app.busy_paths.contains(&p.to_lowercase()),
-                    None => app.busy.contains(&it.name.to_lowercase()),
-                };
+                // индикатор работы: бегущие точки, где Claude занят (путь == cwd ИЛИ cwd вложен в путь; иначе basename) — Phase-17
+                let busy = crate::signal::row_signaled(it.path.as_deref(), &it.name, &app.busy_paths, &app.busy);
                 if busy {
                     // точки сразу СПРАВА от имени, по центру строки (шрифт имени, золотой) — заметнее, чем по низу
                     let mut nr = RECT { left: 0, top: 0, right: 0, bottom: 0 };

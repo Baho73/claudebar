@@ -134,7 +134,8 @@
         <fn-signal_dir PURPOSE="Путь к папке сигналов (создать при отсутствии)" />
         <fn-parse_signal PURPOSE="Извлечь cwd проекта из содержимого .signal" />
         <fn-project_key PURPOSE="basename(cwd) в нижнем регистре — ключ сопоставления со строкой окна (fallback при отсутствии пути)" />
-        <fn-should_clear PURPOSE="Чистое: сигнал гасится, если его cwd == путь окна в фокусе (точечно по полному пути; fallback basename) — Phase-15" />
+        <fn-should_clear PURPOSE="Чистое: сигнал гасится, если его cwd == путь окна в фокусе ИЛИ вложен в него (сессия в подпапке); fallback basename — Phase-15, fix(grace-fix)" />
+        <fn-row_signaled PURPOSE="Чистое: «звенит/занят» ли строка для набора сигналов — путь строки == cwd ИЛИ cwd вложен в путь (Claude в подпапке открытого проекта); без пути — basename. Чинит регрессию FULLPATHS (D:\X\Mosco vs cwd D:\X\Mosco\doc)" />
         <type-Signal PURPOSE="Активный сигнал (.signal/.busy): путь файла, ключ проекта (basename), полный cwd" />
       </annotations>
     </M-SIGNAL>
@@ -316,5 +317,6 @@
     <CrossLink from="M-VOICE" to="M-TRANSFORM" relation="worker: clean_whisper + apply_vocab перед отдачей в UI — Phase-19" />
     <CrossLink from="M-VOICE" to="M-CONFIG" relation="whisper_url/language/vocab/hotwords для запроса и обработки — Phase-19" />
     <CrossLink from="M-RENDER" to="M-VOICE" relation="читает состояние (recording/transcribing) для индикатора-полосы внизу окна — Phase-19" />
+    <CrossLink from="M-RENDER" to="M-SIGNAL" relation="row_signaled — матч bell/busy строки (cwd сигнала == путь окна или вложен) — fix(grace-fix)" />
   </Project>
 </KnowledgeGraph>
