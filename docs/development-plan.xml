@@ -881,11 +881,11 @@
       </checkpoint>
     </Phase-22>
 
-    <Phase-23 name="Пробел после фразы (диктовка не липнет к точке)" status="pending">
+    <Phase-23 name="Пробел после фразы (диктовка не липнет к точке)" status="done">
       <goal>После надиктованной фразы добавлять хвостовой пробел, чтобы следующая вставка не прилипала к точке («Фраза один.Фраза два» -&gt; «Фраза один. Фраза два»). Управляется галочкой, деф. ВКЛ.</goal>
-      <step-1 module="M-CONFIG" status="pending" verification="V-M-CONFIG">bool voice_trailing_space (ключ voicetrailspace=, деф. true): parse(!="0")/serialize/round-trip; pub-поле. Тест voice_trailing_space_roundtrip_default_true</step-1>
-      <step-2 module="M-TRANSFORM" status="pending" verification="V-M-TRANSFORM">process(text, vocab, trailing_space): после clean+vocab при trailing_space и непустом результате добавить один пробел в хвост; пустой -&gt; без пробела. M-VOICE worker передаёт cfg.voice_trailing_space. Тест process_trailing_space</step-2>
-      <step-3 module="M-MAIN" status="pending" verification="V-M-MAIN">⚙-пункт-галочка «Пробел после фразы (диктовка)» (ID_TRAIL_SPACE, MF_CHECKED) + toggle config.voice_trailing_space/save</step-3>
+      <step-1 module="M-CONFIG" status="done" verification="V-M-CONFIG">bool voice_trailing_space (ключ voicetrailspace=, деф. true): parse(!="0")/serialize/round-trip; pub-поле. Тест voice_trailing_space_roundtrip_default_true</step-1>
+      <step-2 module="M-TRANSFORM" status="done" verification="V-M-TRANSFORM">process(text, vocab, trailing_space): после clean+vocab при trailing_space и непустом результате добавить один пробел в хвост; пустой -&gt; без пробела. M-VOICE worker передаёт cfg.voice_trailing_space. Тест process_trailing_space</step-2>
+      <step-3 module="M-MAIN" status="done" verification="V-M-MAIN">⚙-пункт-галочка «Пробел после фразы (диктовка)» (ID_TRAIL_SPACE, MF_CHECKED) + toggle config.voice_trailing_space/save</step-3>
       <checkpoint>
         <tests>cargo test зелёные (process_trailing_space, voice_trailing_space round-trip); cargo build --release под GNU (убить запущенный exe)</tests>
         <smoke>Галочка ВКЛ: продиктовать «Раз.» затем «Два.» -&gt; «Раз. Два.» (пробел между). ВЫКЛ: «Раз.Два.» (как раньше)</smoke>

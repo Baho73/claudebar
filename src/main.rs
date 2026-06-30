@@ -86,6 +86,7 @@ const ID_FULLPATHS: usize = 33; // меню настроек: включить �
 const ID_SORT: usize = 34; // меню настроек: сортировка окон по времени (recent) vs по имени (alpha) — Phase-16
 const ID_KEEP_CLIP: usize = 35; // меню настроек: сохранять прежний буфер обмена после диктовки — Phase-20
 const ID_MIC_ALWAYS: usize = 36; // меню настроек: микрофон всегда включён (always-on + pre-roll) — Phase-22
+const ID_TRAIL_SPACE: usize = 37; // меню настроек: пробел после надиктованной фразы — Phase-23
 const ID_SEARCH: usize = 40; // EDIT-поле поиска в шапке (WM_COMMAND EN_CHANGE)
 const SEARCH_MIN: usize = 3; // живой BM25 начинается с N символов
 const WM_APP_SEARCH: u32 = WM_APP + 1; // dense-результаты из фонового потока
@@ -1727,6 +1728,9 @@ unsafe fn show_settings_menu(hwnd: HWND) {
     let mic_on = APP.with(|c| c.borrow().as_ref().map(|a| a.config.voice_always_on).unwrap_or(false));
     let mflag = if mic_on { MF_STRING | MF_CHECKED } else { MF_STRING };
     let _ = AppendMenuW(menu, mflag, ID_MIC_ALWAYS, w!("Микрофон всегда включён (pre-roll)"));
+    let trail_on = APP.with(|c| c.borrow().as_ref().map(|a| a.config.voice_trailing_space).unwrap_or(true));
+    let tflag = if trail_on { MF_STRING | MF_CHECKED } else { MF_STRING };
+    let _ = AppendMenuW(menu, tflag, ID_TRAIL_SPACE, w!("Пробел после фразы (диктовка)"));
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
     let _ = AppendMenuW(menu, MF_STRING, ID_ABOUT, w!("О программе…"));
     let mut pt = POINT::default();
@@ -1817,6 +1821,16 @@ fn handle_command(hwnd: HWND, id: usize) {
                 a.config.voice_always_on = !a.config.voice_always_on;
                 a.config.save(hwnd); // персист флага
                 a.voice.set_always_on(a.config.voice_always_on); // старт/дроп персистентного Mic
+            }
+        });
+        return;
+    }
+    // настройки: пробел после надиктованной фразы (диктовка не липнет к точке) — Phase-23
+    if id == ID_TRAIL_SPACE {
+        APP.with(|c| {
+            if let Some(a) = c.borrow_mut().as_mut() {
+                a.config.voice_trailing_space = !a.config.voice_trailing_space;
+                a.config.save(hwnd); // персист флага
             }
         });
         return;
