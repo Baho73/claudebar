@@ -75,6 +75,7 @@
         <scenario-12 kind="regression">При смене конфигурации мониторов НА ХОДУ (переключение/отключение экрана) окно остаётся за пределами видимых экранов и его не схватить (WS_EX_TOOLWINDOW: нет в Alt+Tab/таскбаре). Фикс: recover_pos(cur, default, win_w/h, virtual screen rect) -> Some(новая поз.), если видимой площади &lt; MIN_VISIBLE, иначе None; M-MAIN зовёт её на WM_DISPLAYCHANGE и при Some делает SetWindowPos + save_pos. Тест recover_pos_pulls_back_after_monitor_disconnect (вне экрана -> Some(default); видимое -> None). Ручной smoke: отключить второй монитор при окне на нём -> окно возвращается на первичный.</scenario-12>
         <scenario-13 kind="success">Phase-20: voice_keep_clipboard round-trip — voicekeepclip= (0/1), деф. true (нет ключа -> сохранять прежний буфер). Тест voice_keep_clipboard_roundtrip_default_true (нет ключа/=1 -> true; выкл -> serialize/parse сохраняет false). Управляет восстановлением буфера в M-PASTE.paste_text.</scenario-13>
         <scenario-14 kind="success">Phase-22: voice_always_on round-trip — voicealwayson= (0/1), деф. false (нет ключа -> always-on ВЫКЛ). Тест voice_always_on_roundtrip_default_false (нет ключа/=0 -> false; вкл -> serialize/parse сохраняет true). Управляет персистентным Mic в M-VOICE.set_always_on.</scenario-14>
+        <scenario-15 kind="success">Phase-23: voice_trailing_space round-trip — voicetrailspace= (0/1), деф. true (нет ключа -> добавлять пробел). Тест voice_trailing_space_roundtrip_default_true (нет ключа/=1 -> true; выкл -> serialize/parse сохраняет false). Управляет хвостовым пробелом в M-TRANSFORM.process.</scenario-15>
       </scenarios>
     </V-M-CONFIG>
     <V-M-WINENUM MODULE="M-WINENUM" PRIORITY="high">
@@ -276,6 +277,7 @@
         <scenario-2 kind="success">clean_whisper выкидывает галлюцинации: весь вывод == «Продолжение следует...» / «Спасибо за просмотр» / «[музыка]» -&gt; «»; хвостовая титр-строка отрезана</scenario-2>
         <scenario-3 kind="success">apply_vocab: [(«клодбар»,«ClaudeBar»)] на «открой клодбар» -&gt; «открой ClaudeBar» (регистронезависимо, по границе слова; «клодбарный» не трогается)</scenario-3>
         <scenario-4 kind="success">process: clean_whisper -&gt; apply_vocab в связке; пустой вход -&gt; «»</scenario-4>
+        <scenario-5 kind="success">Phase-23: process(text, vocab, trailing_space) — при trailing_space=true и непустом результате в хвосте один пробел («Раз.» -&gt; «Раз. »); trailing_space=false -&gt; без пробела; пустой результат -&gt; «» (пробел не клеим к пустоте). Тест process_trailing_space</scenario-5>
       </scenarios>
     </V-M-TRANSFORM>
     <V-M-PASTE MODULE="M-PASTE" PRIORITY="medium">

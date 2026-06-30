@@ -65,6 +65,7 @@
         <fn-voice PURPOSE="Конфиг голосового ввода: voice_hotkey/whisper_url/voice_language/vocab/hotwords/initial_prompt/transform (ключи в ini) — Phase-18" />
         <fn-voice_keep_clipboard PURPOSE="bool voice_keep_clipboard (ключ voicekeepclip=, деф. true): сохранять прежний буфер обмена после вставки диктовки — Phase-20" />
         <fn-voice_always_on PURPOSE="bool voice_always_on (ключ voicealwayson=, деф. false): держать микрофон включённым постоянно (always-on + pre-roll, первое слово не теряется) — Phase-22" />
+        <fn-voice_trailing_space PURPOSE="bool voice_trailing_space (ключ voicetrailspace=, деф. true): добавлять пробел после надиктованной фразы, чтобы следующая вставка не липла к точке — Phase-23" />
         <fn-parse_hotkey PURPOSE="Чистое: 'Ctrl+Space' -> (mods, vk) для RegisterHotKey — тестируемо — Phase-18" />
         <fn-parse_vocab PURPOSE="Чистое: 'клодбар=ClaudeBar;висперикс=WhisperX' -> Vec&lt;(wrong,right)&gt; — словарь пост-замены — Phase-18" />
         <type-Config PURPOSE="Корень конфигурации: apps, проекты, секции, недавние, порядок, позиция, шрифт, реестр номеров путей, sort, голос" />
@@ -258,7 +259,7 @@
       <annotations>
         <fn-clean_whisper PURPOSE="Чистое: trim, схлопывание пробелов/повторов, выкидывание известных галлюцинаций Whisper (список-константа)" />
         <fn-apply_vocab PURPOSE="Чистое: пост-замена по словарю wrong-&gt;right (регистронезависимо, по словам) — кастомный словарь" />
-        <fn-process PURPOSE="Чистое: clean_whisper -&gt; apply_vocab (внешний transform off в v1)" />
+        <fn-process PURPOSE="Чистое: clean_whisper -&gt; apply_vocab; при trailing_space и непустом результате — хвостовой пробел (диктовка не липнет к точке) — Phase-23" />
       </annotations>
     </M-TRANSFORM>
 
