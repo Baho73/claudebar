@@ -1,5 +1,5 @@
 // FILE: src/audio.rs
-// VERSION: 1.2.0
+// VERSION: 1.3.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Захват аудио с микрофона по умолчанию (cpal) в WAV 16-bit PCM mono в память для голосового ввода.
 //   SCOPE: start_recording (разовая запись -> Recorder), start_persistent (always-on поток + кольцо pre-roll -> Mic, arm/disarm_take), чистая encode_wav, чистые ring_keep/pre_roll_samples (логика кольца).
@@ -17,11 +17,15 @@
 //   Mic              - персистентный хэндл: arm (начать копить), disarm_take (WAV pre-roll+live, сброс в кольцо)
 //   ring_keep        - чистое: сколько сэмплов выкинуть с переда, чтобы кольцо держало <= cap
 //   pre_roll_samples - чистое: rate*ms/1000 -> число сэмплов pre-roll
+//   samples_len      - Recorder/Mic: число накопленных сэмплов (границы окна стриминга)
+//   snapshot_from    - Recorder/Mic: срез буфера [start..] в WAV без остановки записи (стриминг)
+//   wav_slice        - чистое (приват): срез сэмплов [start..] + rate -> WAV (через encode_wav)
 //   encode_wav       - чистое: &[i16] + rate + channels -> WAV-байты (RIFF/fmt/data)
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.2.0 - Phase-22: always-on микрофон + pre-roll. start_persistent -> Mic: поток крутится постоянно,
+//   LAST_CHANGE: v1.3.0 - Phase-24: снимок буфера для стриминга. Recorder/Mic += samples_len() + snapshot_from(start) -> WAV среза [start..] БЕЗ остановки записи (поток/armed не трогаем). Чистая wav_slice (через encode_wav), тест wav_slice_basic.
+//   v1.2.0 - Phase-22: always-on микрофон + pre-roll. start_persistent -> Mic: поток крутится постоянно,
 //                при !armed обрезает перёд до cap (кольцо ~500мс), arm() перестаёт обрезать (кольцо = голова записи),
 //                disarm_take() -> WAV(pre-roll+live), сброс в кольцо без дропа потока. Чистые ring_keep/pre_roll_samples.
 //                Общие helpers open_default_input/build_mono_stream/*_of (убрано дублирование с Recorder, push_mono удалён).
@@ -128,6 +132,16 @@ impl Recorder {
     pub fn level(&self) -> f32 {
         level_of(&self.buf.lock().unwrap_or_else(|e| e.into_inner()), self.rate)
     }
+
+    // Число накопленных сэмплов (для границ скользящего окна стриминга) — Phase-24.
+    pub fn samples_len(&self) -> usize {
+        self.buf.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+
+    // Снять срез буфера [start..] в WAV БЕЗ остановки записи (стриминг) — Phase-24.
+    pub fn snapshot_from(&self, start: usize) -> Vec<u8> {
+        wav_slice(&self.buf.lock().unwrap_or_else(|e| e.into_inner()), start, self.rate)
+    }
 }
 
 // START_CONTRACT: start_recording
@@ -197,6 +211,16 @@ impl Mic {
     }
     pub fn level(&self) -> f32 {
         level_of(&self.buf.lock().unwrap_or_else(|e| e.into_inner()).samples, self.rate)
+    }
+
+    // Число накопленных (armed) сэмплов — для границ скользящего окна стриминга — Phase-24.
+    pub fn samples_len(&self) -> usize {
+        self.buf.lock().unwrap_or_else(|e| e.into_inner()).samples.len()
+    }
+
+    // Снять срез буфера [start..] в WAV БЕЗ остановки записи (поток/armed не трогаем) — Phase-24.
+    pub fn snapshot_from(&self, start: usize) -> Vec<u8> {
+        wav_slice(&self.buf.lock().unwrap_or_else(|e| e.into_inner()).samples, start, self.rate)
     }
 }
 
@@ -334,6 +358,18 @@ pub fn encode_wav(samples: &[i16], rate: u32, channels: u16) -> Vec<u8> {
     out
 }
 
+// START_CONTRACT: wav_slice
+//   PURPOSE: Чистое — срез сэмплов [start..] обернуть в WAV (моно, rate). start за границей -> пустой WAV.
+//   INPUTS: { samples: &[i16]; start: usize; rate: u32 }
+//   OUTPUTS: { Vec<u8> — WAV 16-bit PCM для среза }
+//   SIDE_EFFECTS: none
+//   LINKS: M-AUDIO (snapshot_from для стриминга)
+// END_CONTRACT: wav_slice
+fn wav_slice(samples: &[i16], start: usize, rate: u32) -> Vec<u8> {
+    let s = start.min(samples.len());
+    encode_wav(&samples[s..], rate, 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,5 +426,18 @@ mod tests {
         assert_eq!(pre_roll_samples(16000, 500), 8000);
         assert_eq!(pre_roll_samples(44100, 300), 13230);
         assert_eq!(pre_roll_samples(48000, 0), 0);
+    }
+
+    #[test]
+    fn wav_slice_basic() {
+        let s = [10i16, 20, 30, 40];
+        // start=0 == encode_wav целиком
+        assert_eq!(wav_slice(&s, 0, 16000), encode_wav(&s, 16000, 1));
+        // срез [2..] -> data-чанк = 2*(4-2) = 4 байта
+        let w = wav_slice(&s, 2, 16000);
+        assert_eq!(u32le(&w, 40), 2 * 2); // data len
+        assert_eq!(i16::from_le_bytes([w[44], w[45]]), 30); // первый сэмпл среза
+        // start за границей -> пустой WAV (44 байта, только заголовок)
+        assert_eq!(wav_slice(&s, 99, 16000).len(), 44);
     }
 }
