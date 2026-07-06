@@ -66,6 +66,7 @@
         <fn-voice_keep_clipboard PURPOSE="bool voice_keep_clipboard (ключ voicekeepclip=, деф. true): сохранять прежний буфер обмена после вставки диктовки — Phase-20" />
         <fn-voice_always_on PURPOSE="bool voice_always_on (ключ voicealwayson=, деф. false): держать микрофон включённым постоянно (always-on + pre-roll, первое слово не теряется) — Phase-22" />
         <fn-voice_trailing_space PURPOSE="bool voice_trailing_space (ключ voicetrailspace=, деф. true): добавлять пробел после надиктованной фразы, чтобы следующая вставка не липла к точке — Phase-23" />
+        <fn-voice_streaming PURPOSE="bool voice_streaming (ключ voicestreaming=, деф. false): инкрементально распознавать длинную диктовку во время записи (стабильный префикс), чтобы финиш был мгновенным — Phase-24" />
         <fn-parse_hotkey PURPOSE="Чистое: 'Ctrl+Space' -> (mods, vk) для RegisterHotKey — тестируемо — Phase-18" />
         <fn-parse_vocab PURPOSE="Чистое: 'клодбар=ClaudeBar;висперикс=WhisperX' -> Vec&lt;(wrong,right)&gt; — словарь пост-замены — Phase-18" />
         <type-Config PURPOSE="Корень конфигурации: apps, проекты, секции, недавние, порядок, позиция, шрифт, реестр номеров путей, sort, голос" />
@@ -235,6 +236,9 @@
         <fn-disarm_take PURPOSE="Mic::disarm_take: собрать WAV из накопленного (pre-roll+live), сбросить буфер в кольцо; поток остаётся жив — Phase-22" />
         <fn-ring_keep PURPOSE="Чистое: сколько сэмплов выкинуть с переда, чтобы кольцо держало &lt;= cap (len.saturating_sub(cap)) — тестируемо — Phase-22" />
         <fn-pre_roll_samples PURPOSE="Чистое: rate*ms/1000 -&gt; число сэмплов pre-roll (const PRE_ROLL_MS=500) — тестируемо — Phase-22" />
+        <fn-snapshot_from PURPOSE="Снять срез буфера [start_sample..] в WAV БЕЗ остановки записи (Recorder и Mic) — для стриминга — Phase-24" />
+        <fn-samples_len PURPOSE="Текущее число накопленных сэмплов (для границ скользящего окна стриминга) — Phase-24" />
+        <fn-wav_slice PURPOSE="Чистое (приват): срез сэмплов [start..] + rate -&gt; WAV-байты (переиспользует encode_wav) — тестируемо — Phase-24" />
       </annotations>
     </M-AUDIO>
 
@@ -260,6 +264,8 @@
         <fn-clean_whisper PURPOSE="Чистое: trim, схлопывание пробелов/повторов, выкидывание известных галлюцинаций Whisper (список-константа)" />
         <fn-apply_vocab PURPOSE="Чистое: пост-замена по словарю wrong-&gt;right (регистронезависимо, по словам) — кастомный словарь" />
         <fn-process PURPOSE="Чистое: clean_whisper -&gt; apply_vocab; при trailing_space и непустом результате — хвостовой пробел (диктовка не липнет к точке) — Phase-23" />
+        <fn-stable_prefix PURPOSE="Чистое: общий устоявшийся префикс двух распознаваний по словам (prev∩cur минус последние margin_words плавающего хвоста) — LocalAgreement стриминга — Phase-24" />
+        <fn-merge_committed PURPOSE="Чистое: склейка зафиксированного текста и хвоста без дублей/двойных пробелов на стыке — Phase-24" />
       </annotations>
     </M-TRANSFORM>
 
@@ -283,6 +289,10 @@
       <annotations>
         <fn-toggle PURPOSE="Idle -&gt; старт записи (+звук); Recording -&gt; стоп + спавн worker (stt+transform), state=Transcribing. Phase-22: при always-on (Mic есть) -&gt; arm/disarm_take (тёплый поток+pre-roll), иначе Recorder cold-start" />
         <fn-set_always_on PURPOSE="Старт/дроп персистентного Mic по галочке (только на Idle); ВКЛ = always-on микрофон + pre-roll, ВЫКЛ = legacy cold-start — Phase-22" />
+        <fn-stream_tick PURPOSE="Стриминг-заход (из таймера при Recording+voice_streaming): snapshot_from(window_start) -&gt; фон stt::transcribe -&gt; WM_APP_STREAM_PARTIAL — Phase-24" />
+        <fn-on_partial PURPOSE="Приём частичного распознавания: stable_prefix vs prev -&gt; дописать committed_text, сдвинуть скользящее окно (window_start/committed_samples) — Phase-24" />
+        <type-StreamState PURPOSE="Состояние стриминга: committed_text, committed_samples, prev_hypothesis, window_start — Phase-24" />
+        <fn-WM_APP_STREAM_PARTIAL PURPOSE="Оконное сообщение: стрим-worker -&gt; UI с частичным текстом окна (lparam = Box<String>) — Phase-24" />
         <fn-on_done PURPOSE="Завершение worker: текст готов -&gt; в UI (M-MAIN вставит), state=Idle" />
         <fn-next_state PURPOSE="Чистое: переход стейт-машины (cur, event) -&gt; next — тестируемо" />
         <fn-poll PURPOSE="Авто-стоп по тишине (из таймера): 2с тишины после речи или 8с без речи -&gt; стоп — Phase-19 доводка" />
@@ -311,7 +321,7 @@
     <CrossLink from="M-MAIN" to="M-SEARCH" relation="окошко поиска в шапке: ввод/Enter/Esc запускают поиск, debounce live BM25; folder_for_project для пункта меню «ссылка/проводник» (Phase-14)" />
     <CrossLink from="M-RENDER" to="M-SEARCH" relation="читает результаты поиска для подсветки папок (жёлтый/синий) и блока «Найдено ещё»" />
     <CrossLink from="M-MAIN" to="M-INDEX" relation="запускает авто-индексацию в фоне при старте и по таймеру; пути баз/корень индексации передаёт параметрами из M-CONFIG" />
-    <CrossLink from="M-MAIN" to="M-VOICE" relation="RegisterHotKey(voice_hotkey); WM_HOTKEY -&gt; M-VOICE.toggle; WM_APP_VOICE_DONE приносит распознанный текст — Phase-19" />
+    <CrossLink from="M-MAIN" to="M-VOICE" relation="RegisterHotKey(voice_hotkey); WM_HOTKEY -&gt; M-VOICE.toggle; WM_APP_VOICE_DONE приносит распознанный текст — Phase-19. Стрим-таймер -&gt; stream_tick, WM_APP_STREAM_PARTIAL -&gt; on_partial — Phase-24" />
     <CrossLink from="M-MAIN" to="M-PASTE" relation="на WM_APP_VOICE_DONE вставляет текст в запомненное foreground-окно (UI-поток); передаёт keep_clipboard из M-CONFIG (⚙-галочка) — Phase-19/20" />
     <CrossLink from="M-VOICE" to="M-AUDIO" relation="старт/стоп захвата микрофона; стоп даёт WAV-байты — Phase-18/19" />
     <CrossLink from="M-VOICE" to="M-STT" relation="worker: POST WAV на /transcribe -&gt; текст — Phase-19" />

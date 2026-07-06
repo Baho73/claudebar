@@ -48,6 +48,11 @@
     <risk-41 phase="Phase-22">Always-on микрофон: поток захвата крутится постоянно -&gt; индикатор микрофона ОС горит всегда и поведенческий AV (Касперский, уже нервный к claudebar — см. risk-39) может реагировать сильнее на непрерывный захват. Митигация: фича opt-in, по умолчанию ВЫКЛ (voice_always_on=false); включается осознанно галочкой; claudebar.exe в доверенных. Снимает cold-start (risk-40) когда включена.</risk-41>
     <risk-42 phase="Phase-22">Realtime-callback дренит перёд Vec каждый тик, чтобы держать кольцо pre-roll (~500мс). O(n), n≈24к сэмплов @48кГц -&gt; копейки. ponytail: при росте порога перейти на VecDeque (помечено в коде).</risk-42>
     <risk-43 phase="Phase-22">Тоггл галочки во время Recording -&gt; пересоздание/дроп Mic теряет текущую запись. Митигация: set_always_on применяется чисто на Idle (вне записи); смена в полёте логируется, без краха.</risk-43>
+    <risk-44 phase="Phase-24">Дрейф гипотезы Whisper между заходами: одно и то же аудио, распознанное в разных окнах, может слегка отличаться на хвосте (ещё не устоялось). Митигация — stable_prefix коммитит только совпавшую с ПРОШЛЫМ заходом часть И с запасом отбрасывает последние N слов окна (STREAM_MARGIN_WORDS ~4), чтобы не зафиксировать плавающий хвост. Финальный заход на стопе добирает остаток.</risk-44>
+    <risk-45 phase="Phase-24">GPU-нагрузка от таймерных заходов на растущее окно (повторный инференс). Замеры: окно ≤25с ~1.5с (обрыв движка на 30с), поэтому окно СКОЛЬЗИТ и держится ≤ STREAM_WINDOW_SECS (~25с) — старое уже зафиксировано и выпадает из окна. Интервал заходов настраиваемый const STREAM_TICK_SECS (~3-4с). Сервер stateless — заходы независимы, _infer_lock их сериализует.</risk-45>
+    <risk-46 phase="Phase-24">Скользящее окно: как только зафиксировали префикс, окно должно начинаться ПОСЛЕ него, иначе окно растёт без предела и упрётся в обрыв 30с. Граница окна в сэмплах ведётся по числу зафиксированных сэмплов (committed_samples). Ошибка здесь = либо потеря аудио, либо переполнение окна -&gt; тщательный smoke на диктовке &gt;30с.</risk-46>
+    <risk-47 phase="Phase-24">Вставка результата только по ЗАВЕРШЕНИИ (v1), не по мере. Инкрементальная вставка-по-мере отклонена для v1: конфликтует с ручным вводом пользователя в то же поле и усложняет откат. Текст копится в накопителе, вставляется разом на стопе (весь выигрыш — быстрый финиш — сохранён). Вставка-по-мере отложена.</risk-47>
+    <risk-48 phase="Phase-24">snapshot() клонирует буфер под мьютексом каждый тик (O(n)); при скользящем окне n ограничен ~25с*rate. Терпимо (заход раз в ~3-4с). ponytail: помечено в коде, апгрейд не нужен пока окно ограничено.</risk-48>
   </ArchitectureNotes>
 
   <DependencyRationale>
@@ -893,6 +898,21 @@
         <on-fail>grace-fix; откат коммитом</on-fail>
       </checkpoint>
     </Phase-23>
+
+    <Phase-24 name="Стриминг-диктовка (стабильный префикс, длинный текст не тормозит на финише)" status="pending">
+      <goal>Инкрементально распознавать длинную диктовку во время записи, чтобы к остановке остался лишь короткий хвост -&gt; финиш почти мгновенный. Обоснование замером (тёплая large-v3-turbo, 2×3060): обрыв движка на ~30с (окно ≤25с ~1.5с, 40с ~15с, 67с ~22с). Подход «стабильный префикс» (LocalAgreement): НЕ резать по паузам (рвут предложение), а фиксировать текст, устоявшийся между двумя заходами скользящего окна ≤25с. Опция-галочка, деф. ВЫКЛ; ВЫКЛ = текущее поведение (весь WAV на стопе).</goal>
+      <step-1 module="M-CONFIG" status="pending" verification="V-M-CONFIG">bool voice_streaming (ключ voicestreaming=, деф. false): parse(v=="1")/serialize/round-trip; pub-поле. Тест voice_streaming_roundtrip_default_false</step-1>
+      <step-2 module="M-AUDIO" status="pending" verification="V-M-AUDIO">snapshot_from(start_sample) -&gt; Vec&lt;u8&gt; WAV: снять срез буфера [start..] в WAV БЕЗ остановки записи (у Recorder и Mic); + samples_len() -&gt; текущее число сэмплов (для границ окна). Не трогает armed/поток. Тест на срез (чистый helper wav_slice)</step-2>
+      <step-3 module="M-TRANSFORM" status="pending" verification="V-M-TRANSFORM">Чистые: stable_prefix(prev, cur, margin_words) -&gt; устоявшийся общий префикс по словам (совпадение prev∩cur минус последние margin_words плавающего хвоста); merge_committed(fixed, tail) -&gt; склейка без дублей/двойных пробелов на стыке. Тесты stable_prefix_*, merge_committed_*</step-3>
+      <step-4 module="M-VOICE" status="pending" verification="V-M-VOICE">Оркестрация стриминга: StreamState (committed_text, committed_samples, prev_hypothesis, window_start). stream_tick(hwnd,cfg): snapshot_from(window_start) -&gt; фон stt::transcribe -&gt; WM_APP_STREAM_PARTIAL(текст). При partial: stable_prefix vs prev -&gt; дописать в committed_text, сдвинуть window_start/committed_samples (окно скользит, ≤STREAM_WINDOW_SECS). На стопе: финальный заход на хвост -&gt; merge_committed -&gt; отдать полный текст как сейчас (WM_APP_VOICE_DONE). Константы STREAM_TICK_SECS~3, STREAM_WINDOW_SECS~25, STREAM_MARGIN_WORDS~4. Только при cfg.voice_streaming; иначе legacy stop_to_transcribe</step-4>
+      <step-5 module="M-MAIN" status="pending" verification="V-M-MAIN">⚙-пункт-галочка «Стриминг длинной диктовки» (ID_STREAMING, MF_CHECKED) + toggle config.voice_streaming/save. Стрим-таймер: в ANIM/поллинге при Recording+voice_streaming звать voice.stream_tick; WM_APP_STREAM_PARTIAL -&gt; voice.on_partial. Вставка результата — как сейчас (по WM_APP_VOICE_DONE, разом)</step-5>
+      <checkpoint>
+        <tests>cargo test зелёные (stable_prefix/merge_committed/wav_slice/voice_streaming round-trip); cargo build --release под GNU (убить запущенный claudebar.exe)</tests>
+        <smoke>Галочка ВКЛ: диктовать &gt;30с с паузами-раздумьями -&gt; предложения НЕ рвутся, на стопе финиш быстрый (хвост мал), текст полный и корректный. Диктовка с паузой в середине предложения не создаёт разрыв. Галочка ВЫКЛ: поведение как раньше (весь WAV на стопе). Замер: время от стопа до вставки на длинной диктовке заметно меньше, чем без стриминга</smoke>
+        <artifacts>graph/plan/verification синхронны; grace lint=0</artifacts>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-24>
   </ImplementationOrder>
 
   <ExecutionPolicy>
