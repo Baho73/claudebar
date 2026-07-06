@@ -30,7 +30,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.17.0 - Phase-23: опция voice_trailing_space (ключ voicetrailspace=, деф. true) — добавлять пробел после надиктованной фразы, чтобы следующая вставка не липла к точке. ⚙-галочка в M-MAIN; хвостовой пробел в M-TRANSFORM.process.
+//   LAST_CHANGE: v1.18.0 - Phase-24: опция voice_streaming (ключ voicestreaming=, деф. false) — инкрементально распознавать длинную диктовку во время записи (стабильный префикс), финиш мгновенный. ⚙-галочка в M-MAIN; оркестрация в M-VOICE.
+//   v1.17.0 - Phase-23: опция voice_trailing_space (ключ voicetrailspace=, деф. true) — добавлять пробел после надиктованной фразы, чтобы следующая вставка не липла к точке. ⚙-галочка в M-MAIN; хвостовой пробел в M-TRANSFORM.process.
 //   v1.16.0 - Phase-22: опция voice_always_on (ключ voicealwayson=, деф. false) — держать микрофон включённым постоянно (always-on + pre-roll, первое слово не теряется). ⚙-галочка в M-MAIN; персистентный Mic в M-VOICE/M-AUDIO.
 //   v1.15.0 - Phase-20: опция voice_keep_clipboard (ключ voicekeepclip=, деф. true) — сохранять прежний буфер обмена после вставки диктовки. ⚙-галочка в M-MAIN; M-PASTE.paste_text(text, keep) восстанавливает буфер только при keep.
 //   v1.14.0 - fix(grace-fix): recover_pos — рантайм-кламп для уже открытого окна. visible_start_pos клампил только при старте; на смену мониторов на ходу окно улетало за экран и его не схватить (WS_EX_TOOLWINDOW). M-MAIN зовёт recover_pos на WM_DISPLAYCHANGE.
@@ -170,6 +171,7 @@ pub struct Config {
     pub voice_keep_clipboard: bool, // сохранять прежний буфер после вставки диктовки (ключ voicekeepclip=, деф. true) — Phase-20
     pub voice_always_on: bool, // держать микрофон включённым постоянно (always-on + pre-roll, ключ voicealwayson=, деф. false) — Phase-22
     pub voice_trailing_space: bool, // добавлять пробел после надиктованной фразы (ключ voicetrailspace=, деф. true) — Phase-23
+    pub voice_streaming: bool, // инкрементально распознавать длинную диктовку во время записи (ключ voicestreaming=, деф. false) — Phase-24
     pub cfg_path: PathBuf,
 }
 
@@ -325,6 +327,7 @@ struct ParsedIni {
     voice_keep_clipboard: bool,
     voice_always_on: bool,
     voice_trailing_space: bool,
+    voice_streaming: bool,
 }
 
 fn parse_ini(text: &str) -> ParsedIni {
@@ -356,6 +359,7 @@ fn parse_ini(text: &str) -> ParsedIni {
     let mut voice_keep_clipboard = true; // деф. ВКЛ: после диктовки вернуть прежний буфер
     let mut voice_always_on = false; // деф. ВЫКЛ: микрофон включается только на запись (приватность)
     let mut voice_trailing_space = true; // деф. ВКЛ: пробел после фразы, чтобы вставки не липли
+    let mut voice_streaming = false; // деф. ВЫКЛ: стриминг длинной диктовки (новая, рискованная)
     // START_BLOCK_PARSE_LINES
     for line in text.lines() {
         if let Some(v) = line.strip_prefix("pos=") {
@@ -424,6 +428,8 @@ fn parse_ini(text: &str) -> ParsedIni {
             voice_always_on = v.trim() == "1";
         } else if let Some(v) = line.strip_prefix("voicetrailspace=") {
             voice_trailing_space = v.trim() != "0";
+        } else if let Some(v) = line.strip_prefix("voicestreaming=") {
+            voice_streaming = v.trim() == "1";
         } else if let Some(v) = line.strip_prefix("voicehotkey=") {
             if !v.trim().is_empty() {
                 voice_hotkey = v.trim().to_string();
@@ -484,7 +490,7 @@ fn parse_ini(text: &str) -> ParsedIni {
         }
     }
     // END_BLOCK_PARSE_LINES
-    ParsedIni { projects, proj_numbers, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, search_port, chats_db, files_db, projects_root, search_files, sort_recent, voice_hotkey, whisper_url, voice_language, vocab, hotwords, initial_prompt, voice_keep_clipboard, voice_always_on, voice_trailing_space }
+    ParsedIni { projects, proj_numbers, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, search_port, chats_db, files_db, projects_root, search_files, sort_recent, voice_hotkey, whisper_url, voice_language, vocab, hotwords, initial_prompt, voice_keep_clipboard, voice_always_on, voice_trailing_space, voice_streaming }
 }
 
 impl Config {
@@ -521,6 +527,7 @@ impl Config {
             voice_keep_clipboard: p.voice_keep_clipboard,
             voice_always_on: p.voice_always_on,
             voice_trailing_space: p.voice_trailing_space,
+            voice_streaming: p.voice_streaming,
             cfg_path,
         }
     }
@@ -545,6 +552,7 @@ impl Config {
         out += &format!("voicekeepclip={}\n", if self.voice_keep_clipboard { 1 } else { 0 });
         out += &format!("voicealwayson={}\n", if self.voice_always_on { 1 } else { 0 });
         out += &format!("voicetrailspace={}\n", if self.voice_trailing_space { 1 } else { 0 });
+        out += &format!("voicestreaming={}\n", if self.voice_streaming { 1 } else { 0 });
         if !self.vocab.is_empty() {
             out += &format!("vocab={}\n", self.vocab);
         }
@@ -854,6 +862,7 @@ mod tests {
             voice_keep_clipboard: true,
             voice_always_on: false,
             voice_trailing_space: true,
+            voice_streaming: false,
             cfg_path: PathBuf::new(),
         }
     }
@@ -927,6 +936,17 @@ mod tests {
         assert!(c.voice_trailing_space);
         c.voice_trailing_space = false; // выключили
         assert!(!parse_ini(&c.serialize(None)).voice_trailing_space); // round-trip
+    }
+
+    #[test]
+    fn voice_streaming_roundtrip_default_false() {
+        // дефолт ВЫКЛ (нет ключа / =0 -> стриминг выключен)
+        assert!(!parse_ini("font=X\t14\t400").voice_streaming);
+        assert!(!parse_ini("voicestreaming=0").voice_streaming);
+        let mut c = cfg(vec![]);
+        assert!(!c.voice_streaming);
+        c.voice_streaming = true; // включили стриминг
+        assert!(parse_ini(&c.serialize(None)).voice_streaming); // round-trip
     }
 
     #[test]
