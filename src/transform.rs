@@ -1,8 +1,8 @@
 // FILE: src/transform.rs
-// VERSION: 1.1.0
+// VERSION: 1.2.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Пост-обработка распознанного текста перед вставкой: чистка типового мусора Whisper + кастомный словарь пост-заменой.
-//   SCOPE: clean_whisper (теги в скобках, повторы слов, галлюцинации-предложения, капитализация), apply_vocab (замена по словарю по границе слова, регистронезависимо), process (связка). Всё чистое.
+//   SCOPE: clean_whisper (теги в скобках, повторы слов, галлюцинации-предложения, капитализация), apply_vocab (замена по словарю по границе слова, регистронезависимо), process (связка + опц. хвостовой пробел), stable_prefix/merge_committed (стриминг: устоявшийся префикс + склейка). Всё чистое.
 //   DEPENDS: none
 //   LINKS: M-TRANSFORM
 //   ROLE: RUNTIME
@@ -13,10 +13,13 @@
 //   clean_whisper - чистое: убрать [теги], схлопнуть повторы слов, выкинуть предложения-галлюцинации, капитализировать
 //   apply_vocab   - чистое: замена слов по словарю wrong->right (регистронезависимо, по границе слова)
 //   process       - чистое: clean_whisper -> apply_vocab -> опц. хвостовой пробел
+//   stable_prefix - чистое: устоявшийся общий префикс двух распознаваний (LocalAgreement стриминга)
+//   merge_committed - чистое: склейка зафиксированного текста и хвоста одним пробелом
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.1.0 - Phase-23: process += trailing_space (опц. хвостовой пробел, чтобы следующая вставка диктовки не липла к точке). M-VOICE worker передаёт cfg.voice_trailing_space.
+//   LAST_CHANGE: v1.2.0 - Phase-24: чистые stable_prefix(prev,cur,margin) (устоявшийся общий префикс окна — LocalAgreement) и merge_committed(fixed,tail) (склейка без двойных пробелов) для стриминг-диктовки. Тесты stable_prefix_commits_agreed_words/merge_committed_no_double_space.
+//   v1.1.0 - Phase-23: process += trailing_space (опц. хвостовой пробел, чтобы следующая вставка диктовки не липла к точке). M-VOICE worker передаёт cfg.voice_trailing_space.
 //   v1.0.0 - Phase-18 step-4: чистка вывода Whisper (список галлюцинаций на тишине/шуме,
 //                повторы, скобочные теги, капитализация) + словарь пост-замены (модель не держит hotwords,
 //                словарь делаем текстом). Внешний transform (переформ./перевод) — Phase-D, тут шва нет (YAGNI).
@@ -184,6 +187,48 @@ pub fn process(text: &str, vocab: &[(String, String)], trailing_space: bool) -> 
     }
 }
 
+// START_CONTRACT: stable_prefix
+//   PURPOSE: Устоявшийся общий префикс двух последовательных распознаваний окна (LocalAgreement): слова, совпавшие
+//            в prev и cur с начала, за вычетом последних margin_words плавающего хвоста cur (страховка от дрейфа).
+//   INPUTS: { prev: &str - прошлое распознавание; cur: &str - текущее; margin_words: usize - запас хвоста }
+//   OUTPUTS: { String - зафиксированный префикс (слова через пробел); "" если ничего не устоялось }
+//   SIDE_EFFECTS: none
+//   LINKS: M-VOICE (накопление committed_text при стриминге)
+// END_CONTRACT: stable_prefix
+pub fn stable_prefix(prev: &str, cur: &str, margin_words: usize) -> String {
+    let pw: Vec<&str> = prev.split_whitespace().collect();
+    let cw: Vec<&str> = cur.split_whitespace().collect();
+    // длина общего префикса по словам
+    let mut common = 0;
+    while common < pw.len() && common < cw.len() && pw[common] == cw[common] {
+        common += 1;
+    }
+    // не фиксировать слова из последних margin_words позиций cur (близко к концу окна -> ещё нестабильны)
+    let limit = cw.len().saturating_sub(margin_words);
+    let take = common.min(limit);
+    cw[..take].join(" ")
+}
+
+// START_CONTRACT: merge_committed
+//   PURPOSE: Склеить зафиксированный текст и хвост ровно одним пробелом на стыке (без двойных пробелов).
+//   INPUTS: { fixed: &str - уже зафиксировано; tail: &str - добавляемый хвост }
+//   OUTPUTS: { String - fixed + " " + tail без лишних пробелов на стыке }
+//   SIDE_EFFECTS: none
+//   LINKS: M-VOICE (финальная склейка на стопе)
+// END_CONTRACT: merge_committed
+pub fn merge_committed(fixed: &str, tail: &str) -> String {
+    let t = tail.trim_start();
+    if t.is_empty() {
+        return fixed.to_string(); // пустой хвост -> fixed без изменений
+    }
+    let f = fixed.trim_end();
+    if f.is_empty() {
+        return t.to_string();
+    }
+    // ponytail: дедуп слов на стыке не нужен — окно скользит ЗА committed, перекрытия нет по построению
+    format!("{f} {t}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,5 +282,33 @@ mod tests {
         // пустой результат -> пробел НЕ клеим (нечего вставлять)
         assert_eq!(process("[музыка]", &[], true), "");
         assert_eq!(process("", &[], true), "");
+    }
+
+    #[test]
+    fn stable_prefix_commits_agreed_words() {
+        // общий префикс «Первое предложение.» устоялся; хвост «Втор»/«Второе» ещё плавает
+        assert_eq!(
+            stable_prefix("Первое предложение. Втор", "Первое предложение. Второе и", 1),
+            "Первое предложение."
+        );
+        // расхождение с первого слова -> ничего не фиксируем
+        assert_eq!(stable_prefix("Абв где", "Ххх где", 0), "");
+        // prev пустой -> нечего сравнивать
+        assert_eq!(stable_prefix("", "Первое второе", 1), "");
+        // margin съедает весь общий префикс -> ""
+        assert_eq!(stable_prefix("раз два", "раз два", 3), "");
+        // margin=0, полное совпадение -> весь текст
+        assert_eq!(stable_prefix("раз два три", "раз два три", 0), "раз два три");
+    }
+
+    #[test]
+    fn merge_committed_no_double_space() {
+        assert_eq!(merge_committed("Первое.", "Второе."), "Первое. Второе.");
+        // хвостовой пробел у fixed + ведущий у tail -> один пробел
+        assert_eq!(merge_committed("Первое. ", "  Второе."), "Первое. Второе.");
+        // пустой хвост -> fixed без изменений (даже с пробелом)
+        assert_eq!(merge_committed("Раз. ", ""), "Раз. ");
+        // пустой fixed -> хвост без ведущих пробелов
+        assert_eq!(merge_committed("", "  Хвост"), "Хвост");
     }
 }
