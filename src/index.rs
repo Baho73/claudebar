@@ -1,5 +1,5 @@
 // FILE: src/index.rs
-// VERSION: 1.1.1
+// VERSION: 1.1.2
 // START_MODULE_CONTRACT
 //   PURPOSE: Rust-индексатор BM25. Чаты: транскрипты Claude Code (~/.claude/projects/**/*.jsonl) -> FTS5 claudebar_chats.db. Файлы (Ф-C): доки history (txt/md/xer/код/xlsx/docx/pptx/pdf) -> FTS5 claudebar_files.db. Инкремент по mtime. Свои базы (заменяют Python-сборку BM25; clfind остаётся для отложенного dense). Phase-13.
 //   SCOPE: init_schema (DDL), parse_transcript/chunk_text/extract_text/strip_xml_text (чистые/тестируемые), ensure_index (чаты) и ensure_files_index (файлы) — инкрементальный обход + запись.
@@ -23,7 +23,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.1.1 - grace-reviewer: контракт-в-коде выровнен с графом (DEPENDS none; PURPOSE/SCOPE учитывают Ф-C файлы).
+//   LAST_CHANGE: v1.1.2 - hardening(audit #4a): extract_text пропускает файлы > MAX_INDEX_BYTES (50 МБ) — защита от OOM на гигантских docx/pdf/логах. Защита парсеров от паник (catch_unwind) отложена: бесполезна при panic=abort, требует решения по профилю.
+//   v1.1.1 - grace-reviewer: контракт-в-коде выровнен с графом (DEPENDS none; PURPOSE/SCOPE учитывают Ф-C файлы).
 //   v1.1.0 - Phase-13 Ф-C step-6: индекс файлов history. extract_text (txt/md/xer/код напрямую; xlsx=calamine; docx/pptx=zip+xml; pdf=pdf-extract) + ensure_files_index (source='file', инкремент по mtime). Крейты calamine/zip/pdf-extract.
 //   v1.0.0 - Phase-13 Ф-A step-1: новый Rust-индексатор. Транскрипты -> FTS5 claudebar_chats.db, инкремент по mtime; чистые parse_transcript/chunk_text + ensure_index (serde_json для парса).
 // END_CHANGE_SUMMARY
@@ -258,6 +259,9 @@ fn index_file(conn: &mut Connection, key: &str, path: &Path, mtime: i64) -> Opti
 
 // ---------- индекс файлов (Phase-13 Ф-C) ----------
 
+// Файлы крупнее — пропускаем (не грузим в память): защита от OOM на docx/pdf/логах в сотни МБ (audit #4).
+const MAX_INDEX_BYTES: u64 = 50 * 1024 * 1024; // 50 МБ
+
 // START_CONTRACT: extract_text
 //   PURPOSE: Извлечь текст из файла по расширению (для индекса файлов).
 //   INPUTS: { path: &Path }
@@ -266,6 +270,10 @@ fn index_file(conn: &mut Connection, key: &str, path: &Path, mtime: i64) -> Opti
 // END_CONTRACT: extract_text
 pub fn extract_text(path: &Path) -> Option<String> {
     let ext = path.extension().and_then(|e| e.to_str())?.to_lowercase();
+    // кап размера: не тянуть в память гигантские файлы (docx/pdf/лог сотни МБ) -> OOM (audit #4)
+    if fs::metadata(path).map(|m| m.len()).unwrap_or(0) > MAX_INDEX_BYTES {
+        return None;
+    }
     match ext.as_str() {
         // плоский текст / код / разметка / Primavera .xer
         "md" | "txt" | "json" | "py" | "html" | "htm" | "csv" | "xer" | "log" | "rs" | "toml"
