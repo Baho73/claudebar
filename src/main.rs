@@ -127,6 +127,8 @@ pub(crate) struct App {
     pub(crate) bell_paths: HashSet<String>, // полные cwd со «звоночком» (lower) — точная подсветка по пути (Phase-15)
     pub(crate) busy: HashSet<String>, // имена проектов с активным .busy (lower) — бегущие точки (fallback) — Phase-17
     pub(crate) busy_paths: HashSet<String>, // полные cwd с активным .busy (lower) — точные точки по пути — Phase-17
+    pub(crate) busy_sessions: Vec<(String, String)>, // (cwd,key) по КАЖДОЙ рабочей .busy-сессии — синие квадраты (Phase-25)
+    pub(crate) done_sessions: Vec<(String, String)>, // (cwd,key) по КАЖДОЙ завершённой .signal-сессии — золотые квадраты (Phase-25)
     pub(crate) anim_frame: u32, // кадр анимации бегущих точек — Phase-17
     pub(crate) search_hits: Vec<search::FolderHit>, // папки-совпадения поиска (Phase-12)
     pub(crate) search_edit: HWND, // EDIT-поле поиска в шапке (null = скрыто)
@@ -206,6 +208,8 @@ fn refresh_items(app: &mut App) -> bool {
     app.bell_paths = signal::bell_cwds(); // точная подсветка по полному пути (Phase-15)
     app.busy = signal::busy_keys();
     app.busy_paths = signal::busy_cwds(); // бегущие точки «идёт работа» (Phase-17)
+    app.busy_sessions = signal::busy_list(); // по сессии — синие квадраты статуса (Phase-25)
+    app.done_sessions = signal::done_list(); // по сессии — золотые квадраты «готово» (Phase-25)
     numbered
 }
 
@@ -213,6 +217,7 @@ fn refresh_items(app: &mut App) -> bool {
 fn update_anim_timer(hwnd: HWND, app: &App) {
     let active = !app.busy.is_empty()
         || !app.busy_paths.is_empty()
+        || !app.done_sessions.is_empty() // мигание золотых квадратов «готово» (Phase-25)
         || app.voice.state() != voice::VoiceState::Idle; // анимация полосы при записи/распознавании — Phase-19
     unsafe {
         if active {
@@ -1991,6 +1996,8 @@ fn main() -> Result<()> {
             bell_paths: HashSet::new(),
             busy: HashSet::new(),
             busy_paths: HashSet::new(),
+            busy_sessions: Vec::new(),
+            done_sessions: Vec::new(),
             anim_frame: 0,
             search_hits: Vec::new(),
             search_edit: HWND(std::ptr::null_mut()),
