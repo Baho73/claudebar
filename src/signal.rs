@@ -1,5 +1,5 @@
 // FILE: src/signal.rs
-// VERSION: 1.3.0
+// VERSION: 1.4.0
 // START_MODULE_CONTRACT
 //   PURPOSE: «Звоночек» завершения ИИ: читать файлы-сигналы из %APPDATA%\claudebar\signals\, отдавать проекты для подсветки, гасить сигнал при фокусе окна проекта.
 //   SCOPE: путь папки сигналов, парсинг .signal (cwd проекта), ключ проекта (basename) + полный cwd, наборы «звенящих» (basename и cwd), сброс по фокусу с матчем по полному пути.
@@ -23,11 +23,14 @@
 //   is_stale          - чистое: устарел ли .busy по mtime (фильтр зависших) — Phase-17
 //   list_ext          - чтение сигналов по расширению (signal|busy) с опц. staleness-фильтром
 //   busy_keys/busy_cwds - наборы проектов с активным .busy (индикатор работы) — Phase-17
+//   busy_list/done_list - списки (cwd,key) по КАЖДОМУ .busy/.signal-файлу (с дублями) — по сессии, Phase-25
+//   count_for_row     - чистое: число сессий из списка на строке (path_within/basename; дубли суммируются; D-06) — Phase-25
 //   reconcile         - удалить .signal, чьё окно проекта сейчас foreground (по полному пути)
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.3.0 - fix(grace-fix): row_signaled + path_within — матч bell/busy строки, когда cwd сигнала ВЛОЖЕН в путь окна (Claude-сессия в подпапке открытого проекта, напр. окно D:\Python\Mosco, сессия D:\Python\Mosco\doc). Регрессия проявилась при включённом FULLPATHS: путь у строки появлялся -> матч становился только по точному пути, fallback на basename пропадал -> подсветка/точки гасли. should_clear тоже на path_within (фокус родителя гасит сигнал подпапки). D-06 (одноимённые в разных путях) сохранён.
+//   LAST_CHANGE: v1.4.0 - Phase-25: посессионные списки busy_list()/done_list() (по одному на .busy/.signal-файл, С дублями) + чистая count_for_row(row_path,row_name,sessions) — сколько сессий на строке (path_within/basename, дубли суммируются, D-06). Для квадратов-статусов терминалов (Claude+Kimi). Тесты count_for_row_*.
+//   v1.3.0 - fix(grace-fix): row_signaled + path_within — матч bell/busy строки, когда cwd сигнала ВЛОЖЕН в путь окна (Claude-сессия в подпапке открытого проекта, напр. окно D:\Python\Mosco, сессия D:\Python\Mosco\doc). Регрессия проявилась при включённом FULLPATHS: путь у строки появлялся -> матч становился только по точному пути, fallback на basename пропадал -> подсветка/точки гасли. should_clear тоже на path_within (фокус родителя гасит сигнал подпапки). D-06 (одноимённые в разных путях) сохранён.
 //   v1.2.1 - Phase-17 hardening: staleness 600->90с + keep-alive (PostToolUse-хук обновляет .busy на каждом инструменте), чтобы точки держались всю длинную работу и гасли ~через 90с после смерти/Stop.
 //   v1.2.0 - Phase-17 step-1: чтение .busy (индикатор работы) — list_ext(ext, ttl) + busy_keys/busy_cwds + is_stale (фильтр зависших по mtime >600с). list_signals переведён на list_ext.
 //   v1.1.0 - Phase-15 step-3: матч звоночка по полному cwd == WinItem.path (fallback basename); чинит коллизию одноимённых (D-06). Signal += cwd; should_clear(sig_cwd,sig_key,fg_path,fg_key); bell_cwds.
@@ -256,6 +259,44 @@ pub fn busy_cwds() -> HashSet<String> {
     list_busy().into_iter().map(|s| s.cwd).collect()
 }
 
+// START_CONTRACT: busy_list
+//   PURPOSE: Список (cwd, key) по КАЖДОМУ активному .busy-файлу — по одному на сессию (с дублями), staleness-фильтр. Для подсчёта квадратов-статусов.
+//   INPUTS: {}
+//   OUTPUTS: { Vec<(String, String)> - (cwd lower, basename-key lower) на каждый .busy }
+//   SIDE_EFFECTS: чтение каталога signals
+// END_CONTRACT: busy_list
+pub fn busy_list() -> Vec<(String, String)> {
+    list_busy().into_iter().map(|s| (s.cwd, s.key)).collect()
+}
+
+// START_CONTRACT: done_list
+//   PURPOSE: Список (cwd, key) по КАЖДОМУ активному .signal-файлу — по одному на завершённую сессию (с дублями), без staleness. Для золотых квадратов.
+//   INPUTS: {}
+//   OUTPUTS: { Vec<(String, String)> - (cwd lower, basename-key lower) на каждый .signal }
+//   SIDE_EFFECTS: чтение каталога signals
+// END_CONTRACT: done_list
+pub fn done_list() -> Vec<(String, String)> {
+    list_signals().into_iter().map(|s| (s.cwd, s.key)).collect()
+}
+
+// START_CONTRACT: count_for_row
+//   PURPOSE: Чистое — сколько сессий из списка приходится на строку: путь строки == cwd ИЛИ cwd вложен в путь
+//            (сессия в подпапке), иначе basename == row_name. Дубли суммируются; одноимённые в разных путях НЕ смешиваются (D-06).
+//   INPUTS: { row_path: Option<&str>; row_name: &str; sessions: &[(String, String)] - (cwd lower, key lower) }
+//   OUTPUTS: { usize - число подходящих сессий }
+//   SIDE_EFFECTS: none
+//   LINKS: M-RENDER (квадраты-статусы на строке), M-SIGNAL
+// END_CONTRACT: count_for_row
+pub fn count_for_row(row_path: Option<&str>, row_name: &str, sessions: &[(String, String)]) -> usize {
+    match row_path {
+        Some(p) => sessions.iter().filter(|(cwd, _)| path_within(cwd, p)).count(),
+        None => {
+            let n = row_name.to_lowercase();
+            sessions.iter().filter(|(_, key)| *key == n).count()
+        }
+    }
+}
+
 // START_CONTRACT: reconcile
 //   PURPOSE: Удалить .signal, чьё окно проекта сейчас на переднем плане (сброс по фокусу).
 //   INPUTS: { items: &[WinItem] - открытые окна; fg: HWND - окно в фокусе }
@@ -323,6 +364,35 @@ mod tests {
         // без пути у строки -> fallback на basename
         assert!(row_signaled(None, "doc", &cwds, &keys));
         assert!(!row_signaled(None, "mosco", &cwds, &keys));
+    }
+
+    #[test]
+    fn count_for_row_counts_duplicates() {
+        // две сессии одного проекта = две записи -> счёт 2 (НЕ дедуп)
+        let sessions = vec![
+            ("d:\\python\\hh".to_string(), "hh".to_string()),
+            ("d:\\python\\hh".to_string(), "hh".to_string()),
+            ("d:\\python\\other".to_string(), "other".to_string()),
+        ];
+        assert_eq!(count_for_row(Some("D:\\Python\\hh"), "hh", &sessions), 2); // регистронезависимо
+        assert_eq!(count_for_row(Some("D:\\Python\\other"), "other", &sessions), 1);
+        assert_eq!(count_for_row(Some("D:\\Python\\nope"), "nope", &sessions), 0);
+    }
+
+    #[test]
+    fn count_for_row_subfolder_and_d06() {
+        let sessions = vec![
+            ("d:\\python\\mosco\\doc".to_string(), "doc".to_string()), // сессия в подпапке
+            ("e:\\other\\mosco".to_string(), "mosco".to_string()),     // одноимённый в другом пути
+        ];
+        // строка окна = корень проекта, cwd сессии вложен -> 1; e:\other\mosco НЕ подмешан (D-06)
+        assert_eq!(count_for_row(Some("D:\\Python\\Mosco"), "Mosco", &sessions), 1);
+        // префикс не по границе сегмента не матчит
+        assert_eq!(count_for_row(Some("D:\\Python\\Mos"), "Mos", &sessions), 0);
+        // без пути у строки -> fallback на basename
+        assert_eq!(count_for_row(None, "doc", &sessions), 1);
+        assert_eq!(count_for_row(None, "mosco", &sessions), 1);
+        assert_eq!(count_for_row(None, "nope", &sessions), 0);
     }
 
     #[test]
