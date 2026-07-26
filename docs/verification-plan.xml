@@ -300,6 +300,7 @@
         <scenario-1 kind="success">paste_text(text, keep=true): текст оказался в активном поле (Ctrl+V); get_clipboard до/после совпадает (прежний буфер восстановлен через ~400мс)</scenario-1>
         <scenario-2 kind="failure">Пустой текст -&gt; no-op (буфер не трогается, Ctrl+V не шлётся)</scenario-2>
         <scenario-3 kind="success">Phase-20 keep=false: после вставки в буфере остаётся РАСПОЗНАННЫЙ текст (прежний не восстанавливается). Ручной smoke: ⚙-галочку «Сохранять прежний буфер обмена» снять -&gt; скопировать X -&gt; продиктовать -&gt; буфер = распознанный; галочку поставить -&gt; буфер = X</scenario-3>
+        <scenario-4 kind="regression">audit #2: get_clipboard сканировал `while *ptr.add(len)!=0` без границы — данные CF_UNICODETEXT не обязаны быть NUL-терминированы -&gt; чтение за буфером. Фикс: кап по GlobalSize(h)/2 + чистая utf16_len_bounded (NUL или конец буфера). Тест utf16_len_bounded_stops_at_nul_or_cap</scenario-4>
       </scenarios>
     </V-M-PASTE>
     <V-M-VOICE MODULE="M-VOICE" PRIORITY="high">

@@ -1,5 +1,5 @@
 // FILE: src/paste.rs
-// VERSION: 1.1.0
+// VERSION: 1.1.1
 // START_MODULE_CONTRACT
 //   PURPOSE: Вставить текст в активное поле любого приложения: положить в буфер обмена и сымитировать Ctrl+V, не затерев буфер пользователя надолго.
 //   SCOPE: paste_text (сохранить буфер -> set_clipboard -> SendInput Ctrl+V -> отложенно вернуть прежний буфер); set_clipboard/get_clipboard (CF_UNICODETEXT).
@@ -12,11 +12,13 @@
 // START_MODULE_MAP
 //   paste_text    - вставить текст в foreground-окно (Ctrl+V); пустой текст -> no-op; прежний буфер восстановить через ~400мс (если keep_clipboard)
 //   set_clipboard - положить строку в буфер (CF_UNICODETEXT); GlobalFree на путях ошибки
-//   get_clipboard - прочитать текущий текст буфера -> Option<String>
+//   get_clipboard - прочитать текущий текст буфера -> Option<String> (кап по GlobalSize)
+//   utf16_len_bounded - чистая: длина UTF-16 до NUL, но не дальше буфера (защита от не-терминированных данных)
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.1.0 - Phase-20: paste_text(text, keep_clipboard). keep=true восстанавливает прежний буфер (как было), keep=false оставляет распознанный текст. Флаг из M-CONFIG.voice_keep_clipboard (⚙-галочка).
+//   LAST_CHANGE: v1.1.1 - fix(grace-fix, audit #2): get_clipboard ограничивает скан буфера по GlobalSize (данные CF_UNICODETEXT не обязаны быть NUL-терминированы -> прежний `while *ptr!=0` читал за буфером). Чистая utf16_len_bounded + тест.
+//   v1.1.0 - Phase-20: paste_text(text, keep_clipboard). keep=true восстанавливает прежний буфер (как было), keep=false оставляет распознанный текст. Флаг из M-CONFIG.voice_keep_clipboard (⚙-галочка).
 //   v1.0.0 - Phase-18 step-5: вставка надиктованного текста. Буфер открываем без окна-владельца
 //                (OpenClipboard null), чтобы восстановление шло из фонового потока. Восстановление отложено на
 //                ~400мс (целевое приложение успевает прочитать вставку). Win32, тестируется ручным smoke.
@@ -28,13 +30,19 @@ use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND};
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
 };
-use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY,
     VK_CONTROL, VK_V,
 };
 
 const CF_UNICODETEXT: u32 = 13;
+
+// Длина UTF-16 до первого NUL, но не дальше буфера — данные буфера не обязаны быть
+// NUL-терминированы (audit #2). Чистая, тестируема.
+fn utf16_len_bounded(buf: &[u16]) -> usize {
+    buf.iter().position(|&c| c == 0).unwrap_or(buf.len())
+}
 
 // START_CONTRACT: get_clipboard
 //   PURPOSE: Прочитать текущий текст буфера обмена (для сохранения перед вставкой).
@@ -52,11 +60,12 @@ pub unsafe fn get_clipboard() -> Option<String> {
             if ptr.is_null() {
                 None
             } else {
-                let mut len = 0usize;
-                while *ptr.add(len) != 0 {
-                    len += 1;
-                }
-                let s = String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len));
+                // кап по размеру аллокации: данные CF_UNICODETEXT НЕ обязаны быть NUL-терминированы
+                // (audit #2) -> без капа скан `while *ptr.add(len)!=0` уходит за буфер (чтение чужой памяти).
+                let cap = GlobalSize(HGLOBAL(h.0)) / 2; // байты -> число u16
+                let buf = std::slice::from_raw_parts(ptr, cap);
+                let len = utf16_len_bounded(buf);
+                let s = String::from_utf16_lossy(&buf[..len]);
                 let _ = GlobalUnlock(HGLOBAL(h.0));
                 Some(s)
             }
@@ -153,4 +162,17 @@ pub unsafe fn paste_text(text: &str, keep_clipboard: bool) -> bool {
         });
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::utf16_len_bounded;
+
+    #[test]
+    fn utf16_len_bounded_stops_at_nul_or_cap() {
+        assert_eq!(utf16_len_bounded(&[0x41, 0x42, 0]), 2); // до NUL
+        assert_eq!(utf16_len_bounded(&[0x41, 0x42]), 2); // нет NUL -> вся длина (кап буфера)
+        assert_eq!(utf16_len_bounded(&[0]), 0); // сразу NUL
+        assert_eq!(utf16_len_bounded(&[]), 0); // пусто
+    }
 }
