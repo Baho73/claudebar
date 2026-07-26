@@ -87,7 +87,7 @@
         <fn-name_matches PURPOSE="Чистое: имя недавнего подходит запросу — каждый токен запроса подстрока имени (регистронезависимо, token-AND); пустой запрос -> false — fix(grace-fix)" />
         <fn-display_name PURPOSE="Имя строки окна: basename + «(N)» при дублях basename (стабильный № из M-CONFIG); цвет/метка по пути — Phase-15" />
         <fn-paint PURPOSE="Отрисовать строки (GDI, двойной буфер): иконки, ✕, ручки drag, подсветка bell, перетаскивание, бегущие точки busy-строк (Phase-17). Phase-25: квадраты-сессии на строке (синий пульс=работает, золотой мигает=готово; count_for_row, кап 5) вместо точек" />
-        <fn-dots_for_frame PURPOSE="Чистое: кадр анимации -> «.»/«..»/«...» для индикатора работы — Phase-17" />
+        <fn-squares_to_draw PURPOSE="Чистое: сколько квадратов работа/готово рисовать под капом (золото первым; overflow) — Phase-25 (заменил dots_for_frame)" />
         <fn-hit_test PURPOSE="Определить строку и зону (Body|Close|DragHandle) по координатам клика и режиму reorder" />
         <fn-section_of_row PURPOSE="Индекс приложения секции, к которой относится строка" />
         <fn-section_blocks PURPOSE="Блоки секций в видимом порядке (drag-reorder секций)" />
