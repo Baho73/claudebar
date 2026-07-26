@@ -1,5 +1,5 @@
 // FILE: src/voice.rs
-// VERSION: 1.2.0
+// VERSION: 1.2.1
 // START_MODULE_CONTRACT
 //   PURPOSE: Оркестрация голосового ввода: стейт-машина idle->recording->transcribing, спавн worker-потока распознавания, доставка текста в UI.
 //   SCOPE: VoiceState/VoiceEvent + чистая next_state; Voice (toggle: старт/стоп записи + спавн worker stt->transform; on_done; state; set_always_on). Worker шлёт текст в UI через PostMessage(WM_APP_VOICE_DONE).
@@ -13,7 +13,8 @@
 //   VoiceState           - Idle | Recording | Transcribing
 //   VoiceEvent           - Toggle | Done
 //   next_state           - чистое: (состояние, событие) -> следующее состояние
-//   WM_APP_VOICE_DONE    - оконное сообщение: worker -> UI (lparam = Box<String> с распознанным текстом)
+//   WM_APP_VOICE_DONE    - оконное сообщение: worker -> UI (lparam = id результата в реестре, не сырой указатель — audit #3)
+//   stash_result/take_result - реестр результатов worker->UI по id (замена Box::into_raw в lparam)
 //   Voice                - держатель состояния + активного Recorder (legacy) или персистентного Mic (always-on)
 //   Voice::toggle        - переключатель записи/распознавания (always-on -> arm/disarm Mic, иначе Recorder cold-start)
 //   Voice::set_always_on - старт/дроп персистентного Mic по галочке (только на Idle)
@@ -21,19 +22,55 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.2.0 - Phase-22: always-on микрофон + pre-roll. Voice держит Option<Mic>; set_always_on(on) стартует/дропает персистентный Mic (только на Idle). toggle/stop/poll/level ветвятся: при Mic -> arm/disarm_take (тёплый поток, pre-roll, первое слово не теряется), иначе legacy Recorder (cold-start). Галочка деф. ВЫКЛ (M-CONFIG voice_always_on).
+//   LAST_CHANGE: v1.2.1 - fix(grace-fix, audit #3): worker->UI отдаёт текст через id-реестр (stash_result/take_result), а не Box::into_raw в lparam. Раньше обработчик WM_APP_VOICE_DONE безусловно разыменовывал lparam как *mut String -> любой процесс мог послать мусор -> UB/порча кучи. Теперь мусорный id -> None. Тест stash_take_result_roundtrip_and_unknown_none.
+//   v1.2.0 - Phase-22: always-on микрофон + pre-roll. Voice держит Option<Mic>; set_always_on(on) стартует/дропает персистентный Mic (только на Idle). toggle/stop/poll/level ветвятся: при Mic -> arm/disarm_take (тёплый поток, pre-roll, первое слово не теряется), иначе legacy Recorder (cold-start). Галочка деф. ВЫКЛ (M-CONFIG voice_always_on).
 //   v1.1.0 - Phase-19 доводка: авто-стоп по тишине (poll: 2с после речи / 8с без речи), короткие тоны старта/конца (Beep, в фоне), уровень микрофона (level), диагностический лог (vlog в voice.log). Подтверждено рабочим; валил поведенческий AV (Касперский), не баг.
 //   v1.0.0 - Phase-19 step-1: стейт-машина голосового ввода. Recorder (!Send) живёт на UI-потоке
 //                между нажатиями; распознавание (M-STT) + чистка (M-TRANSFORM) — в worker-потоке, результат
 //                в UI через PostMessage (lparam = Box<String>). HWND передаём в поток как isize.
 // END_CHANGE_SUMMARY
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::Diagnostics::Debug::Beep;
 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 
-// Сообщение «распознавание готово»: lparam = *mut String (Box::into_raw); WM_APP+1 занят поиском.
+// Сообщение «распознавание готово»: lparam = id результата в реестре (НЕ сырой указатель —
+// чужое сообщение WM_APP+2 с мусором даёт None, без разыменования). WM_APP+1 занят поиском. (audit #3)
 pub const WM_APP_VOICE_DONE: u32 = WM_APP + 2;
+
+// Реестр готовых результатов worker->UI: worker кладёт текст под id, UI забирает по id.
+// Заменяет Box::into_raw в lparam (любой процесс мог послать WM_APP+2 с мусорным указателем -> UB/крах).
+static NEXT_RESULT_ID: AtomicU64 = AtomicU64::new(1);
+fn results() -> &'static Mutex<HashMap<u64, String>> {
+    static R: OnceLock<Mutex<HashMap<u64, String>>> = OnceLock::new();
+    R.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+// START_CONTRACT: stash_result
+//   PURPOSE: Положить готовый текст в реестр, вернуть id (для передачи в lparam PostMessage).
+//   INPUTS: { text: String }
+//   OUTPUTS: { u64 - id (всегда > 0) }
+//   SIDE_EFFECTS: вставка в глобальный реестр результатов
+// END_CONTRACT: stash_result
+pub fn stash_result(text: String) -> u64 {
+    let id = NEXT_RESULT_ID.fetch_add(1, Ordering::Relaxed);
+    results().lock().unwrap_or_else(|e| e.into_inner()).insert(id, text);
+    id
+}
+
+// START_CONTRACT: take_result
+//   PURPOSE: Забрать текст по id (удалив из реестра). Неизвестный id (мусор из чужого сообщения) -> None.
+//   INPUTS: { id: u64 }
+//   OUTPUTS: { Option<String> }
+//   SIDE_EFFECTS: удаление из реестра
+// END_CONTRACT: take_result
+pub fn take_result(id: u64) -> Option<String> {
+    results().lock().unwrap_or_else(|e| e.into_inner()).remove(&id)
+}
 
 // Авто-стоп записи по молчанию (чтобы не писать часами, если забыл выключить).
 const SILENCE_STOP_SECS: f32 = 2.0; // была речь -> стоп после стольких секунд тишины
@@ -267,13 +304,13 @@ impl Voice {
                     String::new()
                 }
             };
-            let boxed = Box::into_raw(Box::new(text)) as isize;
+            let id = stash_result(text); // реестр id вместо сырого указателя в lparam (audit #3)
             unsafe {
                 let _ = PostMessageW(
                     HWND(hwnd_i as *mut core::ffi::c_void),
                     WM_APP_VOICE_DONE,
                     WPARAM(0),
-                    LPARAM(boxed),
+                    LPARAM(id as isize),
                 );
             }
         });
@@ -293,5 +330,14 @@ mod tests {
         assert_eq!(next_state(Transcribing, VoiceEvent::Toggle), Transcribing); // занято
         assert_eq!(next_state(Transcribing, VoiceEvent::Done), Idle);
         assert_eq!(next_state(Idle, VoiceEvent::Done), Idle);
+    }
+
+    #[test]
+    fn stash_take_result_roundtrip_and_unknown_none() {
+        // audit #3: id-реестр вместо сырого указателя в lparam
+        let id = stash_result("привет мир".into());
+        assert_eq!(take_result(id).as_deref(), Some("привет мир"));
+        assert_eq!(take_result(id), None); // повторный take -> уже забрано
+        assert_eq!(take_result(u64::MAX), None); // неизвестный id (мусор из чужого сообщения) -> None, без разыменования
     }
 }

@@ -792,12 +792,9 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 LRESULT(0)
             }
             m if m == voice::WM_APP_VOICE_DONE => {
-                // распознавание готово: забрать текст (Box<String> из worker) и вставить в целевое окно
-                let text = if lp.0 != 0 {
-                    *Box::from_raw(lp.0 as *mut String)
-                } else {
-                    String::new()
-                };
+                // распознавание готово: lparam = id результата в реестре (НЕ сырой указатель);
+                // чужое сообщение с мусорным id -> None -> пустая строка, без UB (audit #3)
+                let text = voice::take_result(lp.0 as u64).unwrap_or_default();
                 let target = APP.with(|c| {
                     c.borrow_mut()
                         .as_mut()
