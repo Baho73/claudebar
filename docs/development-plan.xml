@@ -53,6 +53,11 @@
     <risk-46 phase="Phase-24">Скользящее окно: как только зафиксировали префикс, окно должно начинаться ПОСЛЕ него, иначе окно растёт без предела и упрётся в обрыв 30с. Граница окна в сэмплах ведётся по числу зафиксированных сэмплов (committed_samples). Ошибка здесь = либо потеря аудио, либо переполнение окна -&gt; тщательный smoke на диктовке &gt;30с.</risk-46>
     <risk-47 phase="Phase-24">Вставка результата только по ЗАВЕРШЕНИИ (v1), не по мере. Инкрементальная вставка-по-мере отклонена для v1: конфликтует с ручным вводом пользователя в то же поле и усложняет откат. Текст копится в накопителе, вставляется разом на стопе (весь выигрыш — быстрый финиш — сохранён). Вставка-по-мере отложена.</risk-47>
     <risk-48 phase="Phase-24">snapshot() клонирует буфер под мьютексом каждый тик (O(n)); при скользящем окне n ограничен ~25с*rate. Терпимо (заход раз в ~3-4с). ponytail: помечено в коде, апгрейд не нужен пока окно ограничено.</risk-48>
+    <risk-49 phase="Phase-25">Коллизия session_id между сессиями/агентами -&gt; недосчёт квадратов (два файла с одним sid = один файл). Низк.: Claude и Kimi дают разные sid и разные файлы; совпадение маловероятно. Принято.</risk-49>
+    <risk-50 phase="Phase-25">Kimi гонит хук-команды через Git Bash; вызов powershell.exe с путём .ps1 — кавычки/PATH. Митигация: абсолютный путь к скрипту, ручной smoke; при сбое хук fail-open (Kimi не падает, просто нет сигнала).</risk-50>
+    <risk-51 phase="Phase-25">Теснота строки (W=252): много квадратов не влезет рядом с именем/меткой. Митигация: MAX_SQUARES=5 + overflow «N», мелкий размер, право-выравнивание (как бегущие точки).</risk-51>
+    <risk-52 phase="Phase-25">Краш сессии оставляет .busy -&gt; фантомный квадрат до истечения staleness (~90с). Принято как у бегущих точек Phase-17 (тот же keep-alive/staleness-механизм).</risk-52>
+    <risk-53 phase="Phase-25">basename-fallback (строка без пути) может суммировать одноимённые проекты в разных путях. Митигация: путь приоритетен (у открытого окна path есть), count_for_row через path_within сохраняет разделение D-06.</risk-53>
   </ArchitectureNotes>
 
   <DependencyRationale>
@@ -574,6 +579,13 @@
       <step-1>M-SETTINGS.configure_editor_titles: бэкап settings.json VS Code+Cursor, вставить/обновить window.title с ${rootPath} (идемпотентно)</step-1>
       <evidence>После клика и перезапуска редактора заголовок содержит полный путь; повторный клик не дублирует; бэкап создан</evidence>
     </DF-EDITORCFG>
+    <DF-TERMSQUARES NAME="Статус сессий-терминалов (квадраты)" TRIGGER="busy/bell-хуки Claude+Kimi + таймер опроса">
+      <step-1>Каждая сессия (Claude Code + Kimi) пишет &lt;sid&gt;.busy (работает, keep-alive PostToolUse) и &lt;sid&gt;.signal (Stop, готово). Kimi — те же claudebar-*.ps1 через свои [[hooks]] (payload cwd/session_id совпадает)</step-1>
+      <step-2>M-MAIN на опросе: M-SIGNAL.busy_list()/done_list() (по одному на файл, С дублями) -&gt; App.busy_sessions/done_sessions; аним-таймер активен при непустых (пульс работы + мигание готово)</step-2>
+      <step-3>M-RENDER на строке окна: count_for_row(busy_sessions)=работающие -&gt; синие пульс-квадраты (яркость по anim_frame); count_for_row(done_sessions)=готовые -&gt; золотые мигающие; кап MAX_SQUARES=5, дальше «N». Заменяет бегущие точки busy; полоса-звоночек строки без изменений</step-3>
+      <step-4>Фокус окна проекта -&gt; M-SIGNAL.reconcile удаляет .signal этих сессий -&gt; золотые квадраты гаснут (как звоночек)</step-4>
+      <evidence>Claude+Kimi в одном проекте -&gt; 2 квадрата; один завершил -&gt; его квадрат золотой мигает, второй пульсирует; сфокусировал окно -&gt; золотые погасли</evidence>
+    </DF-TERMSQUARES>
   </DataFlow>
 
   <ImplementationOrder>
@@ -913,6 +925,21 @@
         <on-fail>grace-fix; откат коммитом</on-fail>
       </checkpoint>
     </Phase-24>
+
+    <Phase-25 name="Статус нескольких терминалов (квадраты-сессии)" status="pending">
+      <goal>Показывать по строке проекта отдельный квадрат на КАЖДУЮ активную сессию (Claude Code + Kimi), а не один индикатор на проект. Состояние сессии кодируется в квадрате: работает = пульс яркости (синий), закончил = золотой мигает (гаснет по фокусу окна, как звоночек). Kimi шлёт те же сигналы через свои [[hooks]] (переиспользуют claudebar-*.ps1). Механизм сигналов уже пофайловый по &lt;session_id&gt; — нужно СЧИТАТЬ файлы на строке, а не дедупить. Утверждён пользователем (вариант A: квадрат несёт и работу, и готово; gg).</goal>
+      <step-1 module="M-SIGNAL" status="pending" verification="V-M-SIGNAL">busy_list()-&gt;Vec&lt;(cwd,key)&gt; (по одному на активный .busy-файл, С дублями, staleness BUSY_STALE_SECS); done_list()-&gt;Vec&lt;(cwd,key)&gt; (по .signal, без staleness, как list_signals). Чистая count_for_row(row_path:Option&lt;&amp;str&gt;, row_name:&amp;str, sessions:&amp;[(String,String)])-&gt;usize: сумма совпадений (путь через path_within, иначе basename==row_name lower); дубли суммируются; одноимённые в разных путях НЕ смешиваются (D-06). Переиспользует path_within. Тесты count_for_row_counts_duplicates, count_for_row_subfolder_and_d06</step-1>
+      <step-2 module="M-MAIN" status="pending" verification="V-M-MAIN">App += busy_sessions:Vec&lt;(String,String)&gt;, done_sessions:Vec&lt;(String,String)&gt;; refresh_items наполняет из signal::busy_list()/done_list() (в дополнение к существующим busy/busy_paths/bell для полосы-звоночка — не ломать). update_anim_timer активен при непустых busy_sessions ИЛИ done_sessions (мигание готового тоже требует кадров)</step-2>
+      <step-3 module="M-RENDER" status="pending" verification="V-M-RENDER">Новый цвет C_BUSY (синий, отличен от золотого C_BELL_BAR). paint на строке окна: working=count_for_row(busy_sessions) -&gt; синие квадраты с пульсом яркости (по anim_frame); done=count_for_row(done_sessions) -&gt; золотые мигающие квадраты; справа от имени, кап MAX_SQUARES=5 (дальше «N»). Заменяет бегущие точки busy для этих строк; полоса-звоночек строки без изменений (авто-синхрон по .signal). Чистый помощник геометрии/капа (напр. squares_layout) под тест, если нетривиален</step-3>
+      <step-4 module="M-SIGNAL" status="pending" verification="V-M-SIGNAL">Пишущая сторона Kimi (hooks/, НЕ-GRACE): install-kimi-hook.ps1 — идемпотентно добавляет в ~/.kimi-code/config.toml [[hooks]] event=UserPromptSubmit|PostToolUse -&gt; claudebar-busy.ps1, event=Stop -&gt; claudebar-bell.ps1 (вызов `powershell -NoProfile -ExecutionPolicy Bypass -File`, абсолютный путь; бэкап config.toml, без дублей). README-заметка. Подключение/smoke — пользователь</step-4>
+      <checkpoint>
+        <tests>cargo test зелёные (count_for_row дубли/подпапка/D-06; squares_layout если есть); cargo build --release под GNU (убить запущенный claudebar.exe)</tests>
+        <smoke>Claude в проекте -&gt; 1 синий пульс-квадрат; запустить Kimi в том же проекте (после install-kimi-hook) -&gt; 2 квадрата; Kimi завершил (Stop) -&gt; его квадрат золотой мигает, Claude пульсирует; сфокусировать окно -&gt; золотые погасли; обе стоп -&gt; квадратов нет</smoke>
+        <flows>DF-TERMSQUARES end-to-end</flows>
+        <artifacts>graph/plan/verification синхронны; grace lint=0</artifacts>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-25>
   </ImplementationOrder>
 
   <ExecutionPolicy>
