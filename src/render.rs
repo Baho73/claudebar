@@ -1,5 +1,5 @@
 // FILE: src/render.rs
-// VERSION: 1.13.1
+// VERSION: 1.14.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Построение строк-секций и отрисовка панели (GDI, двойной буфер) с группировкой по приложению.
 //   SCOPE: геометрия/цвета, Row, build_rows, paint (секции+иконки+окна+недавние+подсветка звоночка), resize, row_at.
@@ -11,7 +11,8 @@
 //
 // START_MODULE_MAP
 //   Row, Zone, W, HEAD, ROW, STRIP - модель строк, зоны клика и геометрия (STRIP — полоса голосового индикатора внизу)
-//   build_rows        - сгруппировать окна в строки секций с учётом свёрнутости и ручного порядка
+//   build_rows        - сгруппировать окна в строки секций с учётом свёрнутости и ручного порядка; при активном поиске недавние фильтруются по имени (name_matches)
+//   name_matches      - чистое: имя недавнего подходит запросу (token-AND, подстрока, регистронезависимо)
 //   paint             - отрисовать строки (секции + окна + ✕/ручки + подсветка drag)
 //   resize            - подогнать высоту окна под число строк
 //   row_at            - индекс строки по координате Y
@@ -20,7 +21,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.13.1 - fix(grace-fix): подсветка bell/точки busy через signal::row_signaled вместо inline точного contains. Чинит регрессию при FULLPATHS: если Claude-сессия в подпапке открытого проекта (окно D:\Python\Mosco, cwd D:\Python\Mosco\doc), точный матч по пути не находил, fallback на basename пропадал -> подсветка гасла. DEPENDS += M-SIGNAL.
+//   LAST_CHANGE: v1.14.0 - fix(grace-fix): поиск не находил недавние. build_rows получил query; при активном запросе (≥2 симв.) недавние фильтруются по имени (name_matches, token-AND ci) и показываются даже из свёрнутого блока и за лимитом «6»; секция при поиске видна, если есть окна или совпавшие недавние. Чистая name_matches + тесты.
+//   v1.13.1 - fix(grace-fix): подсветка bell/точки busy через signal::row_signaled вместо inline точного contains. Чинит регрессию при FULLPATHS: если Claude-сессия в подпапке открытого проекта (окно D:\Python\Mosco, cwd D:\Python\Mosco\doc), точный матч по пути не находил, fallback на basename пропадал -> подсветка гасла. DEPENDS += M-SIGNAL.
 //   v1.13.0 - Phase-19 доводка: баннер-индикатор (динамическая высота strip_h: 0 в Idle, 22 активен) с надписью «● ЗАПИСЬ (ON AIR)» и шкалой уровня микрофона справа (зелёный/жёлтый); распознавание — «··· Распознаю…».
 //   v1.12.0 - Phase-19 step-3: индикатор голосового ввода — полоса STRIP в самом низу окна (resize +STRIP к высоте); paint: запись = ярко-красная полоса (C_VOICE_REC), распознавание = бегущий золотой сегмент (anim_frame), idle = сливается с фоном. Читает app.voice.state() (M-VOICE).
 //   v1.11.0 - Phase-12 polish: поле поиска постоянно в шапке (не по клику 🔍); «≡» слева — ручка drag; индикатор совпадения = иконка в цветной рамке (draw_framed_icon, 🟡 BM25 / 🔵 dense) вместо тонкой полосы; иконки в «Найдено ещё» (icon::path_icon).
@@ -139,11 +141,16 @@ unsafe fn draw_framed_icon(hdc: HDC, x: i32, top: i32, icon: HICON, c: (u8, u8, 
 
 // START_CONTRACT: build_rows
 //   PURPOSE: Сгруппировать окна по приложению в строки секций, скрыть содержимое свёрнутых секций.
-//   INPUTS: { items: &[WinItem]; apps: &[AppDef]; cfg: &Config - состояние свёрнутости }
-//   OUTPUTS: { Vec<Row> - заголовки секций и (если развёрнуто) строки окон }
+//            При активном поиске (query ≥2 симв.) недавние фильтруются по имени (name_matches) и
+//            показываются даже из свёрнутого под-блока и за лимитом «6»; секция видна, если есть окна
+//            или совпавшие недавние.
+//   INPUTS: { items: &[WinItem]; recent: &[RecentDoc]; apps: &[AppDef]; cfg: &Config - состояние свёрнутости; query: &str - текст поиска ("" = обычный режим) }
+//   OUTPUTS: { Vec<Row> - заголовки секций и (если развёрнуто/совпало) строки окон и недавних }
 //   SIDE_EFFECTS: none
 // END_CONTRACT: build_rows
-pub fn build_rows(items: &[WinItem], recent: &[RecentDoc], apps: &[AppDef], cfg: &Config) -> Vec<Row> {
+pub fn build_rows(items: &[WinItem], recent: &[RecentDoc], apps: &[AppDef], cfg: &Config, query: &str) -> Vec<Row> {
+    let q = query.trim();
+    let searching = q.chars().count() >= 2; // поиск активен от 2 символов
     let mut win_by_app: Vec<Vec<usize>> = vec![Vec::new(); apps.len()];
     for (i, it) in items.iter().enumerate() {
         if it.app < apps.len() {
@@ -178,8 +185,15 @@ pub fn build_rows(items: &[WinItem], recent: &[RecentDoc], apps: &[AppDef], cfg:
     let mut rows = Vec::new();
     // START_BLOCK_GROUP_SECTIONS
     for a in cfg.section_index_order(apps) {
-        if win_by_app[a].is_empty() && rec_by_app[a].is_empty() {
-            continue;
+        // при поиске — совпавшие по имени недавние (иначе не считаем)
+        let matched: Vec<usize> = if searching {
+            rec_by_app[a].iter().copied().filter(|&r| name_matches(&recent[r].name, q)).collect()
+        } else {
+            Vec::new()
+        };
+        let has_recent = if searching { !matched.is_empty() } else { !rec_by_app[a].is_empty() };
+        if win_by_app[a].is_empty() && !has_recent {
+            continue; // при поиске: секцию без окон и без совпавших недавних скрываем
         }
         rows.push(Row::Section { app: a });
         if cfg.is_collapsed(&apps[a].block) {
@@ -188,7 +202,16 @@ pub fn build_rows(items: &[WinItem], recent: &[RecentDoc], apps: &[AppDef], cfg:
         for &idx in &win_by_app[a] {
             rows.push(Row::Window { idx });
         }
-        if !rec_by_app[a].is_empty() {
+        if searching {
+            // START_BLOCK_RECENT_SEARCH
+            if !matched.is_empty() {
+                rows.push(Row::RecentHeader { app: a }); // раскрываем даже свёрнутый блок
+                for ridx in matched {
+                    rows.push(Row::Recent { ridx });
+                }
+            }
+            // END_BLOCK_RECENT_SEARCH
+        } else if !rec_by_app[a].is_empty() {
             rows.push(Row::RecentHeader { app: a });
             if cfg.is_recent_open(&apps[a].block) {
                 // START_BLOCK_RECENT_VISIBLE
@@ -207,6 +230,21 @@ pub fn build_rows(items: &[WinItem], recent: &[RecentDoc], apps: &[AppDef], cfg:
     }
     // END_BLOCK_GROUP_SECTIONS
     rows
+}
+
+// START_CONTRACT: name_matches
+//   PURPOSE: Имя недавнего подходит поисковому запросу: каждый токен запроса — подстрока имени (регистронезависимо).
+//   INPUTS: { name: &str - имя недавнего; query: &str - текст поиска }
+//   OUTPUTS: { bool - true если все токены запроса найдены как подстроки; пустой запрос -> false }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: name_matches
+pub fn name_matches(name: &str, query: &str) -> bool {
+    let toks: Vec<String> = query.to_lowercase().split_whitespace().map(|t| t.to_string()).collect();
+    if toks.is_empty() {
+        return false;
+    }
+    let n = name.to_lowercase();
+    toks.iter().all(|t| n.contains(t.as_str()))
 }
 
 // START_CONTRACT: paint
@@ -713,7 +751,7 @@ mod tests {
         alpha.ordinal = 2; // открыт позже
         let items = vec![bravo, alpha];
         let names = |cfg: &Config| -> Vec<String> {
-            build_rows(&items, &[], &apps, cfg)
+            build_rows(&items, &[], &apps, cfg, "")
                 .into_iter()
                 .filter_map(|r| match r {
                     Row::Window { idx } => Some(items[idx].name.clone()),
@@ -791,12 +829,52 @@ mod tests {
         };
         // 2 окна VS Code (app 0) + 1 окно Word (app 2)
         let items = vec![item(0, "A"), item(0, "B"), item(2, "Doc")];
-        let rows = build_rows(&items, &[], &apps, &cfg);
+        let rows = build_rows(&items, &[], &apps, &cfg, "");
         // section VS Code + 2 окна + section Word + 1 окно = 5 строк
         assert_eq!(rows.len(), 5);
         assert!(matches!(rows[0], Row::Section { app: 0 }));
         assert!(matches!(rows[1], Row::Window { .. }));
         assert!(matches!(rows[3], Row::Section { app: 2 }));
+    }
+
+    #[test]
+    fn name_matches_is_token_and_ci() {
+        assert!(name_matches("Договор_смета.docx", "договор")); // подстрока, регистронезависимо
+        assert!(name_matches("Договор_смета.docx", "СМЕТА договор")); // token-AND, порядок неважен
+        assert!(!name_matches("Договор.docx", "смета")); // нет токена
+        assert!(name_matches("Отчёт 2026.xlsx", "отчёт 2026"));
+        assert!(!name_matches("readme.md", "   ")); // пустой запрос -> нет токенов -> не матч
+    }
+
+    #[test]
+    fn recent_search_reveals_matches_ignoring_collapse_and_limit() {
+        // regression: поиск не находил недавние — теперь при активном запросе совпадения по имени
+        // показываются, даже если под-блок «недавние» свёрнут и совпадение за лимитом «6».
+        let apps = default_apps();
+        let cfg = mock_cfg(); // недавние свёрнуты по умолчанию (is_recent_open=false)
+        let mk = |name: &str| RecentDoc {
+            name: name.into(),
+            app: 0,
+            mtime: 0,
+            open: crate::recent::OpenCmd::Lnk(std::path::PathBuf::from("x")),
+        };
+        // 8 недавних у app 0; совпадение только "Договор_смета" на индексе 7 (за лимитом 6)
+        let recent: Vec<RecentDoc> = (0..7)
+            .map(|i| mk(&format!("proj{i}")))
+            .chain(std::iter::once(mk("Договор_смета")))
+            .collect();
+        let items: Vec<WinItem> = vec![];
+        // свёрнуто + без запроса: строк Recent нет
+        let plain = build_rows(&items, &recent, &apps, &cfg, "");
+        assert_eq!(plain.iter().filter(|r| matches!(r, Row::Recent { .. })).count(), 0);
+        // запрос "договор": матч показан несмотря на свёрнутость и лимит, без RecentMore
+        let found = build_rows(&items, &recent, &apps, &cfg, "договор");
+        let idxs: Vec<usize> = found
+            .iter()
+            .filter_map(|r| if let Row::Recent { ridx } = r { Some(*ridx) } else { None })
+            .collect();
+        assert_eq!(idxs, vec![7]);
+        assert!(!found.iter().any(|r| matches!(r, Row::RecentMore { .. })));
     }
 
     #[test]
@@ -872,7 +950,7 @@ mod tests {
         };
         cfg.toggle_collapsed("VS Code");
         let items = vec![item(0, "A"), item(0, "B")];
-        let rows = build_rows(&items, &[], &apps, &cfg);
+        let rows = build_rows(&items, &[], &apps, &cfg, "");
         // только заголовок, тело скрыто
         assert_eq!(rows.len(), 1);
         assert!(matches!(rows[0], Row::Section { app: 0 }));

@@ -865,7 +865,8 @@ fn edit_text(edit: HWND) -> String {
 
 // Пересобрать строки панели + (если активен поиск) дописать блок «Найдено ещё».
 fn rebuild_rows(app: &mut App) {
-    app.rows = render::build_rows(&app.items, &app.recent, &app.config.apps, &app.config);
+    let q = edit_text(app.search_edit); // текст поиска: недавние фильтруются по имени (build_rows)
+    app.rows = render::build_rows(&app.items, &app.recent, &app.config.apps, &app.config, q.trim());
     if !app.search_hits.is_empty() {
         let open: HashSet<String> = app.items.iter().map(|it| it.name.to_lowercase()).collect();
         app.rows.extend(render::search_result_rows(&app.search_hits, &open));

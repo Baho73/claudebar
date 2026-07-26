@@ -83,7 +83,8 @@
       <depends>M-CONFIG, M-WINENUM, M-ACTIVATE, M-RECENT, M-ICON</depends>
       <verification-ref>V-M-RENDER</verification-ref>
       <annotations>
-        <fn-build_rows PURPOSE="Сгруппировать окна и недавние в строки по секциям: ручной порядок первичен, остальные по sort= (alpha=имя | recent=ordinal), новое окно -> вниз; showall (Row::RecentMore при &gt;6) — Phase-16" />
+        <fn-build_rows PURPOSE="Сгруппировать окна и недавние в строки по секциям: ручной порядок первичен, остальные по sort= (alpha=имя | recent=ordinal), новое окно -> вниз; showall (Row::RecentMore при &gt;6) — Phase-16. Аргумент query: при активном поиске (≥2 симв.) недавние фильтруются по имени (name_matches) и показываются даже из свёрнутого блока и за лимитом «6»; секция видна при наличии окон или совпавших недавних — fix(grace-fix)" />
+        <fn-name_matches PURPOSE="Чистое: имя недавнего подходит запросу — каждый токен запроса подстрока имени (регистронезависимо, token-AND); пустой запрос -> false — fix(grace-fix)" />
         <fn-display_name PURPOSE="Имя строки окна: basename + «(N)» при дублях basename (стабильный № из M-CONFIG); цвет/метка по пути — Phase-15" />
         <fn-paint PURPOSE="Отрисовать строки (GDI, двойной буфер): иконки, ✕, ручки drag, подсветка bell, перетаскивание, бегущие точки busy-строк (Phase-17)" />
         <fn-dots_for_frame PURPOSE="Чистое: кадр анимации -> «.»/«..»/«...» для индикатора работы — Phase-17" />
