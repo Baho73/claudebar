@@ -246,6 +246,7 @@
         <scenario-4 kind="success">Инкремент по mtime: повторный ensure_index без изменений не переиндексирует (files_meta); изменённый файл — переиндексирует</scenario-4>
         <scenario-5 kind="failure">Битая/незнакомая строка jsonl -&gt; пропуск (skip), не паника; индексация продолжается</scenario-5>
         <scenario-6 kind="success">Ф-C: extract_text — txt/md дают текст, .mpp/неизвестное -&gt; None; strip_xml_text оставляет текстовые узлы; ensure_files_index пишет source='file', FTS5 находит слово, инкремент по mtime</scenario-6>
+        <scenario-7 kind="regression">audit #4: индексатор исполняет чужие файлы из Windows Recent. (a) Кап: extract_text пропускает файлы &gt; MAX_INDEX_BYTES (50 МБ) -&gt; нет OOM на гигантских docx/pdf. (b) Паника: парсеры (lopdf/calamine/zip) обёрнуты в catch_unwind (профиль panic=unwind) -&gt; паника на битом файле ловится пер-файл, файл пропускается, индексатор и панель живы. Ручной smoke: битый/огромный файл в индексируемой папке не роняет панель</scenario-7>
       </scenarios>
     </V-M-INDEX>
     <V-M-AUDIO MODULE="M-AUDIO" PRIORITY="high">

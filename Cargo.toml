@@ -54,4 +54,7 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
-panic = "abort"
+# unwind (не abort): паника в фон-потоке индексатора убивает только поток, не панель;
+# catch_unwind ловит паники сторонних парсеров пер-файл (audit #4b). Паника в wndproc
+# (extern "system") всё равно аборт на FFI-границе — UI-поведение как прежде.
+panic = "unwind"

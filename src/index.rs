@@ -1,5 +1,5 @@
 // FILE: src/index.rs
-// VERSION: 1.1.2
+// VERSION: 1.1.3
 // START_MODULE_CONTRACT
 //   PURPOSE: Rust-индексатор BM25. Чаты: транскрипты Claude Code (~/.claude/projects/**/*.jsonl) -> FTS5 claudebar_chats.db. Файлы (Ф-C): доки history (txt/md/xer/код/xlsx/docx/pptx/pdf) -> FTS5 claudebar_files.db. Инкремент по mtime. Свои базы (заменяют Python-сборку BM25; clfind остаётся для отложенного dense). Phase-13.
 //   SCOPE: init_schema (DDL), parse_transcript/chunk_text/extract_text/strip_xml_text (чистые/тестируемые), ensure_index (чаты) и ensure_files_index (файлы) — инкрементальный обход + запись.
@@ -23,7 +23,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.1.2 - hardening(audit #4a): extract_text пропускает файлы > MAX_INDEX_BYTES (50 МБ) — защита от OOM на гигантских docx/pdf/логах. Защита парсеров от паник (catch_unwind) отложена: бесполезна при panic=abort, требует решения по профилю.
+//   LAST_CHANGE: v1.1.3 - hardening(audit #4b): extract_text оборачивает парсеры в catch_unwind — паника lopdf/calamine/zip на битом файле ловится пер-файл (профиль переведён на panic=unwind), файл пропускается, индексатор жив. Вместе с капом размера (#4a) закрывает crash/OOM-вектор индексатора.
+//   v1.1.2 - hardening(audit #4a): extract_text пропускает файлы > MAX_INDEX_BYTES (50 МБ) — защита от OOM на гигантских docx/pdf/логах.
 //   v1.1.1 - grace-reviewer: контракт-в-коде выровнен с графом (DEPENDS none; PURPOSE/SCOPE учитывают Ф-C файлы).
 //   v1.1.0 - Phase-13 Ф-C step-6: индекс файлов history. extract_text (txt/md/xer/код напрямую; xlsx=calamine; docx/pptx=zip+xml; pdf=pdf-extract) + ensure_files_index (source='file', инкремент по mtime). Крейты calamine/zip/pdf-extract.
 //   v1.0.0 - Phase-13 Ф-A step-1: новый Rust-индексатор. Транскрипты -> FTS5 claudebar_chats.db, инкремент по mtime; чистые parse_transcript/chunk_text + ensure_index (serde_json для парса).
@@ -274,7 +275,9 @@ pub fn extract_text(path: &Path) -> Option<String> {
     if fs::metadata(path).map(|m| m.len()).unwrap_or(0) > MAX_INDEX_BYTES {
         return None;
     }
-    match ext.as_str() {
+    // сторонние парсеры (lopdf/calamine/zip) исторически паникуют на битых файлах;
+    // ловим панику пер-файл (panic=unwind) — битый файл пропускается, индексатор жив. audit #4b
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match ext.as_str() {
         // плоский текст / код / разметка / Primavera .xer
         "md" | "txt" | "json" | "py" | "html" | "htm" | "csv" | "xer" | "log" | "rs" | "toml"
         | "yaml" | "yml" | "ini" | "tex" | "srt" | "vtt" => fs::read_to_string(path).ok(),
@@ -282,7 +285,8 @@ pub fn extract_text(path: &Path) -> Option<String> {
         "docx" | "pptx" => extract_ooxml(path),
         "pdf" => pdf_extract::extract_text(path).ok().filter(|s| !s.trim().is_empty()),
         _ => None, // .mpp (бинарный OLE), картинки/медиа и пр. — пропуск
-    }
+    }))
+    .unwrap_or(None)
 }
 
 // Таблицы (Excel/ODS) через calamine: все листы, ячейки через пробел.
