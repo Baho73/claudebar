@@ -14,7 +14,9 @@ $dir = Join-Path $env:USERPROFILE '.kimi-code'
 $f = Join-Path $dir 'config.toml'
 $busy = 'D:\Python\claudebar\hooks\claudebar-busy.ps1'
 $bell = 'D:\Python\claudebar\hooks\claudebar-bell.ps1'
-$marker = 'claudebar\hooks\claudebar-'
+$alive = 'D:\Python\claudebar\hooks\claudebar-alive.ps1'
+$end = 'D:\Python\claudebar\hooks\claudebar-end.ps1'
+$startMarker = '# --- ClaudeBar terminal status hooks'
 
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
@@ -24,15 +26,19 @@ if (Test-Path $f) {
     $existing = Get-Content $f -Raw
     if ($null -eq $existing) { $existing = '' }
 }
-if ($existing -match [regex]::Escape($marker)) {
-    Write-Output "already present: $f"
-    exit 0
-}
+# Idempotent + upgrade-safe: strip any previously managed block (from start marker to EOF), then re-append full set.
+$idx = $existing.IndexOf($startMarker)
+if ($idx -ge 0) { $existing = $existing.Substring(0, $idx).TrimEnd() }
 
 # TOML literal strings (single quotes) keep backslashes as-is; command keeps the quoted .ps1 path.
 $block = @"
 
-# --- ClaudeBar terminal status hooks (added by install-kimi-hook.ps1) ---
+# --- ClaudeBar terminal status hooks (managed by install-kimi-hook.ps1 - do not edit inside) ---
+[[hooks]]
+event = "SessionStart"
+command = 'powershell -NoProfile -ExecutionPolicy Bypass -File "$alive" -Agent kimi'
+timeout = 10
+
 [[hooks]]
 event = "UserPromptSubmit"
 command = 'powershell -NoProfile -ExecutionPolicy Bypass -File "$busy"'
@@ -47,7 +53,12 @@ timeout = 10
 event = "Stop"
 command = 'powershell -NoProfile -ExecutionPolicy Bypass -File "$bell"'
 timeout = 10
+
+[[hooks]]
+event = "SessionEnd"
+command = 'powershell -NoProfile -ExecutionPolicy Bypass -File "$end"'
+timeout = 10
 "@
 
 [System.IO.File]::WriteAllText($f, $existing + $block, (New-Object System.Text.UTF8Encoding $false))
-Write-Output "OK: added ClaudeBar hooks to $f (backup: $f.bak if it existed)"
+Write-Output "OK: ClaudeBar hooks (presence + busy + bell) written to $f (backup: $f.bak if it existed)"

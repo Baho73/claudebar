@@ -88,7 +88,7 @@
         <fn-display_name PURPOSE="Имя строки окна: basename + «(N)» при дублях basename (стабильный № из M-CONFIG); цвет/метка по пути — Phase-15" />
         <fn-paint PURPOSE="Отрисовать строки (GDI, двойной буфер): иконки, ✕, ручки drag, подсветка bell, перетаскивание. Phase-26: квадраты-статусы сессий на строке-окне — простой=пустой контур (≥1 на каждой строке), работает=контур+бегущая змейка по периметру, готово=ровная золотая заливка (count_for_row, кап 5)" />
         <fn-perimeter_point PURPOSE="Чистое: точка на периметре квадрата по параметру t (обход по часовой) — для бегущей змейки квадрата-статуса — Phase-26" />
-        <fn-squares_to_draw PURPOSE="Чистое: сколько квадратов работа/готово рисовать под капом (золото первым; overflow) — Phase-25 (заменил dots_for_frame)" />
+        <fn-agent_color PURPOSE="Цвет квадрата по агенту: Kimi фиолет (C_KIMI); Claude и неизвестный — бирюза (C_BUSY) — Phase-26" />
         <fn-hit_test PURPOSE="Определить строку и зону (Body|Close|DragHandle) по координатам клика и режиму reorder" />
         <fn-section_of_row PURPOSE="Индекс приложения секции, к которой относится строка" />
         <fn-section_blocks PURPOSE="Блоки секций в видимом порядке (drag-reorder секций)" />
@@ -137,6 +137,10 @@
         <fn-busy_list PURPOSE="Список (cwd,key) по каждому активному .busy-файлу С ДУБЛЯМИ (staleness-фильтр) — по одному на сессию, для подсчёта квадратов — Phase-25" />
         <fn-done_list PURPOSE="Список (cwd,key) по каждому активному .signal-файлу С ДУБЛЯМИ (без staleness) — по одному на завершённую сессию, для золотых квадратов — Phase-25" />
         <fn-count_for_row PURPOSE="Чистое: сколько сессий из списка приходится на строку (путь через path_within, иначе basename; дубли суммируются; одноимённые в разных путях НЕ смешиваются, D-06) — Phase-25" />
+        <fn-sessions PURPOSE="Живые сессии-агенты по session-id: .alive (присутствие+agent) + состояние из .busy/.signal (busy>signal>idle) -> Vec&lt;Sess&gt; — Phase-26" />
+        <fn-sess_matches_row PURPOSE="Чистое: относится ли сессия к строке окна (path_within/basename) — Phase-26" />
+        <fn-parse_agent PURPOSE="Агент из строки agent= файла-сигнала (claude|kimi|пусто) — Phase-26" />
+        <type-Sess PURPOSE="Живая сессия-агент: cwd, key, agent, state (Idle|Working|Done) — Phase-26" />
         <fn-reconcile PURPOSE="Удалить .signal, чьё окно проекта сейчас foreground (сброс по фокусу)" />
         <fn-signal_dir PURPOSE="Путь к папке сигналов (создать при отсутствии)" />
         <fn-parse_signal PURPOSE="Извлечь cwd проекта из содержимого .signal" />

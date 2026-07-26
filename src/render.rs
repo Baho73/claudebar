@@ -1,5 +1,5 @@
 // FILE: src/render.rs
-// VERSION: 1.16.0
+// VERSION: 1.17.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Построение строк-секций и отрисовка панели (GDI, двойной буфер) с группировкой по приложению.
 //   SCOPE: геометрия/цвета, Row, build_rows, paint (секции+иконки+окна+недавние+подсветка звоночка), resize, row_at.
@@ -14,7 +14,7 @@
 //   build_rows        - сгруппировать окна в строки секций с учётом свёрнутости и ручного порядка; при активном поиске недавние фильтруются по имени (name_matches)
 //   name_matches      - чистое: имя недавнего подходит запросу (token-AND, подстрока, регистронезависимо)
 //   paint             - отрисовать строки (секции + окна + ✕/ручки + подсветка drag + квадраты-статусы сессий)
-//   squares_to_draw   - чистое: сколько квадратов работа/готово рисовать под капом (золото первым) — Phase-25
+//   agent_color       - цвет квадрата по агенту (Claude бирюза / Kimi фиолет / нейтраль) — Phase-26
 //   perimeter_point   - чистое: точка на периметре квадрата по параметру t (для бегущей змейки) — Phase-26
 //   draw_square_outline / draw_marching_dots - контур квадрата и бегущая змейка по периметру — Phase-26
 //   resize            - подогнать высоту окна под число строк
@@ -24,7 +24,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.16.0 - Phase-26: редизайн квадратов-статусов. Простаивает — пустой нейтральный контур (≥1 на КАЖДОЙ строке-окне); работает — приглушённый контур + бегущая «змейка» из точек по периметру (perimeter_point/draw_marching_dots, сдвиг по anim_frame); готово — РОВНАЯ золотая заливка (убрано яркое мигание). Чистая perimeter_point + тест. Убраны pulse_color/dim_color. (цвет по агенту — следующий шаг, нужен тег агента в сигнале)
+//   LAST_CHANGE: v1.17.0 - Phase-26 presence: квадрат на КАЖДУЮ живую сессию-агента (app.sessions/sess_matches_row), цвет по агенту (agent_color: Claude бирюза C_BUSY / Kimi фиолет C_KIMI / нейтраль); простой=контур, работает=контур+змейка, готово=золотая заливка. squares_to_draw убрана (заменена per-session отрисовкой).
+//   v1.16.0 - Phase-26: редизайн квадратов-статусов. Простаивает — пустой нейтральный контур (≥1 на КАЖДОЙ строке-окне); работает — приглушённый контур + бегущая «змейка» из точек по периметру (perimeter_point/draw_marching_dots, сдвиг по anim_frame); готово — РОВНАЯ золотая заливка (убрано яркое мигание). Чистая perimeter_point + тест. Убраны pulse_color/dim_color. (цвет по агенту — следующий шаг, нужен тег агента в сигнале)
 //   v1.15.0 - Phase-25: квадраты-статусы сессий на строке окна вместо бегущих точек — бирюзовый пульс (работает, count_for_row по busy_sessions) + золотой мигающий (готово, done_sessions), кап MAX_SQUARES=5 («+» при переборе). Чистая squares_to_draw (золото первым под капом) + тест; хелперы pulse_color/dim_color. dots_for_frame удалена (заменена). C_BUSY. Полоса-звоночек без изменений.
 //   v1.14.0 - fix(grace-fix): поиск не находил недавние. build_rows получил query; при активном запросе (≥2 симв.) недавние фильтруются по имени (name_matches, token-AND ci) и показываются даже из свёрнутого блока и за лимитом «6»; секция при поиске видна, если есть окна или совпавшие недавние. Чистая name_matches + тесты.
 //   v1.13.1 - fix(grace-fix): подсветка bell/точки busy через signal::row_signaled вместо inline точного contains. Чинит регрессию при FULLPATHS: если Claude-сессия в подпапке открытого проекта (окно D:\Python\Mosco, cwd D:\Python\Mosco\doc), точный матч по пути не находил, fallback на basename пропадал -> подсветка гасла. DEPENDS += M-SIGNAL.
@@ -110,8 +111,9 @@ const C_BELL_BAR: (u8, u8, u8) = (246, 189, 22); // левая полоса-ин
 const C_VOICE_REC: (u8, u8, u8) = (242, 58, 47); // ярко-красная полоса «идёт запись» (Phase-19)
 const C_SRCH_BM25: (u8, u8, u8) = (245, 200, 40); // жёлтая полоса поиска: совпадение по словам (BM25)
 const C_SRCH_DENSE: (u8, u8, u8) = (91, 143, 249); // синяя полоса поиска: совпадение по смыслу (dense)
-const C_BUSY: (u8, u8, u8) = (56, 189, 168); // бирюзовый: сессия работает (контур + змейка) — Claude
-const C_IDLE: (u8, u8, u8) = (70, 84, 120); // нейтральный контур простаивающей строки — Phase-26
+const C_BUSY: (u8, u8, u8) = (56, 189, 168); // бирюзовый: агент Claude
+const C_KIMI: (u8, u8, u8) = (170, 128, 246); // фиолетовый: агент Kimi — Phase-26
+const C_IDLE: (u8, u8, u8) = (70, 84, 120); // нейтральный контур: простой / неизвестный агент — Phase-26
 const SQ_W: i32 = 10; // сторона квадрата-статуса
 const SQ_GAP: i32 = 3; // зазор между квадратами-статусами
 const MAX_SQUARES: usize = 5; // кап квадратов на строке (дальше «+»)
@@ -382,31 +384,41 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 };
                 let disp = display_name(&it.name, it.path.as_deref().and_then(|p| app.config.number_for(p)));
                 dt(mem, &disp, RECT { left: 42, top, right: name_right, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
-                // индикатор сессий (Phase-26): контур=простой, контур+бегущая змейка=работает,
-                // ровная золотая заливка=готово. ≥1 квадрат на каждой строке-окне.
-                let working = crate::signal::count_for_row(it.path.as_deref(), &it.name, &app.busy_sessions);
-                let done = crate::signal::count_for_row(it.path.as_deref(), &it.name, &app.done_sessions);
-                let (teal, gold, overflow) = squares_to_draw(working, done, MAX_SQUARES);
+                // индикатор сессий (Phase-26 presence): контур на КАЖДУЮ живую сессию-агента,
+                // цвет по агенту (Claude бирюза / Kimi фиолет); простой=контур, работает=контур+змейка, готово=золото.
+                let sq: Vec<&crate::signal::Sess> = app
+                    .sessions
+                    .iter()
+                    .filter(|s| crate::signal::sess_matches_row(&s.cwd, &s.key, it.path.as_deref(), &it.name))
+                    .collect();
                 // старт СПРАВА от имени (шрифт имени -> DT_CALCRECT ширины)
                 let mut nr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
                 let mut nb: Vec<u16> = disp.encode_utf16().collect();
                 DrawTextW(mem, &mut nb, &mut nr, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
                 let mut x = (42 + (nr.right - nr.left) + 6).min(name_right - (SQ_W + SQ_GAP));
                 let sq_top = top + (ROW - SQ_W) / 2;
-                if teal + gold == 0 {
-                    draw_square_outline(mem, x, sq_top, C_IDLE); // простаивает: нейтральный пустой контур
+                if sq.is_empty() {
+                    draw_square_outline(mem, x, sq_top, C_IDLE); // нет сессии -> нейтральный пустой контур
                 } else {
-                    for _ in 0..teal {
-                        draw_square_outline(mem, x, sq_top, scale_rgb(C_BUSY, 55, 100)); // рамка приглушена
-                        draw_marching_dots(mem, x, sq_top, C_BUSY, app.anim_frame); // змейка ярче рамки
+                    let show = sq.len().min(MAX_SQUARES);
+                    for s in &sq[..show] {
+                        let col = agent_color(&s.agent);
+                        match s.state {
+                            crate::signal::SessState::Working => {
+                                draw_square_outline(mem, x, sq_top, scale_rgb(col, 55, 100)); // рамка приглушена
+                                draw_marching_dots(mem, x, sq_top, col, app.anim_frame); // змейка ярче
+                            }
+                            crate::signal::SessState::Done => {
+                                // готово: ровная золотая заливка (в тон полосе-звоночку строки)
+                                fill(mem, RECT { left: x, top: sq_top, right: x + SQ_W, bottom: sq_top + SQ_W }, C_BELL_BAR);
+                            }
+                            crate::signal::SessState::Idle => {
+                                draw_square_outline(mem, x, sq_top, col); // запущен, простаивает
+                            }
+                        }
                         x += SQ_W + SQ_GAP;
                     }
-                    for _ in 0..gold {
-                        // готово: ровная золотая заливка (без мигания), в тон полосе-звоночку строки
-                        fill(mem, RECT { left: x, top: sq_top, right: x + SQ_W, bottom: sq_top + SQ_W }, C_BELL_BAR);
-                        x += SQ_W + SQ_GAP;
-                    }
-                    if overflow {
+                    if sq.len() > MAX_SQUARES {
                         SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
                         dt(mem, "+", RECT { left: x, top, right: x + 12, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
                     }
@@ -668,16 +680,13 @@ pub fn folder_project(folder: &str) -> String {
     folder.trim_end_matches(['\\', '/']).rsplit(['\\', '/']).next().unwrap_or(folder).to_lowercase()
 }
 
-// START_CONTRACT: squares_to_draw
-//   PURPOSE: Сколько квадратов каждого вида рисовать под капом: сперва «готово» (золото, важнее для внимания), затем «работа» (бирюза).
-//   INPUTS: { working: usize; done: usize; cap: usize }
-//   OUTPUTS: { (usize, usize, bool) - (бирюзовых, золотых, был ли перебор total>cap) }
-//   SIDE_EFFECTS: none
-// END_CONTRACT: squares_to_draw
-pub fn squares_to_draw(working: usize, done: usize, cap: usize) -> (usize, usize, bool) {
-    let gold = done.min(cap);
-    let teal = working.min(cap - gold);
-    (teal, gold, working + done > cap)
+// Цвет квадрата-статуса по агенту: Kimi фиолет; Claude и неизвестный (по умолчанию Claude) — бирюза.
+// Неизвестный -> бирюза, чтобы нетегированные сессии (старые хуки) не теряли цвет.
+fn agent_color(agent: &str) -> (u8, u8, u8) {
+    match agent {
+        "kimi" => C_KIMI,
+        _ => C_BUSY,
+    }
 }
 
 // Масштаб яркости цвета (num/den).
@@ -838,15 +847,6 @@ mod tests {
         assert_eq!(names(&c), vec!["Alpha", "Bravo"]);
         c.set_sort_recent(true); // recent: по ordinal (позже -> ниже)
         assert_eq!(names(&c), vec!["Bravo", "Alpha"]);
-    }
-
-    #[test]
-    fn squares_to_draw_caps_gold_first() {
-        assert_eq!(squares_to_draw(2, 0, 5), (2, 0, false));
-        assert_eq!(squares_to_draw(1, 1, 5), (1, 1, false));
-        assert_eq!(squares_to_draw(4, 3, 5), (2, 3, true)); // золото(3) первым, бирюза добирает 2, перебор
-        assert_eq!(squares_to_draw(0, 6, 5), (0, 5, true)); // золото под капом
-        assert_eq!(squares_to_draw(0, 0, 5), (0, 0, false));
     }
 
     #[test]

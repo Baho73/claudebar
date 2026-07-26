@@ -39,11 +39,15 @@ function Add-Hook($event, $cmd) {
 
 $bell = 'powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Python\claudebar\hooks\claudebar-bell.ps1"'
 $busy = 'powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Python\claudebar\hooks\claudebar-busy.ps1"'
+$alive = 'powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Python\claudebar\hooks\claudebar-alive.ps1" -Agent claude'
+$end = 'powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Python\claudebar\hooks\claudebar-end.ps1"'
 
 $rb = Add-Hook 'Stop' $bell
 $ru = Add-Hook 'UserPromptSubmit' $busy
 $rp = Add-Hook 'PostToolUse' $busy
+$ra = Add-Hook 'SessionStart' $alive
+$re = Add-Hook 'SessionEnd' $end
 
 $json = $j | ConvertTo-Json -Depth 100
 [System.IO.File]::WriteAllText($f, $json, (New-Object System.Text.UTF8Encoding $false))
-Write-Output "OK: bell(Stop) -> $rb; busy(UserPromptSubmit) -> $ru; keep-alive(PostToolUse) -> $rp"
+Write-Output "OK: bell(Stop) -> $rb; busy(UserPromptSubmit) -> $ru; keep-alive(PostToolUse) -> $rp; presence(SessionStart) -> $ra; end(SessionEnd) -> $re"

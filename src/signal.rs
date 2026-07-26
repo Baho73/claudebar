@@ -1,5 +1,5 @@
 // FILE: src/signal.rs
-// VERSION: 1.4.1
+// VERSION: 1.5.0
 // START_MODULE_CONTRACT
 //   PURPOSE: «Звоночек» завершения ИИ: читать файлы-сигналы из %APPDATA%\claudebar\signals\, отдавать проекты для подсветки, гасить сигнал при фокусе окна проекта.
 //   SCOPE: путь папки сигналов, парсинг .signal (cwd проекта), ключ проекта (basename) + полный cwd, наборы «звенящих» (basename и cwd), сброс по фокусу с матчем по полному пути.
@@ -25,11 +25,16 @@
 //   busy_keys/busy_cwds - наборы проектов с активным .busy (индикатор работы) — Phase-17
 //   busy_list/done_list - списки (cwd,key) по КАЖДОМУ .busy/.signal-файлу (с дублями) — по сессии, Phase-25
 //   count_for_row     - чистое: число сессий из списка на строке (path_within/basename; дубли суммируются; D-06) — Phase-25
+//   parse_agent       - агент из строки agent= файла-сигнала (Phase-26)
+//   Sess/SessState    - живая сессия-агент (cwd, key, agent, state Idle|Working|Done) — Phase-26
+//   sessions          - склейка .alive/.busy/.signal по session-id -> Vec<Sess> (состояние busy>signal>idle) — Phase-26
+//   sess_matches_row  - чистое: относится ли сессия к строке окна (path_within/basename) — Phase-26
 //   reconcile         - удалить .signal, чьё окно проекта сейчас foreground (по полному пути)
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.4.1 - fix(grace-fix): path_within нормализует слэши (/ -> \). Kimi через Git Bash пишет cwd со слэшами (D:/Python/claudebar), Claude — с бэкслэшами; матч по пути не срабатывал -> квадрат/подсветка сессии Kimi пропадали. Тест count_for_row_normalizes_slashes.
+//   LAST_CHANGE: v1.5.0 - Phase-26 presence: Signal += agent (parse_agent из строки agent=); тип Sess/SessState + sessions() (склейка .alive присутствие + .busy работает + .signal готово по session-id, состояние busy>signal>idle); sess_matches_row (матч сессии к строке). Для квадратов «на каждого запущенного агента, свой цвет».
+//   v1.4.1 - fix(grace-fix): path_within нормализует слэши (/ -> \). Kimi через Git Bash пишет cwd со слэшами (D:/Python/claudebar), Claude — с бэкслэшами; матч по пути не срабатывал -> квадрат/подсветка сессии Kimi пропадали. Тест count_for_row_normalizes_slashes.
 //   v1.4.0 - Phase-25: посессионные списки busy_list()/done_list() (по одному на .busy/.signal-файл, С дублями) + чистая count_for_row(row_path,row_name,sessions) — сколько сессий на строке (path_within/basename, дубли суммируются, D-06). Для квадратов-статусов терминалов (Claude+Kimi). Тесты count_for_row_*.
 //   v1.3.0 - fix(grace-fix): row_signaled + path_within — матч bell/busy строки, когда cwd сигнала ВЛОЖЕН в путь окна (Claude-сессия в подпапке открытого проекта, напр. окно D:\Python\Mosco, сессия D:\Python\Mosco\doc). Регрессия проявилась при включённом FULLPATHS: путь у строки появлялся -> матч становился только по точному пути, fallback на basename пропадал -> подсветка/точки гасли. should_clear тоже на path_within (фокус родителя гасит сигнал подпапки). D-06 (одноимённые в разных путях) сохранён.
 //   v1.2.1 - Phase-17 hardening: staleness 600->90с + keep-alive (PostToolUse-хук обновляет .busy на каждом инструменте), чтобы точки держались всю длинную работу и гасли ~через 90с после смерти/Stop.
@@ -47,8 +52,26 @@ use crate::win_enum::WinItem;
 
 pub struct Signal {
     pub path: PathBuf,
-    pub key: String, // имя проекта (lower) = basename(cwd) — fallback-матч
-    pub cwd: String, // полный cwd проекта (lower) — точный матч по пути (Phase-15)
+    pub key: String,   // имя проекта (lower) = basename(cwd) — fallback-матч
+    pub cwd: String,   // полный cwd проекта (lower) — точный матч по пути (Phase-15)
+    pub agent: String, // "claude" | "kimi" | "" — из строки agent= (Phase-26)
+}
+
+// Состояние сессии-агента для квадрата-статуса (Phase-26).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SessState {
+    Idle,    // запущен, но простаивает -> пустой контур
+    Working, // .busy свежий -> контур + бегущая змейка
+    Done,    // .signal (закончил) -> золотая заливка
+}
+
+// Живая сессия-агент: где, какой агент, в каком состоянии (Phase-26).
+#[derive(Clone, Debug)]
+pub struct Sess {
+    pub cwd: String,       // полный cwd (lower)
+    pub key: String,       // basename (lower)
+    pub agent: String,     // "claude" | "kimi" | ""
+    pub state: SessState,
 }
 
 // START_CONTRACT: signal_dir
@@ -73,8 +96,8 @@ pub fn signal_dir() -> Option<PathBuf> {
 pub fn parse_signal(content: &str) -> Option<String> {
     for line in content.lines() {
         let t = line.trim();
-        if t.is_empty() {
-            continue;
+        if t.is_empty() || t.starts_with("agent=") {
+            continue; // agent= — не путь
         }
         let v = t.strip_prefix("cwd=").unwrap_or(t).trim();
         if !v.is_empty() {
@@ -82,6 +105,16 @@ pub fn parse_signal(content: &str) -> Option<String> {
         }
     }
     None
+}
+
+// Агент из строки "agent=..." файла-сигнала (Phase-26); нет строки -> "" (неизвестный).
+pub fn parse_agent(content: &str) -> String {
+    for line in content.lines() {
+        if let Some(v) = line.trim().strip_prefix("agent=") {
+            return v.trim().to_lowercase();
+        }
+    }
+    String::new()
 }
 
 // START_CONTRACT: project_key
@@ -205,7 +238,8 @@ fn list_ext(ext: &str, ttl: Option<u64>) -> Vec<Signal> {
             if key.is_empty() {
                 continue;
             }
-            out.push(Signal { path: p, key, cwd: cwd.to_lowercase() });
+            let agent = parse_agent(&content);
+            out.push(Signal { path: p, key, cwd: cwd.to_lowercase(), agent });
         }
     }
     // END_BLOCK_SCAN_SIGNALS
@@ -260,6 +294,55 @@ pub fn busy_keys() -> HashSet<String> {
 // END_CONTRACT: busy_cwds
 pub fn busy_cwds() -> HashSet<String> {
     list_busy().into_iter().map(|s| s.cwd).collect()
+}
+
+// START_CONTRACT: sessions
+//   PURPOSE: Живые сессии-агенты по session-id: .alive (присутствие + agent) + состояние из .busy/.signal.
+//   INPUTS: {}
+//   OUTPUTS: { Vec<Sess> - по одной на sid (alive|busy|signal); состояние busy > signal > idle }
+//   SIDE_EFFECTS: чтение каталога signals
+//   LINKS: M-RENDER (квадраты-статусы по агенту/состоянию), M-SIGNAL
+// END_CONTRACT: sessions
+pub fn sessions() -> Vec<Sess> {
+    use std::collections::HashMap;
+    let sid = |s: &Signal| s.path.file_stem().and_then(|x| x.to_str()).unwrap_or("").to_string();
+    let mut m: HashMap<String, Sess> = HashMap::new();
+    let mut put = |s: Signal, st: SessState, force: bool| {
+        let e = m
+            .entry(sid(&s))
+            .or_insert(Sess { cwd: s.cwd.clone(), key: s.key.clone(), agent: String::new(), state: SessState::Idle });
+        if e.agent.is_empty() && !s.agent.is_empty() {
+            e.agent = s.agent.clone();
+        }
+        if force {
+            e.state = st; // busy перебивает всё
+        } else if e.state == SessState::Idle {
+            e.state = st; // signal поднимает idle -> done (busy позже перебьёт)
+        }
+    };
+    for s in list_ext("alive", None) {
+        put(s, SessState::Idle, false);
+    }
+    for s in list_ext("signal", None) {
+        put(s, SessState::Done, false);
+    }
+    for s in list_ext("busy", Some(BUSY_STALE_SECS)) {
+        put(s, SessState::Working, true);
+    }
+    m.into_values().collect()
+}
+
+// START_CONTRACT: sess_matches_row
+//   PURPOSE: Чистое — относится ли сессия к строке окна (путь через path_within, иначе basename).
+//   INPUTS: { cwd: &str; key: &str; row_path: Option<&str>; row_name: &str }
+//   OUTPUTS: { bool }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: sess_matches_row
+pub fn sess_matches_row(cwd: &str, key: &str, row_path: Option<&str>, row_name: &str) -> bool {
+    match row_path {
+        Some(p) => path_within(cwd, p),
+        None => key == row_name.to_lowercase(),
+    }
 }
 
 // START_CONTRACT: busy_list
@@ -409,6 +492,18 @@ mod tests {
         assert_eq!(count_for_row(Some("D:\\Python\\Mosco"), "Mosco", &sub), 1);
         // D-06 при разных слэшах сохранён
         assert_eq!(count_for_row(Some("E:\\Python\\claudebar"), "claudebar", &kimi), 0);
+    }
+
+    #[test]
+    fn parse_agent_and_sess_matches_row() {
+        // agent= парсится, регистронезависимо; parse_signal игнорирует agent=-строку
+        assert_eq!(parse_agent("cwd=d:\\x\nagent=Kimi"), "kimi");
+        assert_eq!(parse_agent("d:\\x"), ""); // нет agent=
+        assert_eq!(parse_signal("agent=kimi\ncwd=d:\\x"), Some("d:\\x".to_string()));
+        // матч сессии к строке: слэши нормализуются, D-06, basename-fallback
+        assert!(sess_matches_row("d:/python/claudebar", "claudebar", Some("D:\\Python\\claudebar"), "claudebar"));
+        assert!(!sess_matches_row("d:\\other\\claudebar", "claudebar", Some("D:\\Python\\claudebar"), "claudebar"));
+        assert!(sess_matches_row("d:\\x", "claudebar", None, "ClaudeBar")); // basename, регистронезависимо
     }
 
     #[test]
