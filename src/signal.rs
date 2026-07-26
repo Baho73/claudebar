@@ -1,5 +1,5 @@
 // FILE: src/signal.rs
-// VERSION: 1.4.0
+// VERSION: 1.4.1
 // START_MODULE_CONTRACT
 //   PURPOSE: «Звоночек» завершения ИИ: читать файлы-сигналы из %APPDATA%\claudebar\signals\, отдавать проекты для подсветки, гасить сигнал при фокусе окна проекта.
 //   SCOPE: путь папки сигналов, парсинг .signal (cwd проекта), ключ проекта (basename) + полный cwd, наборы «звенящих» (basename и cwd), сброс по фокусу с матчем по полному пути.
@@ -29,7 +29,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.4.0 - Phase-25: посессионные списки busy_list()/done_list() (по одному на .busy/.signal-файл, С дублями) + чистая count_for_row(row_path,row_name,sessions) — сколько сессий на строке (path_within/basename, дубли суммируются, D-06). Для квадратов-статусов терминалов (Claude+Kimi). Тесты count_for_row_*.
+//   LAST_CHANGE: v1.4.1 - fix(grace-fix): path_within нормализует слэши (/ -> \). Kimi через Git Bash пишет cwd со слэшами (D:/Python/claudebar), Claude — с бэкслэшами; матч по пути не срабатывал -> квадрат/подсветка сессии Kimi пропадали. Тест count_for_row_normalizes_slashes.
+//   v1.4.0 - Phase-25: посессионные списки busy_list()/done_list() (по одному на .busy/.signal-файл, С дублями) + чистая count_for_row(row_path,row_name,sessions) — сколько сессий на строке (path_within/basename, дубли суммируются, D-06). Для квадратов-статусов терминалов (Claude+Kimi). Тесты count_for_row_*.
 //   v1.3.0 - fix(grace-fix): row_signaled + path_within — матч bell/busy строки, когда cwd сигнала ВЛОЖЕН в путь окна (Claude-сессия в подпапке открытого проекта, напр. окно D:\Python\Mosco, сессия D:\Python\Mosco\doc). Регрессия проявилась при включённом FULLPATHS: путь у строки появлялся -> матч становился только по точному пути, fallback на basename пропадал -> подсветка/точки гасли. should_clear тоже на path_within (фокус родителя гасит сигнал подпапки). D-06 (одноимённые в разных путях) сохранён.
 //   v1.2.1 - Phase-17 hardening: staleness 600->90с + keep-alive (PostToolUse-хук обновляет .busy на каждом инструменте), чтобы точки держались всю длинную работу и гасли ~через 90с после смерти/Stop.
 //   v1.2.0 - Phase-17 step-1: чтение .busy (индикатор работы) — list_ext(ext, ttl) + busy_keys/busy_cwds + is_stale (фильтр зависших по mtime >600с). list_signals переведён на list_ext.
@@ -127,12 +128,14 @@ pub fn row_signaled(row_path: Option<&str>, row_name: &str, sig_cwds: &HashSet<S
 }
 
 // Чистое: путь `child` это `ancestor` ИЛИ лежит ВНУТРИ него по границе сегмента (регистронезависимо).
+// Слэши нормализуются (/ -> \): Kimi через Git Bash пишет cwd со слэшами, Claude — с бэкслэшами.
 // d:\x\mosco\doc within d:\x\mosco -> true; d:\x\mosco within d:\x\mos -> false (не граница сегмента);
 // d:\y\mosco within d:\x\mosco -> false (D-06: одноимённые в разных путях не путаются).
 fn path_within(child: &str, ancestor: &str) -> bool {
-    let c = child.to_lowercase();
-    let a = ancestor.to_lowercase();
-    c == a || c.starts_with(&(a.clone() + "\\")) || c.starts_with(&(a + "/"))
+    let norm = |s: &str| s.to_lowercase().replace('/', "\\");
+    let c = norm(child);
+    let a = norm(ancestor);
+    c == a || c.starts_with(&(a + "\\"))
 }
 
 // .busy старше этого возраста (с) считается зависшим и игнорируется. Keep-alive (PostToolUse-хук
@@ -393,6 +396,19 @@ mod tests {
         assert_eq!(count_for_row(None, "doc", &sessions), 1);
         assert_eq!(count_for_row(None, "mosco", &sessions), 1);
         assert_eq!(count_for_row(None, "nope", &sessions), 0);
+    }
+
+    #[test]
+    fn count_for_row_normalizes_slashes() {
+        // regression: Kimi (через Git Bash) пишет cwd со СЛЭШАМИ "D:/Python/claudebar",
+        // Claude — с бэкслэшами; строка окна с бэкслэшами не матчила forward-slash cwd -> квадрат Kimi пропадал
+        let kimi = vec![("d:/python/claudebar".to_string(), "claudebar".to_string())];
+        assert_eq!(count_for_row(Some("D:\\Python\\claudebar"), "claudebar", &kimi), 1);
+        // подпапка со слэшами тоже матчит родителя-окно
+        let sub = vec![("d:/python/mosco/doc".to_string(), "doc".to_string())];
+        assert_eq!(count_for_row(Some("D:\\Python\\Mosco"), "Mosco", &sub), 1);
+        // D-06 при разных слэшах сохранён
+        assert_eq!(count_for_row(Some("E:\\Python\\claudebar"), "claudebar", &kimi), 0);
     }
 
     #[test]
