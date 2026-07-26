@@ -1,5 +1,5 @@
 // FILE: src/render.rs
-// VERSION: 1.14.0
+// VERSION: 1.15.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Построение строк-секций и отрисовка панели (GDI, двойной буфер) с группировкой по приложению.
 //   SCOPE: геометрия/цвета, Row, build_rows, paint (секции+иконки+окна+недавние+подсветка звоночка), resize, row_at.
@@ -13,7 +13,8 @@
 //   Row, Zone, W, HEAD, ROW, STRIP - модель строк, зоны клика и геометрия (STRIP — полоса голосового индикатора внизу)
 //   build_rows        - сгруппировать окна в строки секций с учётом свёрнутости и ручного порядка; при активном поиске недавние фильтруются по имени (name_matches)
 //   name_matches      - чистое: имя недавнего подходит запросу (token-AND, подстрока, регистронезависимо)
-//   paint             - отрисовать строки (секции + окна + ✕/ручки + подсветка drag)
+//   paint             - отрисовать строки (секции + окна + ✕/ручки + подсветка drag + квадраты-статусы сессий)
+//   squares_to_draw   - чистое: сколько квадратов работа/готово рисовать под капом (золото первым) — Phase-25
 //   resize            - подогнать высоту окна под число строк
 //   row_at            - индекс строки по координате Y
 //   hit_test          - (строка, Zone) по координатам клика (с учётом режима reorder)
@@ -21,7 +22,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.14.0 - fix(grace-fix): поиск не находил недавние. build_rows получил query; при активном запросе (≥2 симв.) недавние фильтруются по имени (name_matches, token-AND ci) и показываются даже из свёрнутого блока и за лимитом «6»; секция при поиске видна, если есть окна или совпавшие недавние. Чистая name_matches + тесты.
+//   LAST_CHANGE: v1.15.0 - Phase-25: квадраты-статусы сессий на строке окна вместо бегущих точек — бирюзовый пульс (работает, count_for_row по busy_sessions) + золотой мигающий (готово, done_sessions), кап MAX_SQUARES=5 («+» при переборе). Чистая squares_to_draw (золото первым под капом) + тест; хелперы pulse_color/dim_color. dots_for_frame удалена (заменена). C_BUSY. Полоса-звоночек без изменений.
+//   v1.14.0 - fix(grace-fix): поиск не находил недавние. build_rows получил query; при активном запросе (≥2 симв.) недавние фильтруются по имени (name_matches, token-AND ci) и показываются даже из свёрнутого блока и за лимитом «6»; секция при поиске видна, если есть окна или совпавшие недавние. Чистая name_matches + тесты.
 //   v1.13.1 - fix(grace-fix): подсветка bell/точки busy через signal::row_signaled вместо inline точного contains. Чинит регрессию при FULLPATHS: если Claude-сессия в подпапке открытого проекта (окно D:\Python\Mosco, cwd D:\Python\Mosco\doc), точный матч по пути не находил, fallback на basename пропадал -> подсветка гасла. DEPENDS += M-SIGNAL.
 //   v1.13.0 - Phase-19 доводка: баннер-индикатор (динамическая высота strip_h: 0 в Idle, 22 активен) с надписью «● ЗАПИСЬ (ON AIR)» и шкалой уровня микрофона справа (зелёный/жёлтый); распознавание — «··· Распознаю…».
 //   v1.12.0 - Phase-19 step-3: индикатор голосового ввода — полоса STRIP в самом низу окна (resize +STRIP к высоте); paint: запись = ярко-красная полоса (C_VOICE_REC), распознавание = бегущий золотой сегмент (anim_frame), idle = сливается с фоном. Читает app.voice.state() (M-VOICE).
@@ -105,6 +107,10 @@ const C_BELL_BAR: (u8, u8, u8) = (246, 189, 22); // левая полоса-ин
 const C_VOICE_REC: (u8, u8, u8) = (242, 58, 47); // ярко-красная полоса «идёт запись» (Phase-19)
 const C_SRCH_BM25: (u8, u8, u8) = (245, 200, 40); // жёлтая полоса поиска: совпадение по словам (BM25)
 const C_SRCH_DENSE: (u8, u8, u8) = (91, 143, 249); // синяя полоса поиска: совпадение по смыслу (dense)
+const C_BUSY: (u8, u8, u8) = (56, 189, 168); // бирюзовый квадрат: сессия работает (пульс) — Phase-25
+const SQ_W: i32 = 8; // сторона квадрата-статуса — Phase-25
+const SQ_GAP: i32 = 3; // зазор между квадратами-статусами — Phase-25
+const MAX_SQUARES: usize = 5; // кап квадратов на строке (дальше «+») — Phase-25
 
 unsafe fn dt(hdc: HDC, s: &str, mut r: RECT, fmt: DRAW_TEXT_FORMAT) {
     if s.is_empty() {
@@ -370,16 +376,31 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 };
                 let disp = display_name(&it.name, it.path.as_deref().and_then(|p| app.config.number_for(p)));
                 dt(mem, &disp, RECT { left: 42, top, right: name_right, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
-                // индикатор работы: бегущие точки, где Claude занят (путь == cwd ИЛИ cwd вложен в путь; иначе basename) — Phase-17
-                let busy = crate::signal::row_signaled(it.path.as_deref(), &it.name, &app.busy_paths, &app.busy);
-                if busy {
-                    // точки сразу СПРАВА от имени, по центру строки (шрифт имени, золотой) — заметнее, чем по низу
+                // индикатор сессий: квадраты справа от имени — бирюзовый пульс=работает, золотой мигает=готово (Phase-25)
+                let working = crate::signal::count_for_row(it.path.as_deref(), &it.name, &app.busy_sessions);
+                let done = crate::signal::count_for_row(it.path.as_deref(), &it.name, &app.done_sessions);
+                if working + done > 0 {
+                    let (teal, gold, overflow) = squares_to_draw(working, done, MAX_SQUARES);
+                    // старт СПРАВА от имени (шрифт имени -> DT_CALCRECT ширины)
                     let mut nr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
                     let mut nb: Vec<u16> = disp.encode_utf16().collect();
                     DrawTextW(mem, &mut nb, &mut nr, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
-                    let dx = (42 + (nr.right - nr.left) + 6).min(name_right - 28);
-                    SetTextColor(mem, rgb(C_BELL_BAR.0, C_BELL_BAR.1, C_BELL_BAR.2));
-                    dt(mem, dots_for_frame(app.anim_frame), RECT { left: dx, top, right: dx + 28, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+                    let mut x = (42 + (nr.right - nr.left) + 6).min(name_right - (SQ_W + SQ_GAP));
+                    let sq_top = top + (ROW - SQ_W) / 2;
+                    let work_col = pulse_color(C_BUSY, app.anim_frame); // дыхание яркости
+                    for _ in 0..teal {
+                        fill(mem, RECT { left: x, top: sq_top, right: x + SQ_W, bottom: sq_top + SQ_W }, work_col);
+                        x += SQ_W + SQ_GAP;
+                    }
+                    let done_col = if app.anim_frame % 2 == 1 { dim_color(C_BELL_BAR) } else { C_BELL_BAR }; // «готово» мигает
+                    for _ in 0..gold {
+                        fill(mem, RECT { left: x, top: sq_top, right: x + SQ_W, bottom: sq_top + SQ_W }, done_col);
+                        x += SQ_W + SQ_GAP;
+                    }
+                    if overflow {
+                        SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
+                        dt(mem, "+", RECT { left: x, top, right: x + 12, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+                    }
                 }
                 if app.reorder {
                     draw_handle(mem, w - 18, top);
@@ -638,18 +659,37 @@ pub fn folder_project(folder: &str) -> String {
     folder.trim_end_matches(['\\', '/']).rsplit(['\\', '/']).next().unwrap_or(folder).to_lowercase()
 }
 
-// START_CONTRACT: dots_for_frame
-//   PURPOSE: Кадр анимации индикатора работы -> «.»/«..»/«...» (цикл) — Phase-17.
-//   INPUTS: { frame: u32 - счётчик кадров }
-//   OUTPUTS: { &'static str }
+// START_CONTRACT: squares_to_draw
+//   PURPOSE: Сколько квадратов каждого вида рисовать под капом: сперва «готово» (золото, важнее для внимания), затем «работа» (бирюза).
+//   INPUTS: { working: usize; done: usize; cap: usize }
+//   OUTPUTS: { (usize, usize, bool) - (бирюзовых, золотых, был ли перебор total>cap) }
 //   SIDE_EFFECTS: none
-// END_CONTRACT: dots_for_frame
-pub fn dots_for_frame(frame: u32) -> &'static str {
-    match frame % 3 {
-        0 => ".",
-        1 => "..",
-        _ => "...",
-    }
+// END_CONTRACT: squares_to_draw
+pub fn squares_to_draw(working: usize, done: usize, cap: usize) -> (usize, usize, bool) {
+    let gold = done.min(cap);
+    let teal = working.min(cap - gold);
+    (teal, gold, working + done > cap)
+}
+
+// Масштаб яркости цвета (num/den).
+fn scale_rgb(c: (u8, u8, u8), num: u32, den: u32) -> (u8, u8, u8) {
+    let s = |v: u8| ((v as u32 * num) / den) as u8;
+    (s(c.0), s(c.1), s(c.2))
+}
+
+// Дыхание яркости квадрата «работает» по 4-фазному циклу кадра.
+fn pulse_color(base: (u8, u8, u8), frame: u32) -> (u8, u8, u8) {
+    let (num, den) = match frame % 4 {
+        0 => (55u32, 100u32),
+        2 => (100, 100),
+        _ => (80, 100),
+    };
+    scale_rgb(base, num, den)
+}
+
+// Приглушённый цвет для мигания квадрата «готово».
+fn dim_color(c: (u8, u8, u8)) -> (u8, u8, u8) {
+    scale_rgb(c, 45, 100)
 }
 
 // START_CONTRACT: display_name
@@ -767,12 +807,12 @@ mod tests {
     }
 
     #[test]
-    fn dots_for_frame_cycles() {
-        assert_eq!(dots_for_frame(0), ".");
-        assert_eq!(dots_for_frame(1), "..");
-        assert_eq!(dots_for_frame(2), "...");
-        assert_eq!(dots_for_frame(3), "."); // цикл
-        assert_eq!(dots_for_frame(7), "..");
+    fn squares_to_draw_caps_gold_first() {
+        assert_eq!(squares_to_draw(2, 0, 5), (2, 0, false));
+        assert_eq!(squares_to_draw(1, 1, 5), (1, 1, false));
+        assert_eq!(squares_to_draw(4, 3, 5), (2, 3, true)); // золото(3) первым, бирюза добирает 2, перебор
+        assert_eq!(squares_to_draw(0, 6, 5), (0, 5, true)); // золото под капом
+        assert_eq!(squares_to_draw(0, 0, 5), (0, 0, false));
     }
 
     #[test]
