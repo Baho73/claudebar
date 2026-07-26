@@ -1,5 +1,5 @@
 // FILE: src/render.rs
-// VERSION: 1.15.0
+// VERSION: 1.16.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Построение строк-секций и отрисовка панели (GDI, двойной буфер) с группировкой по приложению.
 //   SCOPE: геометрия/цвета, Row, build_rows, paint (секции+иконки+окна+недавние+подсветка звоночка), resize, row_at.
@@ -15,6 +15,8 @@
 //   name_matches      - чистое: имя недавнего подходит запросу (token-AND, подстрока, регистронезависимо)
 //   paint             - отрисовать строки (секции + окна + ✕/ручки + подсветка drag + квадраты-статусы сессий)
 //   squares_to_draw   - чистое: сколько квадратов работа/готово рисовать под капом (золото первым) — Phase-25
+//   perimeter_point   - чистое: точка на периметре квадрата по параметру t (для бегущей змейки) — Phase-26
+//   draw_square_outline / draw_marching_dots - контур квадрата и бегущая змейка по периметру — Phase-26
 //   resize            - подогнать высоту окна под число строк
 //   row_at            - индекс строки по координате Y
 //   hit_test          - (строка, Zone) по координатам клика (с учётом режима reorder)
@@ -22,7 +24,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.15.0 - Phase-25: квадраты-статусы сессий на строке окна вместо бегущих точек — бирюзовый пульс (работает, count_for_row по busy_sessions) + золотой мигающий (готово, done_sessions), кап MAX_SQUARES=5 («+» при переборе). Чистая squares_to_draw (золото первым под капом) + тест; хелперы pulse_color/dim_color. dots_for_frame удалена (заменена). C_BUSY. Полоса-звоночек без изменений.
+//   LAST_CHANGE: v1.16.0 - Phase-26: редизайн квадратов-статусов. Простаивает — пустой нейтральный контур (≥1 на КАЖДОЙ строке-окне); работает — приглушённый контур + бегущая «змейка» из точек по периметру (perimeter_point/draw_marching_dots, сдвиг по anim_frame); готово — РОВНАЯ золотая заливка (убрано яркое мигание). Чистая perimeter_point + тест. Убраны pulse_color/dim_color. (цвет по агенту — следующий шаг, нужен тег агента в сигнале)
+//   v1.15.0 - Phase-25: квадраты-статусы сессий на строке окна вместо бегущих точек — бирюзовый пульс (работает, count_for_row по busy_sessions) + золотой мигающий (готово, done_sessions), кап MAX_SQUARES=5 («+» при переборе). Чистая squares_to_draw (золото первым под капом) + тест; хелперы pulse_color/dim_color. dots_for_frame удалена (заменена). C_BUSY. Полоса-звоночек без изменений.
 //   v1.14.0 - fix(grace-fix): поиск не находил недавние. build_rows получил query; при активном запросе (≥2 симв.) недавние фильтруются по имени (name_matches, token-AND ci) и показываются даже из свёрнутого блока и за лимитом «6»; секция при поиске видна, если есть окна или совпавшие недавние. Чистая name_matches + тесты.
 //   v1.13.1 - fix(grace-fix): подсветка bell/точки busy через signal::row_signaled вместо inline точного contains. Чинит регрессию при FULLPATHS: если Claude-сессия в подпапке открытого проекта (окно D:\Python\Mosco, cwd D:\Python\Mosco\doc), точный матч по пути не находил, fallback на basename пропадал -> подсветка гасла. DEPENDS += M-SIGNAL.
 //   v1.13.0 - Phase-19 доводка: баннер-индикатор (динамическая высота strip_h: 0 в Idle, 22 активен) с надписью «● ЗАПИСЬ (ON AIR)» и шкалой уровня микрофона справа (зелёный/жёлтый); распознавание — «··· Распознаю…».
@@ -107,10 +110,13 @@ const C_BELL_BAR: (u8, u8, u8) = (246, 189, 22); // левая полоса-ин
 const C_VOICE_REC: (u8, u8, u8) = (242, 58, 47); // ярко-красная полоса «идёт запись» (Phase-19)
 const C_SRCH_BM25: (u8, u8, u8) = (245, 200, 40); // жёлтая полоса поиска: совпадение по словам (BM25)
 const C_SRCH_DENSE: (u8, u8, u8) = (91, 143, 249); // синяя полоса поиска: совпадение по смыслу (dense)
-const C_BUSY: (u8, u8, u8) = (56, 189, 168); // бирюзовый квадрат: сессия работает (пульс) — Phase-25
-const SQ_W: i32 = 8; // сторона квадрата-статуса — Phase-25
-const SQ_GAP: i32 = 3; // зазор между квадратами-статусами — Phase-25
-const MAX_SQUARES: usize = 5; // кап квадратов на строке (дальше «+») — Phase-25
+const C_BUSY: (u8, u8, u8) = (56, 189, 168); // бирюзовый: сессия работает (контур + змейка) — Claude
+const C_IDLE: (u8, u8, u8) = (70, 84, 120); // нейтральный контур простаивающей строки — Phase-26
+const SQ_W: i32 = 10; // сторона квадрата-статуса
+const SQ_GAP: i32 = 3; // зазор между квадратами-статусами
+const MAX_SQUARES: usize = 5; // кап квадратов на строке (дальше «+»)
+const SNAKE_DOTS: i32 = 3; // точек в бегущей «змейке» по периметру — Phase-26
+const SNAKE_SPEED: i32 = 4; // px периметра за кадр анимации — Phase-26
 
 unsafe fn dt(hdc: HDC, s: &str, mut r: RECT, fmt: DRAW_TEXT_FORMAT) {
     if s.is_empty() {
@@ -376,25 +382,28 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 };
                 let disp = display_name(&it.name, it.path.as_deref().and_then(|p| app.config.number_for(p)));
                 dt(mem, &disp, RECT { left: 42, top, right: name_right, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
-                // индикатор сессий: квадраты справа от имени — бирюзовый пульс=работает, золотой мигает=готово (Phase-25)
+                // индикатор сессий (Phase-26): контур=простой, контур+бегущая змейка=работает,
+                // ровная золотая заливка=готово. ≥1 квадрат на каждой строке-окне.
                 let working = crate::signal::count_for_row(it.path.as_deref(), &it.name, &app.busy_sessions);
                 let done = crate::signal::count_for_row(it.path.as_deref(), &it.name, &app.done_sessions);
-                if working + done > 0 {
-                    let (teal, gold, overflow) = squares_to_draw(working, done, MAX_SQUARES);
-                    // старт СПРАВА от имени (шрифт имени -> DT_CALCRECT ширины)
-                    let mut nr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-                    let mut nb: Vec<u16> = disp.encode_utf16().collect();
-                    DrawTextW(mem, &mut nb, &mut nr, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
-                    let mut x = (42 + (nr.right - nr.left) + 6).min(name_right - (SQ_W + SQ_GAP));
-                    let sq_top = top + (ROW - SQ_W) / 2;
-                    let work_col = pulse_color(C_BUSY, app.anim_frame); // дыхание яркости
+                let (teal, gold, overflow) = squares_to_draw(working, done, MAX_SQUARES);
+                // старт СПРАВА от имени (шрифт имени -> DT_CALCRECT ширины)
+                let mut nr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                let mut nb: Vec<u16> = disp.encode_utf16().collect();
+                DrawTextW(mem, &mut nb, &mut nr, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+                let mut x = (42 + (nr.right - nr.left) + 6).min(name_right - (SQ_W + SQ_GAP));
+                let sq_top = top + (ROW - SQ_W) / 2;
+                if teal + gold == 0 {
+                    draw_square_outline(mem, x, sq_top, C_IDLE); // простаивает: нейтральный пустой контур
+                } else {
                     for _ in 0..teal {
-                        fill(mem, RECT { left: x, top: sq_top, right: x + SQ_W, bottom: sq_top + SQ_W }, work_col);
+                        draw_square_outline(mem, x, sq_top, scale_rgb(C_BUSY, 55, 100)); // рамка приглушена
+                        draw_marching_dots(mem, x, sq_top, C_BUSY, app.anim_frame); // змейка ярче рамки
                         x += SQ_W + SQ_GAP;
                     }
-                    let done_col = if app.anim_frame % 2 == 1 { dim_color(C_BELL_BAR) } else { C_BELL_BAR }; // «готово» мигает
                     for _ in 0..gold {
-                        fill(mem, RECT { left: x, top: sq_top, right: x + SQ_W, bottom: sq_top + SQ_W }, done_col);
+                        // готово: ровная золотая заливка (без мигания), в тон полосе-звоночку строки
+                        fill(mem, RECT { left: x, top: sq_top, right: x + SQ_W, bottom: sq_top + SQ_W }, C_BELL_BAR);
                         x += SQ_W + SQ_GAP;
                     }
                     if overflow {
@@ -677,19 +686,44 @@ fn scale_rgb(c: (u8, u8, u8), num: u32, den: u32) -> (u8, u8, u8) {
     (s(c.0), s(c.1), s(c.2))
 }
 
-// Дыхание яркости квадрата «работает» по 4-фазному циклу кадра.
-fn pulse_color(base: (u8, u8, u8), frame: u32) -> (u8, u8, u8) {
-    let (num, den) = match frame % 4 {
-        0 => (55u32, 100u32),
-        2 => (100, 100),
-        _ => (80, 100),
-    };
-    scale_rgb(base, num, den)
+// START_CONTRACT: perimeter_point
+//   PURPOSE: Точка на периметре квадрата стороной `side` по параметру t (обход от верх-левого угла по часовой).
+//   INPUTS: { side: i32; t: i32 - параметр (оборачивается по модулю 4*side) }
+//   OUTPUTS: { (i32, i32) - смещение (dx, dy) от верх-левого угла, оба в [0, side] }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: perimeter_point
+fn perimeter_point(side: i32, t: i32) -> (i32, i32) {
+    let p = t.rem_euclid(4 * side);
+    if p < side {
+        (p, 0) // верх
+    } else if p < 2 * side {
+        (side, p - side) // право
+    } else if p < 3 * side {
+        (3 * side - p, side) // низ
+    } else {
+        (0, 4 * side - p) // лево
+    }
 }
 
-// Приглушённый цвет для мигания квадрата «готово».
-fn dim_color(c: (u8, u8, u8)) -> (u8, u8, u8) {
-    scale_rgb(c, 45, 100)
+// Пустой контур квадрата SQ_W x SQ_W (толщина 1px).
+unsafe fn draw_square_outline(mem: HDC, x: i32, y: i32, col: (u8, u8, u8)) {
+    let s = SQ_W;
+    fill(mem, RECT { left: x, top: y, right: x + s, bottom: y + 1 }, col); // верх
+    fill(mem, RECT { left: x, top: y + s - 1, right: x + s, bottom: y + s }, col); // низ
+    fill(mem, RECT { left: x, top: y, right: x + 1, bottom: y + s }, col); // лево
+    fill(mem, RECT { left: x + s - 1, top: y, right: x + s, bottom: y + s }, col); // право
+}
+
+// Бегущая «змейка» из SNAKE_DOTS точек по периметру квадрата (сдвиг по кадру anim_frame).
+unsafe fn draw_marching_dots(mem: HDC, x: i32, y: i32, col: (u8, u8, u8), frame: u32) {
+    let per = 4 * SQ_W;
+    for k in 0..SNAKE_DOTS {
+        let t = frame as i32 * SNAKE_SPEED + k * (per / SNAKE_DOTS);
+        let (dx, dy) = perimeter_point(SQ_W, t);
+        let cx = (x + dx).clamp(x, x + SQ_W - 1);
+        let cy = (y + dy).clamp(y, y + SQ_W - 1);
+        fill(mem, RECT { left: cx - 1, top: cy - 1, right: cx + 2, bottom: cy + 2 }, col); // точка 3x3
+    }
 }
 
 // START_CONTRACT: display_name
@@ -813,6 +847,20 @@ mod tests {
         assert_eq!(squares_to_draw(4, 3, 5), (2, 3, true)); // золото(3) первым, бирюза добирает 2, перебор
         assert_eq!(squares_to_draw(0, 6, 5), (0, 5, true)); // золото под капом
         assert_eq!(squares_to_draw(0, 0, 5), (0, 0, false));
+    }
+
+    #[test]
+    fn perimeter_point_walks_border() {
+        assert_eq!(perimeter_point(10, 0), (0, 0)); // верх-левый угол
+        assert_eq!(perimeter_point(10, 5), (5, 0)); // верхняя грань
+        assert_eq!(perimeter_point(10, 10), (10, 0)); // верх-правый угол
+        assert_eq!(perimeter_point(10, 15), (10, 5)); // правая грань
+        assert_eq!(perimeter_point(10, 20), (10, 10)); // низ-правый угол
+        assert_eq!(perimeter_point(10, 25), (5, 10)); // нижняя грань
+        assert_eq!(perimeter_point(10, 30), (0, 10)); // низ-левый угол
+        assert_eq!(perimeter_point(10, 35), (0, 5)); // левая грань
+        assert_eq!(perimeter_point(10, 40), (0, 0)); // оборот (rem_euclid)
+        assert_eq!(perimeter_point(10, -1), (0, 1)); // отрицательный t оборачивается (-1 -> 39)
     }
 
     #[test]

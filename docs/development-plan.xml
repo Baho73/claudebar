@@ -940,6 +940,19 @@
         <on-fail>grace-fix; откат коммитом</on-fail>
       </checkpoint>
     </Phase-25>
+
+    <Phase-26 name="Квадраты-статусы: редизайн (контур + змейка + агент-цвет)" status="in-progress">
+      <goal>Переделать визуал квадратов Phase-25 (пользователь: яркое мигание не нравится). Квадрат на строке: простаивает — пустой нейтральный контур (≥1 на КАЖДОЙ строке-окне); работает — приглушённый контур + бегущая «змейка» из точек по периметру (спиннер как в KimiCode); готово — РОВНАЯ золотая заливка (в тон полосе-звоночку, без мигания). Цвет по агенту: Claude бирюзовый / Kimi фиолетовый — требует тега агента в сигнале.</goal>
+      <step-1 module="M-RENDER" status="done" verification="V-M-RENDER">Редизайн paint: draw_square_outline (контур), draw_marching_dots + чистая perimeter_point (змейка по периметру, сдвиг по anim_frame), готово = ровная C_BELL_BAR заливка; простой = пустой C_IDLE контур на каждой строке-окне. Убраны pulse_color/dim_color (яркое мигание). SQ_W 8->10. Тест perimeter_point_walks_border</step-1>
+      <step-2 module="M-SIGNAL" status="pending" verification="V-M-SIGNAL">Тег агента в сигнале: параметр -Agent в claudebar-busy.ps1/bell.ps1 (Claude=claude, Kimi=kimi) пишет `agent=X` в файл; install-*-hook передают -Agent. parse_signal/Signal += agent; busy_list/done_list отдают (cwd,key,agent)</step-2>
+      <step-3 module="M-RENDER" status="pending" verification="V-M-RENDER">Красить контур+змейку по агенту: Claude C_BUSY (бирюза), Kimi C_KIMI (фиолет); неизвестный агент -> нейтраль. Идёт от agent из busy_sessions</step-3>
+      <checkpoint>
+        <tests>cargo test зелёные (perimeter_point, squares_to_draw); cargo build --release под GNU (убить exe)</tests>
+        <smoke>Простой -> пустой контур на строке; Claude работает -> змейка по периметру; закончил -> ровный золотой квадрат + золотая строка; Kimi -> свой цвет (после step-2/3). Нет яркого мигания</smoke>
+        <artifacts>graph/plan/verification синхронны; grace lint=0</artifacts>
+        <on-fail>grace-fix; откат коммитом</on-fail>
+      </checkpoint>
+    </Phase-26>
   </ImplementationOrder>
 
   <ExecutionPolicy>
