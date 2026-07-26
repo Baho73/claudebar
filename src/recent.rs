@@ -1,5 +1,5 @@
 // FILE: src/recent.rs
-// VERSION: 1.2.0
+// VERSION: 1.2.1
 // START_MODULE_CONTRACT
 //   PURPOSE: Недавние элементы: документы Office (Windows Recent) и проекты редакторов (workspaceStorage); открытие через ShellExecute.
 //   SCOPE: чтение Recent (.lnk) по расширению, чтение workspaceStorage редакторов, исключение открытых, открытие.
@@ -20,7 +20,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.2.0 - Phase-7 Step 1: жёсткий лимит 6 снят (STORE_LIMIT=50 на app); обрезку до 6 решает M-RENDER через «показать все».
+//   LAST_CHANGE: v1.2.1 - fix(grace-fix, audit #1): decode_file_uri декодирует %XX ПОБАЙТНО (hex2) вместо среза &s[i+1..i+3] — срез паниковал "not a char boundary" на '%' перед многобайтовым символом, а функция крутится на UI-таймере (panic=abort -> смерть панели). Тест decode_file_uri_no_panic_on_multibyte_after_percent.
+//   v1.2.0 - Phase-7 Step 1: жёсткий лимит 6 снят (STORE_LIMIT=50 на app); обрезку до 6 решает M-RENDER через «показать все».
 //   v1.1.0 - недавние проекты редакторов (VS Code/Cursor) из workspaceStorage; OpenCmd для разных способов открытия.
 //   v1.0.0 - Phase-3 Step 1: недавние документы из Windows Recent (без COM).
 // END_CHANGE_SUMMARY
@@ -72,6 +73,13 @@ pub fn classify(fname: &str, exts_by_app: &[Vec<String>], open: &HashSet<String>
     Some(app)
 }
 
+// Два ASCII-hex байта -> значение байта; не-hex (в т.ч. не-ASCII) -> None.
+// Побайтно, БЕЗ среза &str — иначе паника "not a char boundary" на '%' перед многобайтовым символом.
+fn hex2(hi: u8, lo: u8) -> Option<u8> {
+    let d = |c: u8| (c as char).to_digit(16);
+    Some((d(hi)? * 16 + d(lo)?) as u8)
+}
+
 // START_CONTRACT: decode_file_uri
 //   PURPOSE: Преобразовать file:///d%3A/Path в путь Windows (d:\Path).
 //   INPUTS: { uri: &str }
@@ -88,7 +96,7 @@ pub fn decode_file_uri(uri: &str) -> String {
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(n) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+            if let Some(n) = hex2(b[i + 1], b[i + 2]) {
                 out.push(n);
                 i += 3;
                 continue;
@@ -293,6 +301,13 @@ mod tests {
         );
         // кириллица в percent-encoding (UTF-8)
         assert_eq!(decode_file_uri("file:///c%3A/%D0%9F%D1%80%D0%BE%D0%B5%D0%BA%D1%82"), "c:\\Проект");
+    }
+
+    #[test]
+    fn decode_file_uri_no_panic_on_multibyte_after_percent() {
+        // regression: '%' перед многобайтовым (3-байт) символом ломал срез &s[i+1..i+3]
+        // (паника "not a char boundary") — а decode_file_uri крутится на UI-таймере. Теперь побайтно.
+        assert_eq!(decode_file_uri("file:///d%3A/10%你"), "d:\\10%你");
     }
 
     #[test]

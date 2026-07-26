@@ -114,6 +114,7 @@
         <scenario-2 kind="success">Документ, открытый сейчас (по basename без расширения), исключается из недавних</scenario-2>
         <scenario-3 kind="success">Недавние проекты редакторов: decode_file_uri (file:///d%3A/... -> d:\...) и extract_target (folder/workspace) из workspace.json</scenario-3>
         <scenario-4 kind="success">v0.3 Phase-7: при &gt;6 недавних list_recent возвращает все до STORE_LIMIT (~50), отсортированные по mtime убыв.; жёсткий лимит 6 снят</scenario-4>
+        <scenario-5 kind="regression">audit #1: decode_file_uri паниковал "not a char boundary" на срезе &amp;s[i+1..i+3], когда '%' стоит перед многобайтовым символом (3-байтным и др.) — на UI-таймере при panic=abort роняло панель. Фикс: побайтное декодирование (hex2). Тест decode_file_uri_no_panic_on_multibyte_after_percent</scenario-5>
       </scenarios>
     </V-M-RECENT>
     <V-M-RENDER MODULE="M-RENDER" PRIORITY="high">
@@ -200,6 +201,7 @@
         <scenario-10 kind="success">Phase-17: refresh_items наполняет App.busy_paths (busy_cwds); ID_ANIM_TIMER (~350мс) стартует при непустом busy и гаснет в простое; anim_frame++ -> InvalidateRect. Smoke: промпт Claude -> «...» бегут на строке проекта; Stop -> точки гаснут, строка золотая (звоночек); в простое не мигает</scenario-10>
         <scenario-11 kind="success">Phase-21: «Скопировать ссылку»/«Открыть в проводнике» там, где раньше было нельзя. (a) ПКМ по окну Проводника -> explorer_folder_path (Shell COM IShellWindows-&gt;IWebBrowserApp по hwnd -&gt; LocationURL -&gt; url_to_path) даёт путь открытой папки, пункты активны. (b) ПКМ по недавнему/закрытому документу или результату поиска «Найдено ещё» -> мини-меню (show_menu minimal=true) только «Скопировать ссылку»/«Открыть в проводнике» (путь из recent_path / hit.folder), без палитры. Чистые url_to_path/percent_decode под cargo test (url_to_path_local_and_unc, percent_decode_basic). COM/UI — ручной smoke: ПКМ по папке в Проводнике -> путь в буфере; ПКМ по недавнему файлу -> /select в Explorer</scenario-11>
         <scenario-12 kind="success">Phase-24: ⚙-пункт «Стриминг длинной диктовки» (ID_STREAMING, MF_CHECKED по voice_streaming) toggle+save. При Recording+voice_streaming стрим-таймер зовёт voice.stream_tick (интервал STREAM_TICK_SECS); WM_APP_STREAM_PARTIAL -> voice.on_partial. Вставка результата — как сейчас, разом по WM_APP_VOICE_DONE. Smoke: галочка ВКЛ -> длинная диктовка финиширует быстро; ВЫКЛ -> legacy (весь WAV на стопе)</scenario-12>
+        <scenario-13 kind="regression">audit #1: percent_decode паниковал на срезе &amp;s[i+1..i+3] при '%' перед многобайтовым символом. Фикс: побайтно (hex2). Тест percent_decode_no_panic_on_multibyte</scenario-13>
       </scenarios>
     </V-M-MAIN>
     <V-M-SEARCH MODULE="M-SEARCH" PRIORITY="high">

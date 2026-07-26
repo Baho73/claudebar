@@ -1646,6 +1646,13 @@ fn url_to_path(url: &str) -> Option<String> {
     None
 }
 
+// Два ASCII-hex байта -> байт; не-hex -> None. Побайтно, БЕЗ среза &str (иначе паника
+// "not a char boundary" на '%' перед многобайтовым символом). ponytail: дубль recent::hex2 — свести в util при рефакторе.
+fn hex2(hi: u8, lo: u8) -> Option<u8> {
+    let d = |c: u8| (c as char).to_digit(16);
+    Some((d(hi)? * 16 + d(lo)?) as u8)
+}
+
 // Декодировать %XX в URL (пробелы, кириллица и пр.). Прочее — как есть.
 fn percent_decode(s: &str) -> String {
     let b = s.as_bytes();
@@ -1653,7 +1660,7 @@ fn percent_decode(s: &str) -> String {
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'%' && i + 3 <= b.len() {
-            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+            if let Some(v) = hex2(b[i + 1], b[i + 2]) {
                 out.push(v);
                 i += 3;
                 continue;
@@ -2119,5 +2126,12 @@ mod tests {
         assert_eq!(percent_decode("%41%42"), "AB");
         // незавершённый % — как есть
         assert_eq!(percent_decode("100%"), "100%");
+    }
+
+    #[test]
+    fn percent_decode_no_panic_on_multibyte() {
+        // regression: '%' перед 3-байтовым символом паниковал на срезе &s[i+1..i+3]; теперь % как есть
+        assert_eq!(percent_decode("10%你"), "10%你");
+        assert_eq!(percent_decode("c%3A/x"), "c:/x");
     }
 }
