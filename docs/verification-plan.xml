@@ -346,6 +346,16 @@
         <scenario-1 kind="success">Меню окна «Метка» → диалог; ввод + OK возвращает строку, Отмена/крестик → None. Ручной smoke (UI-модальность). Рефактор (вынос prompt из main.rs, FPF D-5) не меняет поведение — 102/102 до и после</scenario-1>
       </scenarios>
     </V-M-PROMPT>
+
+    <V-M-TOOLTIP MODULE="M-TOOLTIP" PRIORITY="low">
+      <test-files><file>—</file></test-files>
+      <module-checks>
+        <check-1>cargo test (debug компилируется; tooltip::{create_tooltip,arm_tip,show_tooltip,hide_tooltip} резолвятся в main.rs через use; импорт крейт-констант ID_TIP_TIMER/TIP_DELAY/TIP_SEARCHBOX и хелперов edit_text/recent_path)</check-1>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">Наведение на строку окна/недавнего/результата → через ~0.5с попап с путём/сниппетом; над строкой поиска → правила; попап привязан к монитору под курсором. Ручной smoke (UI-dwell). Рефактор (вынос tooltip из main.rs, FPF D-5) не меняет поведение — 102/102 до и после</scenario-1>
+      </scenarios>
+    </V-M-TOOLTIP>
   </ModuleVerification>
 
   <PhaseGates>

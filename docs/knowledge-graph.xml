@@ -10,7 +10,7 @@
     <M-MAIN NAME="Main" TYPE="ENTRY_POINT" STATUS="partial">
       <purpose>Точка входа: GetModuleHandle, регистрация класса, создание topmost-окна, таймер опроса, message loop, диспетчеризация в обработчики. v0.3: опрос M-SIGNAL (bell_keys + reconcile) на тике, проброс bell в paint, зоны клика и режим reorder. v0.4: шрифт панели читается из конфига (make_font(face,…)); «⚙» в шапке открывает меню настроек → M-SETTINGS.choose_font → rebuild_fonts + repaint. v0.5 (Phase-14): в меню окна «Скопировать ссылку»/«Открыть в проводнике» — путь проекта (M-SEARCH.folder_for_project) или документа (фоновая карта doc_paths из Recent .lnk). Phase-15/16: идентичность проекта по полному пути из заголовка (extract_project_path) + нумерация дублей «(N)»; пункт ⚙ «Полные пути» (configure_editor_titles); настройка порядка окон sort=alpha|recent с картой ordinal первого появления.</purpose>
       <path>src/main.rs</path>
-      <depends>M-STATE, M-CONFIG, M-WINENUM, M-ACTIVATE, M-RENDER, M-RECENT, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX, M-VOICE, M-PASTE, M-PROMPT</depends>
+      <depends>M-STATE, M-CONFIG, M-WINENUM, M-ACTIVATE, M-RENDER, M-RECENT, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX, M-VOICE, M-PASTE, M-PROMPT, M-TOOLTIP</depends>
       <verification-ref>V-M-MAIN</verification-ref>
       <annotations>
         <fn-main PURPOSE="Инициализация приложения и цикл сообщений" />
@@ -46,6 +46,19 @@
         <fn-prompt_text PURPOSE="Показать модальный ввод строки (parent, hinst, initial); вернуть Some(текст) при OK либо None при отмене/закрытии" />
       </annotations>
     </M-PROMPT>
+
+    <M-TOOLTIP NAME="Tooltip" TYPE="UI_COMPONENT" STATUS="implemented">
+      <purpose>Собственный popup-тултип (Phase-13 Ф-B): окно подсказки (WNDCLASS ClbarTip), dwell-таймер, позиционирование по рабочей области монитора под курсором, текст цели (правила поиска / полный путь-имя окна / путь+сниппет). Вынесено из main.rs (рефактор god-object, FPF D-5). Константы dwell (ID_TIP_TIMER/TIP_DELAY/TIP_SEARCHBOX) и хелперы edit_text/recent_path делит wndproc — остаются в M-MAIN, импортируются сюда.</purpose>
+      <path>src/tooltip.rs</path>
+      <depends>M-STATE, M-RENDER, M-SEARCH, M-RECENT</depends>
+      <verification-ref>V-M-TOOLTIP</verification-ref>
+      <annotations>
+        <fn-create_tooltip PURPOSE="Создать popup-окно подсказки (один раз при старте), сохранить HWND в App.tooltip" />
+        <fn-arm_tip PURPOSE="Сменить цель подсказки (App.tip_row): спрятать текущую, перезавести dwell-таймер (ID_TIP_TIMER/TIP_DELAY)" />
+        <fn-show_tooltip PURPOSE="По срабатыванию dwell: tip_text_for → измерить текст панельным шрифтом, привязать к монитору под курсором, показать" />
+        <fn-hide_tooltip PURPOSE="Спрятать попап подсказки" />
+      </annotations>
+    </M-TOOLTIP>
 
     <M-WINENUM NAME="WindowEnum" TYPE="CORE_LOGIC" STATUS="implemented">
       <purpose>Перечисление видимых top-level окон, определение приложения по имени процесса И классу окна, извлечение имени проекта/документа из заголовка по правилам приложения. v0.4: класс окна (GetClassNameW) в кортеже окна; для классической консоли (ConsoleWindowClass) реальный shell (cmd/powershell/pwsh) разрешается по дереву процессов через conhost.</purpose>
@@ -340,6 +353,7 @@
     <CrossLink from="M-MAIN" to="M-WINENUM" relation="опрашивает окна по таймеру" />
     <CrossLink from="M-MAIN" to="M-STATE" relation="владеет App/APP (состояние UI-потока); строит и опрашивает" />
     <CrossLink from="M-MAIN" to="M-PROMPT" relation="меню окна «Метка» → prompt::prompt_text(hwnd, hinst, initial) для ввода метки проекта" />
+    <CrossLink from="M-MAIN" to="M-TOOLTIP" relation="wndproc/subclass: create_tooltip при старте; arm_tip по hover/hit-test; show_tooltip по dwell-таймеру (ID_TIP_TIMER); hide_tooltip. Делит edit_text/recent_path/константы dwell" />
     <CrossLink from="M-RENDER" to="M-STATE" relation="paint читает &amp;App (состояние для отрисовки)" />
     <CrossLink from="M-MAIN" to="M-RENDER" relation="делегирует отрисовку и обработку кликов" />
     <CrossLink from="M-MAIN" to="M-CONFIG" relation="загружает/сохраняет конфигурацию" />
