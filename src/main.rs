@@ -117,6 +117,7 @@ const ID_SORT: usize = 34; // меню настроек: сортировка о
 const ID_KEEP_CLIP: usize = 35; // меню настроек: сохранять прежний буфер обмена после диктовки — Phase-20
 const ID_MIC_ALWAYS: usize = 36; // меню настроек: микрофон всегда включён (always-on + pre-roll) — Phase-22
 const ID_TRAIL_SPACE: usize = 37; // меню настроек: пробел после надиктованной фразы — Phase-23
+const ID_STREAMING: usize = 38; // меню настроек: стриминг длинной диктовки — Phase-24
 const ID_SEARCH: usize = 40; // EDIT-поле поиска в шапке (WM_COMMAND EN_CHANGE)
 const SEARCH_MIN: usize = 3; // живой BM25 начинается с N символов
 const WM_APP_SEARCH: u32 = WM_APP + 1; // dense-результаты из фонового потока
@@ -417,6 +418,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     APP.with(|c| {
                         if let Some(a) = c.borrow_mut().as_mut() {
                             a.anim_frame = a.anim_frame.wrapping_add(1);
+                            a.voice.stream_tick(hwnd, &a.config); // стрим-заход (Phase-24, троттлинг/гейт внутри)
                             if a.voice.poll(hwnd, &a.config) {
                                 // тишина -> авто-стоп: пересчитать таймер и высоту окна
                                 update_anim_timer(hwnd, a);
@@ -817,6 +819,17 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     }
                 });
                 let _ = InvalidateRect(hwnd, None, FALSE);
+                LRESULT(0)
+            }
+            m if m == voice::WM_APP_STREAM_PARTIAL => {
+                // частичное распознавание стриминга: зафиксировать устоявшиеся сегменты (Phase-24).
+                // Вставки нет — только накопление committed_text/сдвиг окна внутри Voice.
+                let id = lp.0 as u64;
+                APP.with(|c| {
+                    if let Some(a) = c.borrow_mut().as_mut() {
+                        a.voice.on_partial(id);
+                    }
+                });
                 LRESULT(0)
             }
             m if m == voice::WM_APP_VOICE_DONE => {
@@ -1769,6 +1782,9 @@ unsafe fn show_settings_menu(hwnd: HWND) {
     let trail_on = APP.with(|c| c.borrow().as_ref().map(|a| a.config.voice_trailing_space).unwrap_or(true));
     let tflag = if trail_on { MF_STRING | MF_CHECKED } else { MF_STRING };
     let _ = AppendMenuW(menu, tflag, ID_TRAIL_SPACE, w!("Пробел после фразы (диктовка)"));
+    let stream_on = APP.with(|c| c.borrow().as_ref().map(|a| a.config.voice_streaming).unwrap_or(false));
+    let sflag = if stream_on { MF_STRING | MF_CHECKED } else { MF_STRING };
+    let _ = AppendMenuW(menu, sflag, ID_STREAMING, w!("Стриминг длинной диктовки"));
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
     let _ = AppendMenuW(menu, MF_STRING, ID_ABOUT, w!("О программе…"));
     let mut pt = POINT::default();
@@ -1874,6 +1890,16 @@ fn handle_command(hwnd: HWND, id: usize) {
         APP.with(|c| {
             if let Some(a) = c.borrow_mut().as_mut() {
                 a.config.voice_trailing_space = !a.config.voice_trailing_space;
+                a.config.save(hwnd); // персист флага
+            }
+        });
+        return;
+    }
+    // настройки: стриминг длинной диктовки (Phase-24)
+    if id == ID_STREAMING {
+        APP.with(|c| {
+            if let Some(a) = c.borrow_mut().as_mut() {
+                a.config.voice_streaming = !a.config.voice_streaming;
                 a.config.save(hwnd); // персист флага
             }
         });

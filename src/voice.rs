@@ -1,5 +1,5 @@
 // FILE: src/voice.rs
-// VERSION: 1.3.0
+// VERSION: 1.4.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Оркестрация голосового ввода: стейт-машина idle->recording->transcribing, спавн worker-потока распознавания, доставка текста в UI.
 //   SCOPE: VoiceState/VoiceEvent + чистая next_state; Voice (toggle: старт/стоп записи + спавн worker stt->transform; on_done; state; set_always_on). Worker шлёт текст в UI через PostMessage(WM_APP_VOICE_DONE).
@@ -23,10 +23,16 @@
 //   Voice::level         - текущий уровень микрофона активного источника (для индикатора-полосы)
 //   cue_start/cue_end    - короткие тоны старта/конца диктовки (Beep, в фоне)
 //   vlog                 - диагностический лог голосового ввода (%APPDATA%\claudebar\voice.log)
+//   Voice::stream_tick   - стрим-заход по таймеру: срез окна -> фон transcribe_segments -> WM_APP_STREAM_PARTIAL (Phase-24)
+//   Voice::on_partial    - приём сегментов: committed_segs -> фикс + сдвиг окна по end-тайму (Phase-24)
+//   WM_APP_STREAM_PARTIAL - оконное сообщение стрим-worker -> UI (lparam = id сегментов в реестре) — Phase-24
+//   stash_partial/take_partial - реестр сегментов стрим-захода по id
+//   StreamState          - состояние стриминга: committed_text, window_start(сэмплы), prev_texts, rate
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.3.0 - fix(grace-fix, FPF D-13/D-14): (D-13) воркер оборачивает stt/transform в catch_unwind — паника (panic=unwind) не оставляет UI в Transcribing, текст постится всегда; watchdog в poll (transcribe_start + TRANSCRIBE_TIMEOUT_SECS=150) возвращает зависшую Transcribing в Idle. (D-14) set_always_on -> bool: тоггл «микрофон всегда вкл» во время записи не применяется и НЕ меняет конфиг (ini/галочка не разъезжаются с реальностью).
+//   LAST_CHANGE: v1.4.0 - Phase-24 step-5 (стриминг, вариант A): StreamState + stream_tick (срез окна [window_start..now] -> фон transcribe_segments -> WM_APP_STREAM_PARTIAL, троттлинг STREAM_TICK_SECS, без наложения) + on_partial (committed_segs LocalAgreement-2 -> committed_text + сдвиг window_start по end-тайму сегмента × rate). stop_to_transcribe: при streaming отдаёт хвост+committed (prefix) в spawn_worker (merge_committed+process на стопе, разом). Реестр stash_partial/take_partial. Только при voice_streaming; иначе legacy. Сброс stream в on_done/watchdog.
+//   v1.3.0 - fix(grace-fix, FPF D-13/D-14): (D-13) воркер оборачивает stt/transform в catch_unwind — паника (panic=unwind) не оставляет UI в Transcribing, текст постится всегда; watchdog в poll (transcribe_start + TRANSCRIBE_TIMEOUT_SECS=150) возвращает зависшую Transcribing в Idle. (D-14) set_always_on -> bool: тоггл «микрофон всегда вкл» во время записи не применяется и НЕ меняет конфиг (ini/галочка не разъезжаются с реальностью).
 //   v1.2.1 - fix(grace-fix, audit #3): worker->UI отдаёт текст через id-реестр (stash_result/take_result), а не Box::into_raw в lparam. Раньше обработчик WM_APP_VOICE_DONE безусловно разыменовывал lparam как *mut String -> любой процесс мог послать мусор -> UB/порча кучи. Теперь мусорный id -> None. Тест stash_take_result_roundtrip_and_unknown_none.
 //   v1.2.0 - Phase-22: always-on микрофон + pre-roll. Voice держит Option<Mic>; set_always_on(on) стартует/дропает персистентный Mic (только на Idle). toggle/stop/poll/level ветвятся: при Mic -> arm/disarm_take (тёплый поток, pre-roll, первое слово не теряется), иначе legacy Recorder (cold-start). Галочка деф. ВЫКЛ (M-CONFIG voice_always_on).
 //   v1.1.0 - Phase-19 доводка: авто-стоп по тишине (poll: 2с после речи / 8с без речи), короткие тоны старта/конца (Beep, в фоне), уровень микрофона (level), диагностический лог (vlog в voice.log). Подтверждено рабочим; валил поведенческий AV (Касперский), не баг.
@@ -78,10 +84,31 @@ pub fn take_result(id: u64) -> Option<String> {
     results().lock().unwrap_or_else(|e| e.into_inner()).remove(&id)
 }
 
+// Сообщение «частичное распознавание готово» (стрим-заход): lparam = id сегментов в реестре ниже (Phase-24).
+pub const WM_APP_STREAM_PARTIAL: u32 = WM_APP + 3;
+
+// Реестр частичных результатов стрим-захода (Vec<Segment>) worker->UI по id — как результаты, но сегменты.
+static NEXT_PARTIAL_ID: AtomicU64 = AtomicU64::new(1);
+fn partials() -> &'static Mutex<HashMap<u64, Vec<crate::stt::Segment>>> {
+    static P: OnceLock<Mutex<HashMap<u64, Vec<crate::stt::Segment>>>> = OnceLock::new();
+    P.get_or_init(|| Mutex::new(HashMap::new()))
+}
+pub fn stash_partial(segs: Vec<crate::stt::Segment>) -> u64 {
+    let id = NEXT_PARTIAL_ID.fetch_add(1, Ordering::Relaxed);
+    partials().lock().unwrap_or_else(|e| e.into_inner()).insert(id, segs);
+    id
+}
+pub fn take_partial(id: u64) -> Option<Vec<crate::stt::Segment>> {
+    partials().lock().unwrap_or_else(|e| e.into_inner()).remove(&id)
+}
+
 // Авто-стоп записи по молчанию (чтобы не писать часами, если забыл выключить).
 const SILENCE_STOP_SECS: f32 = 2.0; // была речь -> стоп после стольких секунд тишины
 const NO_SPEECH_CAP_SECS: f32 = 8.0; // речи вообще не было -> стоп через столько
 const TRANSCRIBE_TIMEOUT_SECS: f32 = 150.0; // watchdog: зависшая Transcribing (паника воркера/отказ Post) -> Idle (D-13)
+const STREAM_TICK_SECS: f32 = 3.0; // не чаще этого — стрим-заход (Phase-24)
+const STREAM_MARGIN_SEGS: usize = 1; // держать последний сегмент незафиксированным (плавающий хвост)
+const STREAM_MIN_NEW_SECS: f32 = 1.0; // не гонять заход, если нового аудио меньше секунды
 
 // Короткие тоны старта/конца диктовки (70мс; старт выше, конец ниже). В фоне — Beep блокирует на длительность.
 pub fn cue_start() {
@@ -149,16 +176,27 @@ pub fn next_state(cur: VoiceState, ev: VoiceEvent) -> VoiceState {
 //   SIDE_EFFECTS: владеет аудио-потоком в Recording
 //   LINKS: M-MAIN (владелец в App, дёргает по WM_HOTKEY/WM_APP_VOICE_DONE)
 // END_CONTRACT: Voice
+// Состояние стриминг-диктовки (Phase-24 вариант A): накопленный committed + скользящее окно по сэмплам.
+struct StreamState {
+    committed_text: String,  // уже зафиксированный текст (сырой, из сегментов)
+    window_start: usize,     // сэмпл-начало текущего окна (сдвигается по end-тайму сегмента)
+    prev_texts: Vec<String>, // тексты сегментов прошлого захода (LocalAgreement-2)
+    rate: u32,               // частота источника (сэмплов/с)
+    last_tick: Instant,      // время последнего захода (троттлинг)
+    in_flight: bool,         // заход в фоне -> не пускать второй
+}
+
 pub struct Voice {
     state: VoiceState,
     rec: Option<crate::audio::Recorder>, // разовый захват (always-on ВЫКЛ): поток создаётся/дропается на запись
     mic: Option<crate::audio::Mic>, // персистентный always-on захват (always-on ВКЛ) — Phase-22
     transcribe_start: Option<Instant>, // когда вошли в Transcribing — watchdog зависшей транскрибации (D-13)
+    stream: Option<StreamState>, // стриминг-диктовка (Phase-24), None вне стриминга
 }
 
 impl Default for Voice {
     fn default() -> Self {
-        Voice { state: VoiceState::Idle, rec: None, mic: None, transcribe_start: None }
+        Voice { state: VoiceState::Idle, rec: None, mic: None, transcribe_start: None, stream: None }
     }
 }
 
@@ -242,23 +280,61 @@ impl Voice {
         }
     }
 
+    // Активный источник записи: аксессоры (Mic приоритетен над разовым Recorder) — Phase-24.
+    fn src_rate(&self) -> Option<u32> {
+        if let Some(m) = &self.mic {
+            Some(m.rate())
+        } else {
+            self.rec.as_ref().map(|r| r.rate())
+        }
+    }
+    fn src_samples_len(&self) -> Option<usize> {
+        if let Some(m) = &self.mic {
+            Some(m.samples_len())
+        } else {
+            self.rec.as_ref().map(|r| r.samples_len())
+        }
+    }
+    fn src_snapshot_from(&self, start: usize) -> Option<Vec<u8>> {
+        if let Some(m) = &self.mic {
+            Some(m.snapshot_from(start))
+        } else {
+            self.rec.as_ref().map(|r| r.snapshot_from(start))
+        }
+    }
+    // Завершить запись, вернуть полный WAV (Mic disarm / Recorder stop); None если источника нет.
+    fn stop_source(&mut self) -> Option<Vec<u8>> {
+        if let Some(m) = &self.mic {
+            Some(m.disarm_take())
+        } else {
+            self.rec.take().map(|r| r.stop())
+        }
+    }
+
     // START_BLOCK_STOP_REC
     // Остановить запись и запустить распознавание (по хоткею или авто-стопу по тишине).
     fn stop_to_transcribe(&mut self, hwnd: HWND, cfg: &crate::config::Config, why: &str) {
-        // always-on: забрать WAV (pre-roll+live) у Mic, поток остаётся жив; иначе остановить разовый Recorder.
-        let wav = if let Some(mic) = &self.mic {
-            mic.disarm_take()
-        } else if let Some(rec) = self.rec.take() {
-            rec.stop()
+        // стриминг (Phase-24): хвост от window_start + накопленный committed; иначе весь WAV, без префикса.
+        let (wav, prefix) = if cfg.voice_streaming && self.stream.is_some() {
+            let st = self.stream.take().unwrap();
+            let tail = self.src_snapshot_from(st.window_start).unwrap_or_default();
+            let _ = self.stop_source(); // завершить запись; полный WAV не нужен (есть committed + tail)
+            (tail, st.committed_text)
         } else {
-            self.state = VoiceState::Idle;
-            vlog("stop: нет источника записи -> Idle");
-            return;
+            self.stream = None;
+            match self.stop_source() {
+                Some(w) => (w, String::new()),
+                None => {
+                    self.state = VoiceState::Idle;
+                    vlog("stop: нет источника записи -> Idle");
+                    return;
+                }
+            }
         };
         self.state = next_state(self.state, VoiceEvent::Toggle); // -> Transcribing
         self.transcribe_start = Some(Instant::now()); // watchdog отсчёт (D-13)
-        vlog(&format!("stop ({why}): Recording -> Transcribing (wav {} байт)", wav.len()));
-        self.spawn_worker(hwnd, cfg, wav);
+        vlog(&format!("stop ({why}): -> Transcribing (wav {} байт, committed {} симв)", wav.len(), prefix.chars().count()));
+        self.spawn_worker(hwnd, cfg, wav, prefix);
     }
     // END_BLOCK_STOP_REC
 
@@ -271,6 +347,7 @@ impl Voice {
                 vlog("poll: Transcribing watchdog timeout -> Idle");
                 self.state = VoiceState::Idle;
                 self.transcribe_start = None;
+                self.stream = None; // сброс стриминга (Phase-24)
                 return true;
             }
             return false;
@@ -302,11 +379,13 @@ impl Voice {
     pub fn on_done(&mut self) {
         self.state = next_state(self.state, VoiceEvent::Done);
         self.transcribe_start = None; // watchdog сброшен (D-13)
+        self.stream = None; // сброс стриминга к следующей диктовке (Phase-24)
     }
 
     // START_BLOCK_SPAWN_WORKER
     // Распознать WAV в фоне (M-STT -> M-TRANSFORM) и отдать текст в UI через PostMessage.
-    fn spawn_worker(&self, hwnd: HWND, cfg: &crate::config::Config, wav: Vec<u8>) {
+    // prefix — уже зафиксированный стриминг-текст (Phase-24); wav — хвост (стрим) или весь WAV (legacy, prefix="").
+    fn spawn_worker(&self, hwnd: HWND, cfg: &crate::config::Config, wav: Vec<u8>, prefix: String) {
         let url = cfg.whisper_url.clone();
         let lang = cfg.voice_language.clone();
         let hot = cfg.hotwords.clone();
@@ -314,26 +393,26 @@ impl Voice {
         let vocab = crate::config::parse_vocab(&cfg.vocab);
         let trail = cfg.voice_trailing_space; // хвостовой пробел после фразы — Phase-23
         let hwnd_i = hwnd.0 as isize; // HWND !Send -> переносим как isize
-        vlog(&format!("worker: POST {url} (wav {} байт, lang={lang})", wav.len()));
+        vlog(&format!("worker: POST {url} (wav {} байт, lang={lang}, prefix {} симв)", wav.len(), prefix.chars().count()));
         std::thread::spawn(move || {
             // D-13: паника stt/transform (panic=unwind) не должна молча убить воркер —
-            // ловим, отдаём пустой текст, но ВСЕГДА постим (иначе UI застрянет в Transcribing).
+            // ловим, но ВСЕГДА постим (иначе UI застрянет в Transcribing). При панике отдаём хотя бы committed.
             let text = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                match crate::stt::transcribe(&url, &wav, &lang, &hot, &prompt) {
-                    Ok(t) => {
-                        let out = crate::transform::process(&t, &vocab, trail);
-                        vlog(&format!("worker: STT ok, raw={:?} -> out={:?}", t, out));
-                        out
-                    }
+                let tail = match crate::stt::transcribe(&url, &wav, &lang, &hot, &prompt) {
+                    Ok(t) => t,
                     Err(e) => {
                         vlog(&format!("worker: STT FAILED: {e}"));
                         String::new()
                     }
-                }
+                };
+                let full = crate::transform::merge_committed(&prefix, &tail); // prefix="" -> просто tail (legacy)
+                let out = crate::transform::process(&full, &vocab, trail);
+                vlog(&format!("worker: tail={:?} -> out={:?}", tail, out));
+                out
             }))
             .unwrap_or_else(|_| {
-                vlog("worker: PANIC перехвачена -> пустой текст (D-13)");
-                String::new()
+                vlog("worker: PANIC перехвачена -> committed без хвоста (D-13)");
+                crate::transform::process(&prefix, &vocab, trail)
             });
             let id = stash_result(text); // реестр id вместо сырого указателя в lparam (audit #3)
             unsafe {
@@ -347,6 +426,81 @@ impl Voice {
         });
     }
     // END_BLOCK_SPAWN_WORKER
+
+    // START_BLOCK_STREAM
+    // Стрим-заход (Phase-24 вариант A): из таймера при Recording+voice_streaming. Снимает срез окна
+    // [window_start..now], в фоне распознаёт с сегментами, шлёт WM_APP_STREAM_PARTIAL. Троттлинг + без наложения.
+    pub fn stream_tick(&mut self, hwnd: HWND, cfg: &crate::config::Config) {
+        if self.state != VoiceState::Recording || !cfg.voice_streaming {
+            return;
+        }
+        let Some(rate) = self.src_rate() else { return };
+        if self.stream.is_none() {
+            // первый тик только инициализирует состояние (дать аудио накопиться)
+            self.stream = Some(StreamState {
+                committed_text: String::new(),
+                window_start: 0,
+                prev_texts: Vec::new(),
+                rate,
+                last_tick: Instant::now(),
+                in_flight: false,
+            });
+            return;
+        }
+        let (in_flight, elapsed, window_start) = {
+            let st = self.stream.as_ref().unwrap();
+            (st.in_flight, st.last_tick.elapsed().as_secs_f32(), st.window_start)
+        };
+        if in_flight || elapsed < STREAM_TICK_SECS {
+            return;
+        }
+        let Some(total) = self.src_samples_len() else { return };
+        if ((total.saturating_sub(window_start)) as f32) < STREAM_MIN_NEW_SECS * rate as f32 {
+            return; // мало нового аудио с прошлого захода
+        }
+        let Some(wav) = self.src_snapshot_from(window_start) else { return };
+        if let Some(st) = self.stream.as_mut() {
+            st.in_flight = true;
+            st.last_tick = Instant::now();
+        }
+        let (url, lang, hot, prompt) =
+            (cfg.whisper_url.clone(), cfg.voice_language.clone(), cfg.hotwords.clone(), cfg.initial_prompt.clone());
+        let hwnd_i = hwnd.0 as isize;
+        std::thread::spawn(move || {
+            let segs = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::stt::transcribe_segments(&url, &wav, &lang, &hot, &prompt).map(|(_, s)| s).unwrap_or_default()
+            }))
+            .unwrap_or_default();
+            let id = stash_partial(segs);
+            unsafe {
+                let _ = PostMessageW(HWND(hwnd_i as *mut core::ffi::c_void), WM_APP_STREAM_PARTIAL, WPARAM(0), LPARAM(id as isize));
+            }
+        });
+    }
+
+    // Приём частичного распознавания (LocalAgreement-2): зафиксировать устоявшиеся сегменты, сдвинуть окно.
+    pub fn on_partial(&mut self, id: u64) {
+        let segs = take_partial(id).unwrap_or_default();
+        let recording = self.state == VoiceState::Recording;
+        let Some(st) = self.stream.as_mut() else { return };
+        st.in_flight = false;
+        if !recording {
+            return; // остановились/сменили состояние -> partial неактуален
+        }
+        let cur: Vec<String> = segs.iter().map(|s| s.text.clone()).collect();
+        let n = crate::transform::committed_segs(&st.prev_texts, &cur, STREAM_MARGIN_SEGS);
+        if n > 0 {
+            let piece: String = segs[..n].iter().map(|s| s.text.as_str()).collect();
+            st.committed_text = crate::transform::merge_committed(&st.committed_text, &piece);
+            let advance = (segs[n - 1].end.max(0.0) * st.rate as f32).round() as usize;
+            st.window_start += advance;
+            st.prev_texts = cur[n..].to_vec();
+            vlog(&format!("on_partial: +{n} сегм, committed={:?}, window_start={}", st.committed_text, st.window_start));
+        } else {
+            st.prev_texts = cur;
+        }
+    }
+    // END_BLOCK_STREAM
 }
 
 #[cfg(test)]

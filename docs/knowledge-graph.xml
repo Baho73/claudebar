@@ -258,6 +258,9 @@
       <verification-ref>V-M-STT</verification-ref>
       <annotations>
         <fn-transcribe PURPOSE="POST multipart WAV на /transcribe (TcpStream) -&gt; текст; ошибка соединения -&gt; Err без краха" />
+        <fn-transcribe_segments PURPOSE="POST WAV -&gt; (текст, Vec&lt;Segment&gt;{start,end,text}) для стриминга — Phase-24 вариант A" />
+        <fn-parse_segments PURPOSE="Чистое: JSON ответа -&gt; Vec&lt;Segment&gt; (нет поля/битый -&gt; пусто)" />
+        <type-Segment PURPOSE="Сегмент распознавания с таймингами {start,end,text} — сдвиг стриминг-окна по end-тайму" />
         <fn-build_multipart PURPOSE="Чистое: boundary+поля+WAV -&gt; тело multipart/form-data — тестируемо" />
         <fn-parse_text PURPOSE="Чистое: JSON ответа -&gt; text (serde_json; пусто/ошибка -&gt; None)" />
         <fn-parse_url PURPOSE="Чистое: http://host:port/path -&gt; (host, port, path) для TcpStream" />
@@ -273,7 +276,7 @@
         <fn-clean_whisper PURPOSE="Чистое: trim, схлопывание пробелов/повторов, выкидывание известных галлюцинаций Whisper (список-константа)" />
         <fn-apply_vocab PURPOSE="Чистое: пост-замена по словарю wrong-&gt;right (регистронезависимо, по словам) — кастомный словарь" />
         <fn-process PURPOSE="Чистое: clean_whisper -&gt; apply_vocab; при trailing_space и непустом результате — хвостовой пробел (диктовка не липнет к точке) — Phase-23" />
-        <fn-stable_prefix PURPOSE="Чистое: общий устоявшийся префикс двух распознаваний по словам (prev∩cur минус последние margin_words плавающего хвоста) — LocalAgreement стриминга — Phase-24" />
+        <fn-committed_segs PURPOSE="Чистое: сколько ведущих сегментов зафиксировать (LocalAgreement-2 по совпадению текста с прошлой гипотезой, минус margin последних) — стриминг Phase-24 вариант A" />
         <fn-merge_committed PURPOSE="Чистое: склейка зафиксированного текста и хвоста без дублей/двойных пробелов на стыке — Phase-24" />
       </annotations>
     </M-TRANSFORM>

@@ -1,8 +1,8 @@
 // FILE: src/stt.rs
-// VERSION: 1.0.0
+// VERSION: 1.1.0
 // START_MODULE_CONTRACT
-//   PURPOSE: Синхронное распознавание речи: POST WAV на whisper-dictate /transcribe (localhost http через std::net), разбор {"text"}.
-//   SCOPE: transcribe (TcpStream POST multipart, чтение ответа); чистые build_multipart / parse_text / parse_url.
+//   PURPOSE: Синхронное распознавание речи: POST WAV на whisper-dictate /transcribe (localhost http через std::net), разбор {"text","segments"}.
+//   SCOPE: transcribe (текст) / transcribe_segments (текст+сегменты с таймингами, Phase-24) поверх общего request; чистые build_multipart / parse_text / parse_segments / parse_url.
 //   DEPENDS: none (URL/язык/словарь приходят параметрами из M-CONFIG; JSON через serde_json)
 //   LINKS: M-STT
 //   ROLE: RUNTIME
@@ -10,14 +10,19 @@
 // END_MODULE_CONTRACT
 //
 // START_MODULE_MAP
-//   transcribe       - POST WAV на /transcribe (TcpStream) -> распознанный текст или Err
+//   request          - приват: POST WAV на /transcribe (TcpStream) -> тело ответа или Err
+//   transcribe       - текст (legacy-путь) поверх request
+//   transcribe_segments - (текст, Vec<Segment>) для стриминга (Phase-24 вариант A)
+//   Segment          - сегмент {start,end,text} с таймингами
 //   build_multipart  - чистое: текстовые поля + файл -> тело multipart/form-data (байты)
 //   parse_text       - чистое: JSON ответа -> Option<text> (serde_json)
+//   parse_segments   - чистое: JSON ответа -> Vec<Segment> (Phase-24)
 //   parse_url        - чистое: http://host:port/path -> (host, port, path)
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.0.0 - Phase-18 step-3: клиент whisper-dictate. Синхронный POST multipart WAV через
+//   LAST_CHANGE: v1.1.0 - Phase-24 step-4 (вариант A): transcribe_segments -> (текст, Vec<Segment>{start,end,text}); чистая parse_segments; общий request (transcribe/transcribe_segments — тонкие обёртки). Сервер /transcribe отдаёт "segments" (сырой текст). Тест parse_segments_extracts.
+//   v1.0.0 - Phase-18 step-3: клиент whisper-dictate. Синхронный POST multipart WAV через
 //                std::net::TcpStream (без HTTP-крейта, как M-SDAEMON); чистые build_multipart/parse_text/parse_url.
 //                Опц. поля hotwords/initial_prompt шлются только если непусты (модель по умолчанию их не держит).
 // END_CHANGE_SUMMARY
@@ -25,6 +30,14 @@
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
+
+// Сегмент распознавания с таймингами (Phase-24 вариант A): сдвиг стриминг-окна по end-тайму.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Segment {
+    pub start: f32,
+    pub end: f32,
+    pub text: String,
+}
 
 // START_CONTRACT: parse_url
 //   PURPOSE: Разобрать http-URL на (host, port, path) для TcpStream.
@@ -85,14 +98,43 @@ pub fn parse_text(body: &str) -> Option<String> {
     v.get("text")?.as_str().map(|s| s.to_string())
 }
 
-// START_CONTRACT: transcribe
-//   PURPOSE: Распознать WAV через whisper-dictate /transcribe (синхронно).
+// START_CONTRACT: parse_segments
+//   PURPOSE: Извлечь сегменты {start,end,text} из JSON ответа (Phase-24 вариант A). Нет поля -> пусто.
+//   INPUTS: { body: &str - тело ответа }
+//   OUTPUTS: { Vec<Segment> - сегменты по порядку (пусто при отсутствии/битом JSON) }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: parse_segments
+pub fn parse_segments(body: &str) -> Vec<Segment> {
+    let (Some(start), Some(end)) = (body.find('{'), body.rfind('}')) else {
+        return Vec::new();
+    };
+    if end < start {
+        return Vec::new();
+    }
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&body[start..=end]) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.get("segments").and_then(|s| s.as_array()) else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|s| {
+            Some(Segment {
+                start: s.get("start")?.as_f64()? as f32,
+                end: s.get("end")?.as_f64()? as f32,
+                text: s.get("text")?.as_str()?.to_string(),
+            })
+        })
+        .collect()
+}
+
+// START_CONTRACT: request
+//   PURPOSE: POST WAV на whisper-dictate /transcribe (синхронно), вернуть тело ответа (JSON).
 //   INPUTS: { url: &str; wav: &[u8]; language: &str; hotwords: &str; initial_prompt: &str }
-//   OUTPUTS: { Result<String, String> - текст или код ошибки (CONNECT_FAILED/HTTP_ERROR/PARSE_FAILED/...) }
+//   OUTPUTS: { Result<String, String> - тело ответа или код ошибки (CONNECT_FAILED/HTTP_ERROR/...) }
 //   SIDE_EFFECTS: TCP-соединение на localhost (POST), чтение ответа до закрытия
-//   LINKS: M-STT, M-VOICE (вызывается в worker-потоке)
-// END_CONTRACT: transcribe
-pub fn transcribe(url: &str, wav: &[u8], language: &str, hotwords: &str, initial_prompt: &str) -> Result<String, String> {
+// END_CONTRACT: request
+fn request(url: &str, wav: &[u8], language: &str, hotwords: &str, initial_prompt: &str) -> Result<String, String> {
     // START_BLOCK_CONNECT
     let (host, port, path) = parse_url(url).ok_or("BAD_URL")?;
     let addr = format!("{host}:{port}");
@@ -135,8 +177,39 @@ pub fn transcribe(url: &str, wav: &[u8], language: &str, hotwords: &str, initial
     if !status_ok {
         return Err(format!("HTTP_ERROR: {}", text.lines().next().unwrap_or("")));
     }
-    parse_text(resp_body).ok_or_else(|| "PARSE_FAILED".to_string())
+    Ok(resp_body.to_string())
     // END_BLOCK_READ
+}
+
+// START_CONTRACT: transcribe
+//   PURPOSE: Распознать WAV -> текст (legacy-путь, без сегментов).
+//   INPUTS: { url: &str; wav: &[u8]; language: &str; hotwords: &str; initial_prompt: &str }
+//   OUTPUTS: { Result<String, String> - текст или код ошибки }
+//   SIDE_EFFECTS: TCP POST (через request)
+//   LINKS: M-STT, M-VOICE (worker-поток, не-стриминг)
+// END_CONTRACT: transcribe
+pub fn transcribe(url: &str, wav: &[u8], language: &str, hotwords: &str, initial_prompt: &str) -> Result<String, String> {
+    let body = request(url, wav, language, hotwords, initial_prompt)?;
+    parse_text(&body).ok_or_else(|| "PARSE_FAILED".to_string())
+}
+
+// START_CONTRACT: transcribe_segments
+//   PURPOSE: Распознать WAV -> (текст, сегменты с таймингами) для стриминга (Phase-24 вариант A).
+//   INPUTS: { url: &str; wav: &[u8]; language: &str; hotwords: &str; initial_prompt: &str }
+//   OUTPUTS: { Result<(String, Vec<Segment>), String> - текст + сегменты или код ошибки }
+//   SIDE_EFFECTS: TCP POST (через request)
+//   LINKS: M-STT, M-VOICE (стрим-заход)
+// END_CONTRACT: transcribe_segments
+pub fn transcribe_segments(
+    url: &str,
+    wav: &[u8],
+    language: &str,
+    hotwords: &str,
+    initial_prompt: &str,
+) -> Result<(String, Vec<Segment>), String> {
+    let body = request(url, wav, language, hotwords, initial_prompt)?;
+    let text = parse_text(&body).ok_or_else(|| "PARSE_FAILED".to_string())?;
+    Ok((text, parse_segments(&body)))
 }
 
 #[cfg(test)]
@@ -162,6 +235,17 @@ mod tests {
         assert_eq!(parse_text("{}"), None);
         assert_eq!(parse_text(""), None);
         assert_eq!(parse_text("не json"), None);
+    }
+
+    #[test]
+    fn parse_segments_extracts() {
+        let body = r#"{"text":"привет мир","duration":2.0,"segments":[{"start":0.0,"end":1.2,"text":"привет "},{"start":1.2,"end":2.0,"text":"мир"}]}"#;
+        let segs = parse_segments(body);
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].text, "привет ");
+        assert!((segs[1].end - 2.0).abs() < 1e-6);
+        assert!(parse_segments(r#"{"text":"x"}"#).is_empty()); // нет поля segments
+        assert!(parse_segments("не json").is_empty());
     }
 
     #[test]

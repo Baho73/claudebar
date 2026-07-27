@@ -138,6 +138,11 @@ impl Recorder {
         self.buf.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
+    // Частота дискретизации (сэмплов/с) — для перевода end-тайма сегмента в сэмплы окна (Phase-24).
+    pub fn rate(&self) -> u32 {
+        self.rate
+    }
+
     // Снять срез буфера [start..] в WAV БЕЗ остановки записи (стриминг) — Phase-24.
     pub fn snapshot_from(&self, start: usize) -> Vec<u8> {
         wav_slice(&self.buf.lock().unwrap_or_else(|e| e.into_inner()), start, self.rate)
@@ -216,6 +221,11 @@ impl Mic {
     // Число накопленных (armed) сэмплов — для границ скользящего окна стриминга — Phase-24.
     pub fn samples_len(&self) -> usize {
         self.buf.lock().unwrap_or_else(|e| e.into_inner()).samples.len()
+    }
+
+    // Частота дискретизации (сэмплов/с) — для перевода end-тайма сегмента в сэмплы окна (Phase-24).
+    pub fn rate(&self) -> u32 {
+        self.rate
     }
 
     // Снять срез буфера [start..] в WAV БЕЗ остановки записи (поток/armed не трогаем) — Phase-24.

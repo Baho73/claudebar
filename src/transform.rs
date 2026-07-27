@@ -1,8 +1,8 @@
 // FILE: src/transform.rs
-// VERSION: 1.2.0
+// VERSION: 1.2.1
 // START_MODULE_CONTRACT
 //   PURPOSE: Пост-обработка распознанного текста перед вставкой: чистка типового мусора Whisper + кастомный словарь пост-заменой.
-//   SCOPE: clean_whisper (теги в скобках, повторы слов, галлюцинации-предложения, капитализация), apply_vocab (замена по словарю по границе слова, регистронезависимо), process (связка + опц. хвостовой пробел), stable_prefix/merge_committed (стриминг: устоявшийся префикс + склейка). Всё чистое.
+//   SCOPE: clean_whisper (теги в скобках, повторы слов, галлюцинации-предложения, капитализация), apply_vocab (замена по словарю по границе слова, регистронезависимо), process (связка + опц. хвостовой пробел), committed_segs/merge_committed (стриминг: сегментный LocalAgreement + склейка). Всё чистое.
 //   DEPENDS: none
 //   LINKS: M-TRANSFORM
 //   ROLE: RUNTIME
@@ -13,12 +13,13 @@
 //   clean_whisper - чистое: убрать [теги], схлопнуть повторы слов, выкинуть предложения-галлюцинации, капитализировать
 //   apply_vocab   - чистое: замена слов по словарю wrong->right (регистронезависимо, по границе слова)
 //   process       - чистое: clean_whisper -> apply_vocab -> опц. хвостовой пробел
-//   stable_prefix - чистое: устоявшийся общий префикс двух распознаваний (LocalAgreement стриминга)
+//   committed_segs - чистое: сколько ведущих сегментов зафиксировать (LocalAgreement-2 стриминга, Phase-24)
 //   merge_committed - чистое: склейка зафиксированного текста и хвоста одним пробелом
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.2.0 - Phase-24: чистые stable_prefix(prev,cur,margin) (устоявшийся общий префикс окна — LocalAgreement) и merge_committed(fixed,tail) (склейка без двойных пробелов) для стриминг-диктовки. Тесты stable_prefix_commits_agreed_words/merge_committed_no_double_space.
+//   LAST_CHANGE: v1.2.1 - Phase-24 step-5 (вариант A): stable_prefix (word-based) заменён на committed_segs (LocalAgreement-2 по сегментам с сервера — точный сдвиг окна по end-тайму). merge_committed без изменений. Тест committed_segs_local_agreement.
+//   v1.2.0 - Phase-24: чистые stable_prefix(prev,cur,margin) (устоявшийся общий префикс окна — LocalAgreement) и merge_committed(fixed,tail) (склейка без двойных пробелов) для стриминг-диктовки. Тесты stable_prefix_commits_agreed_words/merge_committed_no_double_space.
 //   v1.1.0 - Phase-23: process += trailing_space (опц. хвостовой пробел, чтобы следующая вставка диктовки не липла к точке). M-VOICE worker передаёт cfg.voice_trailing_space.
 //   v1.0.0 - Phase-18 step-4: чистка вывода Whisper (список галлюцинаций на тишине/шуме,
 //                повторы, скобочные теги, капитализация) + словарь пост-замены (модель не держит hotwords,
@@ -187,26 +188,21 @@ pub fn process(text: &str, vocab: &[(String, String)], trailing_space: bool) -> 
     }
 }
 
-// START_CONTRACT: stable_prefix
-//   PURPOSE: Устоявшийся общий префикс двух последовательных распознаваний окна (LocalAgreement): слова, совпавшие
-//            в prev и cur с начала, за вычетом последних margin_words плавающего хвоста cur (страховка от дрейфа).
-//   INPUTS: { prev: &str - прошлое распознавание; cur: &str - текущее; margin_words: usize - запас хвоста }
-//   OUTPUTS: { String - зафиксированный префикс (слова через пробел); "" если ничего не устоялось }
+// START_CONTRACT: committed_segs
+//   PURPOSE: Сколько ведущих сегментов зафиксировать (LocalAgreement-2, Phase-24 вариант A): сегменты, чей текст
+//            совпал с прошлой гипотезой на той же позиции, за вычетом margin последних (плавающий хвост окна).
+//   INPUTS: { prev: &[String] - тексты сегментов прошлого захода; cur: &[String] - текущего; margin: usize }
+//   OUTPUTS: { usize - число ведущих сегментов cur к фиксации (0..=cur.len().saturating_sub(margin)) }
 //   SIDE_EFFECTS: none
-//   LINKS: M-VOICE (накопление committed_text при стриминге)
-// END_CONTRACT: stable_prefix
-pub fn stable_prefix(prev: &str, cur: &str, margin_words: usize) -> String {
-    let pw: Vec<&str> = prev.split_whitespace().collect();
-    let cw: Vec<&str> = cur.split_whitespace().collect();
-    // длина общего префикса по словам
-    let mut common = 0;
-    while common < pw.len() && common < cw.len() && pw[common] == cw[common] {
-        common += 1;
+//   LINKS: M-VOICE (накопление committed_text + сдвиг окна по end-тайму последнего зафиксированного сегмента)
+// END_CONTRACT: committed_segs
+pub fn committed_segs(prev: &[String], cur: &[String], margin: usize) -> usize {
+    let mut agreed = 0;
+    while agreed < prev.len() && agreed < cur.len() && prev[agreed] == cur[agreed] {
+        agreed += 1;
     }
-    // не фиксировать слова из последних margin_words позиций cur (близко к концу окна -> ещё нестабильны)
-    let limit = cw.len().saturating_sub(margin_words);
-    let take = common.min(limit);
-    cw[..take].join(" ")
+    // держим margin последних сегментов cur незафиксированными (у конца окна текст ещё дрейфует)
+    agreed.min(cur.len().saturating_sub(margin))
 }
 
 // START_CONTRACT: merge_committed
@@ -285,20 +281,20 @@ mod tests {
     }
 
     #[test]
-    fn stable_prefix_commits_agreed_words() {
-        // общий префикс «Первое предложение.» устоялся; хвост «Втор»/«Второе» ещё плавает
-        assert_eq!(
-            stable_prefix("Первое предложение. Втор", "Первое предложение. Второе и", 1),
-            "Первое предложение."
-        );
-        // расхождение с первого слова -> ничего не фиксируем
-        assert_eq!(stable_prefix("Абв где", "Ххх где", 0), "");
-        // prev пустой -> нечего сравнивать
-        assert_eq!(stable_prefix("", "Первое второе", 1), "");
-        // margin съедает весь общий префикс -> ""
-        assert_eq!(stable_prefix("раз два", "раз два", 3), "");
-        // margin=0, полное совпадение -> весь текст
-        assert_eq!(stable_prefix("раз два три", "раз два три", 0), "раз два три");
+    fn committed_segs_local_agreement() {
+        let v = |xs: &[&str]| -> Vec<String> { xs.iter().map(|s| s.to_string()).collect() };
+        // «a»,«b» совпали с прошлым заходом; последний сегмент держим (margin=1)
+        assert_eq!(committed_segs(&v(&["a", "b", "c"]), &v(&["a", "b", "x"]), 1), 2);
+        // cur длиннее (дописался новый сегмент) — фиксируем совпавшие минус margin
+        assert_eq!(committed_segs(&v(&["a", "b"]), &v(&["a", "b", "c"]), 1), 2);
+        // расхождение с первого сегмента -> 0
+        assert_eq!(committed_segs(&v(&["x"]), &v(&["a", "b"]), 1), 0);
+        // prev пуст -> 0
+        assert_eq!(committed_segs(&[], &v(&["a"]), 1), 0);
+        // margin держит последний даже при полном совпадении
+        assert_eq!(committed_segs(&v(&["a"]), &v(&["a"]), 1), 0);
+        // margin=0, полное совпадение -> все
+        assert_eq!(committed_segs(&v(&["a", "b"]), &v(&["a", "b"]), 0), 2);
     }
 
     #[test]
