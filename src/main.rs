@@ -127,8 +127,6 @@ pub(crate) struct App {
     pub(crate) bell_paths: HashSet<String>, // полные cwd со «звоночком» (lower) — точная подсветка по пути (Phase-15)
     pub(crate) busy: HashSet<String>, // имена проектов с активным .busy (lower) — бегущие точки (fallback) — Phase-17
     pub(crate) busy_paths: HashSet<String>, // полные cwd с активным .busy (lower) — точные точки по пути — Phase-17
-    pub(crate) busy_sessions: Vec<(String, String)>, // (cwd,key) по КАЖДОЙ рабочей .busy-сессии — синие квадраты (Phase-25)
-    pub(crate) done_sessions: Vec<(String, String)>, // (cwd,key) по КАЖДОЙ завершённой .signal-сессии — золотые квадраты (Phase-25)
     pub(crate) sessions: Vec<signal::Sess>, // живые сессии-агенты (Phase-26 presence): агент + состояние на квадрат
     pub(crate) anim_frame: u32, // кадр анимации бегущих точек — Phase-17
     pub(crate) search_hits: Vec<search::FolderHit>, // папки-совпадения поиска (Phase-12)
@@ -209,8 +207,6 @@ fn refresh_items(app: &mut App) -> bool {
     app.bell_paths = signal::bell_cwds(); // точная подсветка по полному пути (Phase-15)
     app.busy = signal::busy_keys();
     app.busy_paths = signal::busy_cwds(); // бегущие точки «идёт работа» (Phase-17)
-    app.busy_sessions = signal::busy_list(); // по сессии — синие квадраты статуса (Phase-25)
-    app.done_sessions = signal::done_list(); // по сессии — золотые квадраты «готово» (Phase-25)
     app.sessions = signal::sessions(); // Phase-26 presence: агент + состояние (idle/working/done) на квадрат
     numbered
 }
@@ -2008,8 +2004,6 @@ fn main() -> Result<()> {
             bell_paths: HashSet::new(),
             busy: HashSet::new(),
             busy_paths: HashSet::new(),
-            busy_sessions: Vec::new(),
-            done_sessions: Vec::new(),
             sessions: Vec::new(),
             anim_frame: 0,
             search_hits: Vec::new(),

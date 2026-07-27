@@ -1,5 +1,5 @@
 // FILE: src/signal.rs
-// VERSION: 1.5.1
+// VERSION: 1.5.2
 // START_MODULE_CONTRACT
 //   PURPOSE: «Звоночек» завершения ИИ: читать файлы-сигналы из %APPDATA%\claudebar\signals\, отдавать проекты для подсветки, гасить сигнал при фокусе окна проекта.
 //   SCOPE: путь папки сигналов, парсинг .signal (cwd проекта), ключ проекта (basename) + полный cwd, наборы «звенящих» (basename и cwd), сброс по фокусу с матчем по полному пути.
@@ -23,8 +23,6 @@
 //   is_stale          - чистое: устарел ли .busy по mtime (фильтр зависших) — Phase-17
 //   list_ext          - чтение сигналов по расширению (signal|busy) с опц. staleness-фильтром
 //   busy_keys/busy_cwds - наборы проектов с активным .busy (индикатор работы) — Phase-17
-//   busy_list/done_list - списки (cwd,key) по КАЖДОМУ .busy/.signal-файлу (с дублями) — по сессии, Phase-25
-//   count_for_row     - чистое: число сессий из списка на строке (path_within/basename; дубли суммируются; D-06) — Phase-25
 //   parse_agent       - агент из строки agent= файла-сигнала (Phase-26)
 //   Sess/SessState    - живая сессия-агент (cwd, key, agent, state Idle|Working|Done) — Phase-26
 //   sessions          - склейка .alive/.busy/.signal по session-id -> Vec<Sess> (состояние busy>signal>idle) — Phase-26
@@ -33,7 +31,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.5.1 - fix(grace-fix, FPF D-16): .alive читается с TTL ALIVE_STALE_SECS (12ч) — краш/ребут без graceful SessionEnd больше не оставляет вечный фантомный квадрат; busy-хук keep-alive трогает .alive, держа активные сессии свежими.
+//   LAST_CHANGE: v1.5.2 - cleanup(FPF D-27): снос busy_list/done_list/count_for_row (мертвы после Phase-26 — render на sessions(); слэш-покрытие осталось в parse_agent_and_sess_matches_row).
+//   v1.5.1 - fix(grace-fix, FPF D-16): .alive читается с TTL ALIVE_STALE_SECS (12ч) — краш/ребут без graceful SessionEnd больше не оставляет вечный фантомный квадрат; busy-хук keep-alive трогает .alive, держа активные сессии свежими.
 //   v1.5.0 - Phase-26 presence: Signal += agent (parse_agent из строки agent=); тип Sess/SessState + sessions() (склейка .alive присутствие + .busy работает + .signal готово по session-id, состояние busy>signal>idle); sess_matches_row (матч сессии к строке). Для квадратов «на каждого запущенного агента, свой цвет».
 //   v1.4.1 - fix(grace-fix): path_within нормализует слэши (/ -> \). Kimi через Git Bash пишет cwd со слэшами (D:/Python/claudebar), Claude — с бэкслэшами; матч по пути не срабатывал -> квадрат/подсветка сессии Kimi пропадали. Тест count_for_row_normalizes_slashes.
 //   v1.4.0 - Phase-25: посессионные списки busy_list()/done_list() (по одному на .busy/.signal-файл, С дублями) + чистая count_for_row(row_path,row_name,sessions) — сколько сессий на строке (path_within/basename, дубли суммируются, D-06). Для квадратов-статусов терминалов (Claude+Kimi). Тесты count_for_row_*.
@@ -350,44 +349,6 @@ pub fn sess_matches_row(cwd: &str, key: &str, row_path: Option<&str>, row_name: 
     }
 }
 
-// START_CONTRACT: busy_list
-//   PURPOSE: Список (cwd, key) по КАЖДОМУ активному .busy-файлу — по одному на сессию (с дублями), staleness-фильтр. Для подсчёта квадратов-статусов.
-//   INPUTS: {}
-//   OUTPUTS: { Vec<(String, String)> - (cwd lower, basename-key lower) на каждый .busy }
-//   SIDE_EFFECTS: чтение каталога signals
-// END_CONTRACT: busy_list
-pub fn busy_list() -> Vec<(String, String)> {
-    list_busy().into_iter().map(|s| (s.cwd, s.key)).collect()
-}
-
-// START_CONTRACT: done_list
-//   PURPOSE: Список (cwd, key) по КАЖДОМУ активному .signal-файлу — по одному на завершённую сессию (с дублями), без staleness. Для золотых квадратов.
-//   INPUTS: {}
-//   OUTPUTS: { Vec<(String, String)> - (cwd lower, basename-key lower) на каждый .signal }
-//   SIDE_EFFECTS: чтение каталога signals
-// END_CONTRACT: done_list
-pub fn done_list() -> Vec<(String, String)> {
-    list_signals().into_iter().map(|s| (s.cwd, s.key)).collect()
-}
-
-// START_CONTRACT: count_for_row
-//   PURPOSE: Чистое — сколько сессий из списка приходится на строку: путь строки == cwd ИЛИ cwd вложен в путь
-//            (сессия в подпапке), иначе basename == row_name. Дубли суммируются; одноимённые в разных путях НЕ смешиваются (D-06).
-//   INPUTS: { row_path: Option<&str>; row_name: &str; sessions: &[(String, String)] - (cwd lower, key lower) }
-//   OUTPUTS: { usize - число подходящих сессий }
-//   SIDE_EFFECTS: none
-//   LINKS: M-RENDER (квадраты-статусы на строке), M-SIGNAL
-// END_CONTRACT: count_for_row
-pub fn count_for_row(row_path: Option<&str>, row_name: &str, sessions: &[(String, String)]) -> usize {
-    match row_path {
-        Some(p) => sessions.iter().filter(|(cwd, _)| path_within(cwd, p)).count(),
-        None => {
-            let n = row_name.to_lowercase();
-            sessions.iter().filter(|(_, key)| *key == n).count()
-        }
-    }
-}
-
 // START_CONTRACT: reconcile
 //   PURPOSE: Удалить .signal, чьё окно проекта сейчас на переднем плане (сброс по фокусу).
 //   INPUTS: { items: &[WinItem] - открытые окна; fg: HWND - окно в фокусе }
@@ -455,48 +416,6 @@ mod tests {
         // без пути у строки -> fallback на basename
         assert!(row_signaled(None, "doc", &cwds, &keys));
         assert!(!row_signaled(None, "mosco", &cwds, &keys));
-    }
-
-    #[test]
-    fn count_for_row_counts_duplicates() {
-        // две сессии одного проекта = две записи -> счёт 2 (НЕ дедуп)
-        let sessions = vec![
-            ("d:\\python\\hh".to_string(), "hh".to_string()),
-            ("d:\\python\\hh".to_string(), "hh".to_string()),
-            ("d:\\python\\other".to_string(), "other".to_string()),
-        ];
-        assert_eq!(count_for_row(Some("D:\\Python\\hh"), "hh", &sessions), 2); // регистронезависимо
-        assert_eq!(count_for_row(Some("D:\\Python\\other"), "other", &sessions), 1);
-        assert_eq!(count_for_row(Some("D:\\Python\\nope"), "nope", &sessions), 0);
-    }
-
-    #[test]
-    fn count_for_row_subfolder_and_d06() {
-        let sessions = vec![
-            ("d:\\python\\mosco\\doc".to_string(), "doc".to_string()), // сессия в подпапке
-            ("e:\\other\\mosco".to_string(), "mosco".to_string()),     // одноимённый в другом пути
-        ];
-        // строка окна = корень проекта, cwd сессии вложен -> 1; e:\other\mosco НЕ подмешан (D-06)
-        assert_eq!(count_for_row(Some("D:\\Python\\Mosco"), "Mosco", &sessions), 1);
-        // префикс не по границе сегмента не матчит
-        assert_eq!(count_for_row(Some("D:\\Python\\Mos"), "Mos", &sessions), 0);
-        // без пути у строки -> fallback на basename
-        assert_eq!(count_for_row(None, "doc", &sessions), 1);
-        assert_eq!(count_for_row(None, "mosco", &sessions), 1);
-        assert_eq!(count_for_row(None, "nope", &sessions), 0);
-    }
-
-    #[test]
-    fn count_for_row_normalizes_slashes() {
-        // regression: Kimi (через Git Bash) пишет cwd со СЛЭШАМИ "D:/Python/claudebar",
-        // Claude — с бэкслэшами; строка окна с бэкслэшами не матчила forward-slash cwd -> квадрат Kimi пропадал
-        let kimi = vec![("d:/python/claudebar".to_string(), "claudebar".to_string())];
-        assert_eq!(count_for_row(Some("D:\\Python\\claudebar"), "claudebar", &kimi), 1);
-        // подпапка со слэшами тоже матчит родителя-окно
-        let sub = vec![("d:/python/mosco/doc".to_string(), "doc".to_string())];
-        assert_eq!(count_for_row(Some("D:\\Python\\Mosco"), "Mosco", &sub), 1);
-        // D-06 при разных слэшах сохранён
-        assert_eq!(count_for_row(Some("E:\\Python\\claudebar"), "claudebar", &kimi), 0);
     }
 
     #[test]
