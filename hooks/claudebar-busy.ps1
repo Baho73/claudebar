@@ -28,3 +28,8 @@ New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
 $file = Join-Path $dir "$safe.busy"
 [System.IO.File]::WriteAllText($file, $cwd, (New-Object System.Text.UTF8Encoding $false))
+
+# keep-alive presence marker: refresh <session>.alive mtime while the session works, so ClaudeBar's
+# .alive TTL clears only crashed/rebooted sessions, not active ones (D-16).
+$alive = Join-Path $dir "$safe.alive"
+if (Test-Path $alive) { [System.IO.File]::SetLastWriteTimeUtc($alive, [DateTime]::UtcNow) }

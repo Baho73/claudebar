@@ -1,5 +1,5 @@
 // FILE: src/settings.rs
-// VERSION: 1.3.0
+// VERSION: 1.3.1
 // START_MODULE_CONTRACT
 //   PURPOSE: Настройки и сведения панели: нативный выбор шрифта (ChooseFontW); окно «О программе»; включение полных путей в заголовках редакторов (window.title с ${rootPath}).
 //   SCOPE: choose_font (модальный диалог -> (face, size, weight) или None), parse_face (чистое), about_text (чистое), show_about (модальный MessageBox), set_window_title (чистое: правка settings.json без порчи JSONC), configure_editor_titles (бэкап+запись settings.json VS Code/Cursor).
@@ -21,7 +21,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.3.0 - Phase-15 step-5: configure_editor_titles + чистое set_window_title (включение полных путей в заголовках; бэкап, идемпотентно, JSONC-устойчиво).
+//   LAST_CHANGE: v1.3.1 - fix(grace-fix, FPF D-15): ошибка чтения settings.json больше НЕ трактуется как пустой файл (было unwrap_or_default -> backup+write затирали залоченный/не-UTF-8 существующий файл синтезированным window.title). На Err — «ошибка чтения — не тронут», continue.
+//   v1.3.0 - Phase-15 step-5: configure_editor_titles + чистое set_window_title (включение полных путей в заголовках; бэкап, идемпотентно, JSONC-устойчиво).
 //   v1.2.0 - Phase-11: пункт «О программе» в меню ⚙ — окно с версией, Telegram (@IvanPonomarev) и GitHub. about_text (чистое, тестируемо) + show_about (MessageBoxW).
 //   v1.1.0 - fix(grace-fix): choose_font принимает/возвращает вес; lf.lfWeight предзаполняется текущим (стиль больше не сбрасывается); флаги канонические (CF_SCREENFONTS|CF_INITTOLOGFONTSTRUCT).
 //   v1.0.0 - Phase-9 Step 2: новый модуль настроек; выбор шрифта через ChooseFontW.
@@ -197,7 +198,15 @@ pub fn configure_editor_titles() -> Vec<(String, &'static str)> {
             out.push((name.to_string(), "не установлен"));
             continue;
         }
-        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        // D-15: ошибку чтения НЕ трактовать как пустой файл — иначе backup+write затрут
+        // залоченный/не-UTF-8 существующий settings.json синтезированным «window.title».
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => {
+                out.push((name.to_string(), "ошибка чтения — не тронут"));
+                continue;
+            }
+        };
         let status = match set_window_title(&content, EDITOR_TITLE) {
             TitleEdit::Unchanged => "уже настроен",
             TitleEdit::SkipManual => "свой window.title — не тронут",

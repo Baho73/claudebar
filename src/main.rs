@@ -1830,9 +1830,15 @@ fn handle_command(hwnd: HWND, id: usize) {
     if id == ID_MIC_ALWAYS {
         APP.with(|c| {
             if let Some(a) = c.borrow_mut().as_mut() {
-                a.config.voice_always_on = !a.config.voice_always_on;
-                a.config.save(hwnd); // персист флага
-                a.voice.set_always_on(a.config.voice_always_on); // старт/дроп персистентного Mic
+                // D-14: применить сначала; конфиг/галочку менять ТОЛЬКО при успехе (на Idle),
+                // иначе тоггл во время записи разъедет ini и реальность.
+                let want = !a.config.voice_always_on;
+                if a.voice.set_always_on(want) {
+                    a.config.voice_always_on = want;
+                    a.config.save(hwnd); // персист флага
+                } else {
+                    voice::vlog("ID_MIC_ALWAYS: игнор — идёт запись (конфиг не тронут)");
+                }
             }
         });
         return;

@@ -1,5 +1,5 @@
 // FILE: src/signal.rs
-// VERSION: 1.5.0
+// VERSION: 1.5.1
 // START_MODULE_CONTRACT
 //   PURPOSE: «Звоночек» завершения ИИ: читать файлы-сигналы из %APPDATA%\claudebar\signals\, отдавать проекты для подсветки, гасить сигнал при фокусе окна проекта.
 //   SCOPE: путь папки сигналов, парсинг .signal (cwd проекта), ключ проекта (basename) + полный cwd, наборы «звенящих» (basename и cwd), сброс по фокусу с матчем по полному пути.
@@ -33,7 +33,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.5.0 - Phase-26 presence: Signal += agent (parse_agent из строки agent=); тип Sess/SessState + sessions() (склейка .alive присутствие + .busy работает + .signal готово по session-id, состояние busy>signal>idle); sess_matches_row (матч сессии к строке). Для квадратов «на каждого запущенного агента, свой цвет».
+//   LAST_CHANGE: v1.5.1 - fix(grace-fix, FPF D-16): .alive читается с TTL ALIVE_STALE_SECS (12ч) — краш/ребут без graceful SessionEnd больше не оставляет вечный фантомный квадрат; busy-хук keep-alive трогает .alive, держа активные сессии свежими.
+//   v1.5.0 - Phase-26 presence: Signal += agent (parse_agent из строки agent=); тип Sess/SessState + sessions() (склейка .alive присутствие + .busy работает + .signal готово по session-id, состояние busy>signal>idle); sess_matches_row (матч сессии к строке). Для квадратов «на каждого запущенного агента, свой цвет».
 //   v1.4.1 - fix(grace-fix): path_within нормализует слэши (/ -> \). Kimi через Git Bash пишет cwd со слэшами (D:/Python/claudebar), Claude — с бэкслэшами; матч по пути не срабатывал -> квадрат/подсветка сессии Kimi пропадали. Тест count_for_row_normalizes_slashes.
 //   v1.4.0 - Phase-25: посессионные списки busy_list()/done_list() (по одному на .busy/.signal-файл, С дублями) + чистая count_for_row(row_path,row_name,sessions) — сколько сессий на строке (path_within/basename, дубли суммируются, D-06). Для квадратов-статусов терминалов (Claude+Kimi). Тесты count_for_row_*.
 //   v1.3.0 - fix(grace-fix): row_signaled + path_within — матч bell/busy строки, когда cwd сигнала ВЛОЖЕН в путь окна (Claude-сессия в подпапке открытого проекта, напр. окно D:\Python\Mosco, сессия D:\Python\Mosco\doc). Регрессия проявилась при включённом FULLPATHS: путь у строки появлялся -> матч становился только по точному пути, fallback на basename пропадал -> подсветка/точки гасли. should_clear тоже на path_within (фокус родителя гасит сигнал подпапки). D-06 (одноимённые в разных путях) сохранён.
@@ -174,6 +175,10 @@ fn path_within(child: &str, ancestor: &str) -> bool {
 // .busy старше этого возраста (с) считается зависшим и игнорируется. Keep-alive (PostToolUse-хук
 // обновляет mtime на каждом инструменте) держит файл свежим, пока Claude реально работает — Phase-17.
 pub const BUSY_STALE_SECS: u64 = 90;
+
+// .alive старше этого возраста считается брошенным (краш/ребут без graceful SessionEnd) и игнорируется.
+// keep-alive (busy-хук трогает .alive на каждом инструменте) держит активные сессии свежими — D-16.
+pub const ALIVE_STALE_SECS: u64 = 12 * 3600;
 
 // START_CONTRACT: is_stale
 //   PURPOSE: Чистое: устарел ли файл-сигнал (mtime старше ttl от now) — фильтр зависших .busy (Phase-17).
@@ -320,8 +325,8 @@ pub fn sessions() -> Vec<Sess> {
             e.state = st; // signal поднимает idle -> done (busy позже перебьёт)
         }
     };
-    for s in list_ext("alive", None) {
-        put(s, SessState::Idle, false);
+    for s in list_ext("alive", Some(ALIVE_STALE_SECS)) {
+        put(s, SessState::Idle, false); // D-16: TTL против вечного фантома после краха
     }
     for s in list_ext("signal", None) {
         put(s, SessState::Done, false);
