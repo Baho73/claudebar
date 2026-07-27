@@ -138,6 +138,8 @@
         <scenario-13 kind="success">Phase-25: paint рисует на строке окна квадраты-сессии — синие (C_BUSY) с пульсом яркости (работает, count_for_row по busy_sessions) и золотые (C_BELL_BAR) мигающие (готово, по done_sessions), кап MAX_SQUARES=5 (дальше «N»), справа от имени; заменяют бегущие точки busy, полоса-звоночек строки без изменений. Геометрия/кап (squares_layout) — юнит если чистая; визуал/анимация — ручной smoke (2 сессии -&gt; 2 квадрата; одна завершила -&gt; её квадрат золотой мигает)</scenario-13>
         <scenario-14 kind="success">Phase-26: редизайн квадратов (яркое мигание убрано). Простой -&gt; пустой нейтральный контур (C_IDLE) на КАЖДОЙ строке-окне; работает -&gt; приглушённый контур + бегущая змейка из SNAKE_DOTS точек по периметру (perimeter_point + draw_marching_dots, сдвиг по anim_frame); готово -&gt; РОВНАЯ золотая заливка (C_BELL_BAR, без мигания). Чистая perimeter_point (обход границы, rem_euclid оборот) — тест perimeter_point_walks_border; визуал — ручной smoke. Цвет по агенту (бирюза/фиолет) — step-2/3 (тег агента)</scenario-14>
         <scenario-15 kind="success">Phase-26 presence: paint рисует квадрат на КАЖДУЮ живую сессию (app.sessions/sess_matches_row), agent_color (Kimi фиолет C_KIMI; Claude/неизвестный бирюза C_BUSY); состояние Working->контур+змейка, Done->золото, Idle->контур; нет сессии на строке -> нейтральный C_IDLE контур. Ручной smoke: Claude+Kimi в одном проекте -> два квадрата разного цвета</scenario-15>
+      </scenarios>
+    </V-M-RENDER>
     <V-M-SIGNAL MODULE="M-SIGNAL" PRIORITY="high">
       <test-files><file>src/signal.rs (#[cfg(test)])</file></test-files>
       <module-checks>
@@ -155,6 +157,8 @@
         <scenario-9 kind="success">Phase-25: busy_list()/done_list() дают по одной записи (cwd,key) НА КАЖДЫЙ .busy/.signal файл (с дублями — две сессии одного проекта = две записи). count_for_row(row_path,row_name,list) суммирует совпадения: путь через path_within (сессия в подпапке -&gt; матч родителя), иначе basename==row_name; одноимённые в разных путях НЕ суммируются (D-06). Тесты count_for_row_counts_duplicates, count_for_row_subfolder_and_d06</scenario-9>
         <scenario-10 kind="regression">fix(grace-fix): path_within нормализует слэши (/ -&gt; \). Kimi через Git Bash пишет cwd со слэшами (D:/Python/claudebar), Claude PowerShell — с бэкслэшами; матч по пути не срабатывал -&gt; квадрат/подсветка сессии Kimi пропадали на строке окна. Тест count_for_row_normalizes_slashes</scenario-10>
         <scenario-11 kind="success">Phase-26 presence: Signal += agent (parse_agent из agent=-строки). sessions() склеивает .alive (присутствие+агент) + .busy (работает) + .signal (готово) по session-id -> Vec&lt;Sess&gt;, состояние busy>signal>idle. sess_matches_row матчит сессию к строке (path_within/basename). Тест parse_agent_and_sess_matches_row; sessions() — ручной smoke (файлы .alive/.busy/.signal)</scenario-11>
+      </scenarios>
+    </V-M-SIGNAL>
     <V-M-ICON MODULE="M-ICON" PRIORITY="low">
       <test-files><file>src/icon.rs (#[cfg(test)] на icon_from_path)</file></test-files>
       <module-checks>
@@ -218,7 +222,7 @@
         <scenario-4 kind="success">aggregate_to_folders: чанки нескольких папок -> дедуп по папке, флаги bm25/dense, лучший чанк; color_of(bm25-only)=жёлтый, (dense-only)=синий</scenario-4>
         <scenario-5 kind="success">parse_dense_response: JSON демона -> папки с dense-скором (ручной разбор, как recent.rs)</scenario-5>
         <scenario-6 kind="dormant">Оркестрация dense-fallback (пустой BM25 -> M-SDAEMON) — ОТЛОЖЕНО (Phase-13): search() = BM25-only, dense-ветка усыплена. Проверять при оживлении dense-модуля (Python)</scenario-6>
-        <scenario-8 kind="success">project_folders + folder_for_project (Phase-14): temp-БД (прод-схема) с project_folder «D:\Python\claudebar» (source='chat') и «D:\Python\other» (source='file'); project_folders -> только chat-папка (file отброшен); чистый folder_for_project(&folders, name) -> «claudebar»/«CLAUDEBAR» Some (регистронезависимо), «нет-такого»/«other» None. Тест project_folders_and_match</scenario-8>
+        <scenario-8 kind="success">project_folders + folder_for_project (Phase-14): temp-БД (прод-схема) с project_folder «D:\Python\claudebar» (source='chat') и «D:\Python\other» (source='file'); project_folders -> только chat-папка (file отброшен); чистый folder_for_project(&amp;folders, name) -> «claudebar»/«CLAUDEBAR» Some (регистронезависимо), «нет-такого»/«other» None. Тест project_folders_and_match</scenario-8>
       </scenarios>
     </V-M-SEARCH>
     <V-M-SDAEMON MODULE="M-SDAEMON" PRIORITY="medium" STATUS="dormant">

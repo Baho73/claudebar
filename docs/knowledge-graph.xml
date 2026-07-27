@@ -301,7 +301,7 @@
         <fn-stream_tick PURPOSE="Стриминг-заход (из таймера при Recording+voice_streaming): snapshot_from(window_start) -&gt; фон stt::transcribe -&gt; WM_APP_STREAM_PARTIAL — Phase-24" />
         <fn-on_partial PURPOSE="Приём частичного распознавания: stable_prefix vs prev -&gt; дописать committed_text, сдвинуть скользящее окно (window_start/committed_samples) — Phase-24" />
         <type-StreamState PURPOSE="Состояние стриминга: committed_text, committed_samples, prev_hypothesis, window_start — Phase-24" />
-        <fn-WM_APP_STREAM_PARTIAL PURPOSE="Оконное сообщение: стрим-worker -&gt; UI с частичным текстом окна (lparam = Box<String>) — Phase-24" />
+        <fn-WM_APP_STREAM_PARTIAL PURPOSE="Оконное сообщение: стрим-worker -&gt; UI с частичным текстом окна (lparam = Box&lt;String&gt;) — Phase-24" />
         <fn-on_done PURPOSE="Завершение worker: текст готов -&gt; в UI (M-MAIN вставит), state=Idle" />
         <fn-next_state PURPOSE="Чистое: переход стейт-машины (cur, event) -&gt; next — тестируемо" />
         <fn-poll PURPOSE="Авто-стоп по тишине (из таймера): 2с тишины после речи или 8с без речи -&gt; стоп — Phase-19 доводка" />
