@@ -218,6 +218,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                         if refresh_items(app) {
                             app.config.save(hwnd); // новые № путей -> сохранить реестр
                         }
+                        app.whisper_ok = voice::whisper_ok(); // статус сервера диктовки (Phase-27)
                         update_anim_timer(hwnd, app); // вкл/выкл анимацию точек по наличию busy
                         render::resize(hwnd, app);
                     }
@@ -228,6 +229,13 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 if t > 0 && t % INDEX_EVERY_TICKS == 0 {
                     spawn_index(hwnd);
                     spawn_doc_paths(); // освежить пути документов (Phase-14)
+                }
+                // health-опрос whisper раз в ~15с (Phase-27); сам опрос — в фоновом потоке
+                if t % HEALTH_EVERY_TICKS == 0 {
+                    let url = APP.with(|c| c.borrow().as_ref().map(|a| a.config.whisper_url.clone()));
+                    if let Some(url) = url {
+                        voice::spawn_health_check(hwnd, url);
+                    }
                 }
                 LRESULT(0)
             }
@@ -300,6 +308,22 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                         SendMessageW(hwnd, WM_NCLBUTTONDOWN, WPARAM(HTCAPTION as usize), LPARAM(0));
                     }
                     return LRESULT(0);
+                }
+                // клик по баннеру «Whisper не запущен» (Phase-27): поднять контейнер.
+                // Баннер занимает нижние STRIP пикселей и показывается только когда сервер лежит.
+                let down_banner = APP.with(|c| {
+                    c.borrow()
+                        .as_ref()
+                        .map(|a| !a.whisper_ok && a.voice.state() == voice::VoiceState::Idle)
+                        .unwrap_or(false)
+                });
+                if down_banner {
+                    let mut rc = RECT::default();
+                    let _ = GetClientRect(hwnd, &mut rc);
+                    if y >= rc.bottom - render::STRIP {
+                        spawn_whisper_start();
+                        return LRESULT(0);
+                    }
                 }
                 // режим reorder: начать перетаскивание за ручку
                 let reorder = APP.with(|c| c.borrow().as_ref().map(|a| a.reorder).unwrap_or(false));
@@ -581,6 +605,18 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 let _ = InvalidateRect(hwnd, None, FALSE);
                 LRESULT(0)
             }
+            m if m == voice::WM_APP_HEALTH => {
+                // статус whisper сменился (Phase-27): подхватить и сразу пересчитать высоту окна
+                // под баннер — не ждать следующего тика, иначе предупреждение появляется с задержкой.
+                APP.with(|c| {
+                    if let Some(a) = c.borrow_mut().as_mut() {
+                        a.whisper_ok = voice::whisper_ok();
+                        render::resize(hwnd, a);
+                    }
+                });
+                let _ = InvalidateRect(hwnd, None, BOOL(0));
+                LRESULT(0)
+            }
             m if m == voice::WM_APP_STREAM_PARTIAL => {
                 // частичное распознавание стриминга: зафиксировать устоявшиеся сегменты (Phase-24).
                 // Вставки нет — только накопление committed_text/сдвиг окна внутри Voice.
@@ -690,6 +726,7 @@ pub(crate) fn recent_path(d: &recent::RecentDoc) -> String {
 static INDEXING: AtomicBool = AtomicBool::new(false);
 static INDEX_TICKS: AtomicU32 = AtomicU32::new(0);
 const INDEX_EVERY_TICKS: u32 = 180; // фоновая переиндексация ~раз в 3 мин (таймер 1с)
+const HEALTH_EVERY_TICKS: u32 = 15; // опрос /health whisper ~раз в 15с (таймер 1с) — Phase-27
 
 // Запустить инкрементальную индексацию в фоновом потоке (не чаще одной зараз).
 fn spawn_index(hwnd: HWND) {
@@ -791,6 +828,25 @@ static DOC_PATHS: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
 // чтобы не открывать SQLite синхронно на UI-потоке при каждом правом клике (лаг под пишущим индексатором).
 static PROJ_FOLDERS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static DOC_PATHS_BUILDING: AtomicBool = AtomicBool::new(false);
+
+// Клик по баннеру «Whisper не запущен» (Phase-27): поднять контейнер распознавания.
+// Спавним в фоне и не ждём — docker может думать десятки секунд; следующий health-опрос
+// (≤15с) сам погасит баннер. Окно консоли подавлено (CREATE_NO_WINDOW), иначе моргает cmd.
+// ponytail: имя контейнера фиксировано в docker-compose.yml whisper-dictate; ini-ключ заведём,
+// если появится второй контейнер. При отсутствии контейнера нужен `docker compose up -d` —
+// это делает стартовый скрипт tools/start-whisper.ps1 (автозапуск при входе в систему).
+fn spawn_whisper_start() {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    voice::vlog("баннер: клик -> docker start whisper-dictate");
+    std::thread::spawn(|| {
+        let r = std::process::Command::new("docker")
+            .args(["start", "whisper-dictate"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+        voice::vlog(&format!("docker start whisper-dictate -> {r:?}"));
+    });
+}
 
 // Построить/освежить в фоне карты для меню «ссылка/проводник»: пути документов (резолв .lnk Recent
 // через COM) и папки проектов (DB-скан chats_db). Не морозит UI.
@@ -1084,12 +1140,16 @@ fn main() -> Result<()> {
             drag: None,
             voice: voice::Voice::new(),
             voice_target: HWND(std::ptr::null_mut()),
+            whisper_ok: true, // оптимистично до первого health-опроса (Phase-27) — не мигать баннером на старте
         };
         if refresh_items(&mut app) {
             app.config.save_pos(); // окна ещё нет -> сохраняем с известной позицией
         }
         // Phase-22: при включённой опции поднять always-on микрофон сразу на старте,
         // чтобы первое слово ловилось без cold-start (поток уже тёплый к первому хоткею).
+        // ВАЖНО (проверено экспериментом Phase-27): именно ДО создания окон. Если поднимать
+        // микрофон после CreateWindowExW/create_search_box, cpal-WASAPI на UI-потоке залипает
+        // и старт не доходит до RegisterHotKey — панель не появляется. Порядок не менять.
         if app.config.voice_always_on {
             app.voice.set_always_on(true);
         }
@@ -1111,7 +1171,7 @@ fn main() -> Result<()> {
         // visible_start_pos в этом случае возвращает дефолт на первичном экране.
         let sw = GetSystemMetrics(SM_CXSCREEN);
         let n = app.rows.len().max(1) as i32;
-        let h = render::HEAD + render::ROW * n + render::strip_h(app.voice.state());
+        let h = render::HEAD + render::ROW * n + render::strip_h(app.voice.state(), app.whisper_ok);
         let default_pos = (sw - render::W - 20, 40);
         let (vx, vy, vw, vh) = (
             GetSystemMetrics(SM_XVIRTUALSCREEN),

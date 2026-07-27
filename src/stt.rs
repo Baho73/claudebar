@@ -1,8 +1,8 @@
 // FILE: src/stt.rs
-// VERSION: 1.1.0
+// VERSION: 1.2.0
 // START_MODULE_CONTRACT
-//   PURPOSE: Синхронное распознавание речи: POST WAV на whisper-dictate /transcribe (localhost http через std::net), разбор {"text","segments"}.
-//   SCOPE: transcribe (текст) / transcribe_segments (текст+сегменты с таймингами, Phase-24) поверх общего request; чистые build_multipart / parse_text / parse_segments / parse_url.
+//   PURPOSE: Синхронное распознавание речи: POST WAV на whisper-dictate /transcribe (localhost http через std::net), разбор {"text","segments"}; проверка живости сервера (/health).
+//   SCOPE: transcribe (текст) / transcribe_segments (текст+сегменты с таймингами, Phase-24) поверх общего request; is_alive (/health, Phase-27); чистые build_multipart / parse_text / parse_segments / parse_url / health_url.
 //   DEPENDS: none (URL/язык/словарь приходят параметрами из M-CONFIG; JSON через serde_json)
 //   LINKS: M-STT
 //   ROLE: RUNTIME
@@ -18,10 +18,13 @@
 //   parse_text       - чистое: JSON ответа -> Option<text> (serde_json)
 //   parse_segments   - чистое: JSON ответа -> Vec<Segment> (Phase-24)
 //   parse_url        - чистое: http://host:port/path -> (host, port, path)
+//   health_url       - чистое: URL /transcribe -> URL /health того же сервера
+//   is_alive         - GET /health с коротким таймаутом -> «сервер whisper поднят» (Phase-27)
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.1.0 - Phase-24 step-4 (вариант A): transcribe_segments -> (текст, Vec<Segment>{start,end,text}); чистая parse_segments; общий request (transcribe/transcribe_segments — тонкие обёртки). Сервер /transcribe отдаёт "segments" (сырой текст). Тест parse_segments_extracts.
+//   LAST_CHANGE: v1.2.0 - Phase-27: is_alive + чистая health_url для индикации «whisper не запущен» (баннер M-RENDER, фоновый опрос M-VOICE). Тесты health_url_keeps_host_port, is_alive_false_on_closed_port.
+//   v1.1.0 - Phase-24 step-4 (вариант A): transcribe_segments -> (текст, Vec<Segment>{start,end,text}); чистая parse_segments; общий request (transcribe/transcribe_segments — тонкие обёртки). Сервер /transcribe отдаёт "segments" (сырой текст). Тест parse_segments_extracts.
 //   v1.0.0 - Phase-18 step-3: клиент whisper-dictate. Синхронный POST multipart WAV через
 //                std::net::TcpStream (без HTTP-крейта, как M-SDAEMON); чистые build_multipart/parse_text/parse_url.
 //                Опц. поля hotwords/initial_prompt шлются только если непусты (модель по умолчанию их не держит).
@@ -59,6 +62,47 @@ pub fn parse_url(url: &str) -> Option<(String, u16, String)> {
         return None;
     }
     Some((host, port, path))
+}
+
+// START_CONTRACT: health_url
+//   PURPOSE: Из URL /transcribe получить URL /health того же сервера (host:port сохраняются).
+//   INPUTS: { url: &str - "http://host:port/transcribe" (любой путь) }
+//   OUTPUTS: { Option<String> - "http://host:port/health"; None при неразбираемом URL }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: health_url
+pub fn health_url(url: &str) -> Option<String> {
+    let (host, port, _) = parse_url(url)?;
+    Some(format!("http://{host}:{port}/health"))
+}
+
+// START_CONTRACT: is_alive
+//   PURPOSE: Быстрая проверка «сервер whisper поднят»: GET /health, ждём HTTP 200.
+//   INPUTS: { url: &str - URL /transcribe из конфига (путь заменяется на /health); timeout_ms: u64 }
+//   OUTPUTS: { bool - true только при явном HTTP 200 (иначе контейнер не готов/не запущен) }
+//   SIDE_EFFECTS: короткое TCP-соединение на localhost (GET); блокирует до timeout — звать из фонового потока
+//   LINKS: M-STT, M-VOICE (фоновый health-опрос), M-RENDER (баннер «whisper не запущен»)
+// END_CONTRACT: is_alive
+pub fn is_alive(url: &str, timeout_ms: u64) -> bool {
+    let Some((host, port, path)) = health_url(url).and_then(|u| parse_url(&u)) else {
+        return false;
+    };
+    let to = Duration::from_millis(timeout_ms);
+    let Ok(mut addrs) = format!("{host}:{port}").to_socket_addrs() else {
+        return false;
+    };
+    let Some(sockaddr) = addrs.next() else { return false };
+    let Ok(mut stream) = TcpStream::connect_timeout(&sockaddr, to) else {
+        return false; // порт закрыт -> контейнер не поднят
+    };
+    let _ = stream.set_read_timeout(Some(to));
+    let _ = stream.set_write_timeout(Some(to));
+    let req = format!("GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n");
+    if stream.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut buf = Vec::new();
+    let _ = stream.read_to_end(&mut buf); // таймаут чтения -> разбираем, что успели
+    String::from_utf8_lossy(&buf).lines().next().map(|l| l.contains(" 200")).unwrap_or(false)
 }
 
 // START_CONTRACT: build_multipart
@@ -225,6 +269,24 @@ mod tests {
         assert_eq!(parse_url("http://localhost/x"), Some(("localhost".to_string(), 80, "/x".to_string())));
         assert_eq!(parse_url("http://h:9000"), Some(("h".to_string(), 9000, "/".to_string())));
         assert_eq!(parse_url("http://:8771/x"), None); // нет host
+    }
+
+    #[test]
+    fn health_url_keeps_host_port() {
+        assert_eq!(
+            health_url("http://127.0.0.1:18771/transcribe").as_deref(),
+            Some("http://127.0.0.1:18771/health")
+        );
+        // порт по умолчанию проставляется явно; путь всегда заменяется на /health
+        assert_eq!(health_url("http://localhost/x").as_deref(), Some("http://localhost:80/health"));
+        assert_eq!(health_url("http://:1/transcribe"), None); // нет host
+    }
+
+    #[test]
+    fn is_alive_false_on_closed_port() {
+        // порт 1 на localhost заведомо закрыт -> «не поднят», без зависания (таймаут 200мс)
+        assert!(!is_alive("http://127.0.0.1:1/transcribe", 200));
+        assert!(!is_alive("не-url", 200));
     }
 
     #[test]

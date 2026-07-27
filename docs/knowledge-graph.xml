@@ -34,6 +34,7 @@
       <annotations>
         <type-App PURPOSE="Состояние UI-панели: 30+ полей (окна, недавние, строки, конфиг, шрифты, hover/drag, bell/busy, сессии, поиск+история, голос)" />
         <static-APP PURPOSE="thread_local RefCell&lt;Option&lt;App&gt;&gt; — единственный экземпляр состояния на UI-потоке" />
+        <field-whisper_ok PURPOSE="Сервер распознавания поднят (копия атомика M-VOICE, обновляется на тике и по WM_APP_HEALTH) — управляет баннером-предупреждением — Phase-27" />
       </annotations>
     </M-STATE>
 
@@ -160,6 +161,7 @@
         <fn-search_render PURPOSE="Поиск (Phase-12): folder_project (имя проекта из пути), search_color_for (цвет открытой совпавшей папки), search_result_rows (строки «Найдено ещё» по закрытым)" />
         <type-Row PURPOSE="Типизированная строка: Section | Window | RecentHeader | Recent | RecentMore | SearchHeader | SearchResult" />
         <type-Zone PURPOSE="Зона клика в строке: Body | Close | DragHandle" />
+        <fn-strip_h PURPOSE="Высота нижнего баннера: 0 в простое, STRIP при активном голосе ИЛИ когда сервер whisper не поднят (whisper_ok=false) — окно растёт под предупреждение — Phase-27" />
       </annotations>
     </M-RENDER>
 
@@ -328,6 +330,8 @@
         <fn-build_multipart PURPOSE="Чистое: boundary+поля+WAV -&gt; тело multipart/form-data — тестируемо" />
         <fn-parse_text PURPOSE="Чистое: JSON ответа -&gt; text (serde_json; пусто/ошибка -&gt; None)" />
         <fn-parse_url PURPOSE="Чистое: http://host:port/path -&gt; (host, port, path) для TcpStream" />
+        <fn-health_url PURPOSE="Чистое: URL /transcribe -&gt; URL /health того же сервера (host:port сохраняются) — Phase-27" />
+        <fn-is_alive PURPOSE="GET /health с коротким таймаутом -&gt; «сервер whisper поднят»; закрытый порт/не-200 -&gt; false. Блокирует до таймаута — только из фонового потока — Phase-27" />
       </annotations>
     </M-STT>
 
@@ -377,6 +381,9 @@
         <fn-cue_end PURPOSE="Короткий тон конца распознавания (Beep 760Гц/70мс, в фоне) — Phase-19 доводка" />
         <fn-vlog PURPOSE="Диагностический лог голосового ввода в %APPDATA%\claudebar\voice.log (у exe нет консоли) — Phase-19 доводка" />
         <type-VoiceState PURPOSE="Idle | Recording | Transcribing" />
+        <fn-whisper_ok PURPOSE="Последний известный статус сервера whisper (атомик; до первого опроса — true, чтобы не мигать баннером на старте) — Phase-27" />
+        <fn-spawn_health_check PURPOSE="Фоновый поток: stt::is_alive(/health) -&gt; обновить статус; при СМЕНЕ статуса PostMessage(WM_APP_HEALTH). Гейт HEALTH_INFLIGHT не копит потоки, если сервер молчит — Phase-27" />
+        <fn-WM_APP_HEALTH PURPOSE="Оконное сообщение: статус whisper сменился -&gt; UI пересчитывает высоту окна под баннер и перерисовывает (WM_APP+4) — Phase-27" />
       </annotations>
     </M-VOICE>
 
@@ -391,6 +398,9 @@
     <CrossLink from="M-MENU" to="M-MAIN" relation="применение настроек: rebuild_rows/rebuild_fonts (шрифт, сортировка), spawn_files_index + run_live_search (scope «+Файлы»)" />
     <CrossLink from="M-MENU" to="M-PROMPT" relation="пункт «Метка…» → prompt::prompt_text; результат пишется в config.set_label" />
     <CrossLink from="M-MENU" to="M-SEARCHBOX" relation="scope «+Файлы» → set_search_cue(«⏳ Индексирую файлы…») пока строится индекс" />
+    <CrossLink from="M-MAIN" to="M-VOICE" relation="Phase-27: тик таймера раз в 15с → spawn_health_check(whisper_url); каждый тик копирует whisper_ok в App; WM_APP_HEALTH → resize+repaint; клик по баннеру → docker start whisper-dictate" />
+    <CrossLink from="M-VOICE" to="M-STT" relation="Phase-27: фоновый health-опрос через stt::is_alive(/health) — блокирующий вызов только в спавненном потоке, UI не морозим" />
+    <CrossLink from="M-RENDER" to="M-STATE" relation="Phase-27: paint читает App.whisper_ok — при false рисует нижний баннер «⚠ Whisper не запущен — клик, чтобы поднять» (strip_h даёт под него высоту)" />
     <CrossLink from="M-RENDER" to="M-STATE" relation="paint читает &amp;App (состояние для отрисовки)" />
     <CrossLink from="M-MAIN" to="M-RENDER" relation="делегирует отрисовку и обработку кликов" />
     <CrossLink from="M-MAIN" to="M-CONFIG" relation="загружает/сохраняет конфигурацию" />

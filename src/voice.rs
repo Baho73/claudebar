@@ -42,7 +42,7 @@
 // END_CHANGE_SUMMARY
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -138,6 +138,54 @@ pub fn vlog(msg: &str) {
         let _ = writeln!(f, "[{t}] {msg}");
     }
 }
+
+// START_BLOCK_HEALTH (Phase-27): фоновая проверка «сервер whisper поднят».
+// Опрос делает TCP-connect (блокирует до таймаута) — только в отдельном потоке, никогда на UI.
+// Стартовое значение true: пока первый опрос не прошёл, не мигаем красным баннером на ровном месте.
+static WHISPER_OK: AtomicBool = AtomicBool::new(true);
+static HEALTH_INFLIGHT: AtomicBool = AtomicBool::new(false); // не копим потоки, если сервер тупит
+
+const HEALTH_TIMEOUT_MS: u64 = 1200; // localhost: живой сервер отвечает за миллисекунды
+
+// START_CONTRACT: whisper_ok
+//   PURPOSE: Последний известный статус сервера whisper (для баннера в M-RENDER).
+//   INPUTS: { }
+//   OUTPUTS: { bool - true = /health отвечал 200 на последнем опросе (или опроса ещё не было) }
+//   SIDE_EFFECTS: none (чтение атомика)
+// END_CONTRACT: whisper_ok
+pub fn whisper_ok() -> bool {
+    WHISPER_OK.load(Ordering::Relaxed)
+}
+
+// START_CONTRACT: spawn_health_check
+//   PURPOSE: Опросить /health в фоновом потоке и обновить статус; при смене статуса — перерисовать панель.
+//   INPUTS: { hwnd: HWND - окно панели (repaint при смене); url: String - whisper_url из конфига }
+//   OUTPUTS: { () }
+//   SIDE_EFFECTS: спавн потока, TCP GET /health, запись WHISPER_OK, PostMessage(WM_APP_HEALTH) при смене
+//   LINKS: M-VOICE, M-STT (is_alive), M-RENDER (баннер)
+// END_CONTRACT: spawn_health_check
+pub fn spawn_health_check(hwnd: HWND, url: String) {
+    // предыдущий опрос ещё висит (сервер не отвечает) — второй поток не нужен
+    if HEALTH_INFLIGHT.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let h = hwnd.0 as isize;
+    std::thread::spawn(move || {
+        let ok = crate::stt::is_alive(&url, HEALTH_TIMEOUT_MS);
+        let was = WHISPER_OK.swap(ok, Ordering::Relaxed);
+        HEALTH_INFLIGHT.store(false, Ordering::SeqCst);
+        if was != ok {
+            vlog(if ok { "health: whisper поднялся" } else { "health: whisper НЕ отвечает" });
+            unsafe {
+                let _ = PostMessageW(HWND(h as *mut core::ffi::c_void), WM_APP_HEALTH, WPARAM(0), LPARAM(0));
+            }
+        }
+    });
+}
+
+// Сообщение «статус whisper сменился» -> UI перерисовывает баннер (WM_APP+1..+3 заняты).
+pub const WM_APP_HEALTH: u32 = WM_APP + 4;
+// END_BLOCK_HEALTH
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VoiceState {

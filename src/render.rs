@@ -62,11 +62,17 @@ pub const HEAD: i32 = 24;
 pub const ROW: i32 = 30;
 pub const STRIP: i32 = 22; // высота баннера голосового ввода, когда активен (запись/распознавание) — Phase-19
 
-// Высота индикатора голосового ввода для текущего состояния: 0 в простое (окно не растёт), баннер когда активен.
-pub fn strip_h(state: crate::voice::VoiceState) -> i32 {
-    match state {
-        crate::voice::VoiceState::Idle => 0,
-        _ => STRIP,
+// START_CONTRACT: strip_h
+//   PURPOSE: Высота нижнего баннера: 0 в простое (окно не растёт), STRIP при активном голосе ИЛИ когда сервер whisper не поднят.
+//   INPUTS: { state: VoiceState; whisper_ok: bool - последний health-статус (Phase-27) }
+//   OUTPUTS: { i32 - 0 или STRIP }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: strip_h
+pub fn strip_h(state: crate::voice::VoiceState, whisper_ok: bool) -> i32 {
+    if state != crate::voice::VoiceState::Idle || !whisper_ok {
+        STRIP
+    } else {
+        0
     }
 }
 const SWATCH: i32 = 14;
@@ -109,6 +115,8 @@ const C_REC: (u8, u8, u8) = (170, 182, 206);
 const C_BELL: (u8, u8, u8) = (70, 56, 22); // фон строки со «звоночком» — тёплое тёмное золото
 const C_BELL_BAR: (u8, u8, u8) = (246, 189, 22); // левая полоса-индикатор «звоночка»
 const C_VOICE_REC: (u8, u8, u8) = (242, 58, 47); // ярко-красная полоса «идёт запись» (Phase-19)
+// Приглушённый тёмно-красный: предупреждение «whisper не поднят» не должно кричать как «ЗАПИСЬ» (Phase-27).
+const C_WHISPER_DOWN: (u8, u8, u8) = (122, 34, 34);
 const C_SRCH_BM25: (u8, u8, u8) = (245, 200, 40); // жёлтая полоса поиска: совпадение по словам (BM25)
 const C_SRCH_DENSE: (u8, u8, u8) = (91, 143, 249); // синяя полоса поиска: совпадение по смыслу (dense)
 const C_BUSY: (u8, u8, u8) = (56, 189, 168); // бирюзовый: агент Claude
@@ -513,7 +521,19 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
 
     // индикатор голосового ввода — заметный баннер в самом низу окна (Phase-19)
     let st = app.voice.state();
-    if st != crate::voice::VoiceState::Idle {
+    if st == crate::voice::VoiceState::Idle && !app.whisper_ok {
+        // Phase-27: сервер распознавания не поднят — диктовать нельзя, говорим об этом прямо.
+        // Клик по баннеру запускает контейнер (M-MAIN), поэтому подсказываем действие.
+        let sy = h - STRIP;
+        fill(mem, RECT { left: 0, top: sy, right: w, bottom: h }, C_WHISPER_DOWN);
+        SetTextColor(mem, rgb(255, 226, 226));
+        dt(
+            mem,
+            "\u{26A0} Whisper не запущен — клик, чтобы поднять",
+            RECT { left: 10, top: sy, right: w - 6, bottom: h },
+            DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+        );
+    } else if st != crate::voice::VoiceState::Idle {
         let sy = h - STRIP;
         let recording = st == crate::voice::VoiceState::Recording;
         let bg = if recording {
@@ -566,7 +586,7 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
 // END_CONTRACT: resize
 pub unsafe fn resize(hwnd: HWND, app: &mut App) {
     let n = app.rows.len().max(1) as i32;
-    let h = HEAD + ROW * n + strip_h(app.voice.state());
+    let h = HEAD + ROW * n + strip_h(app.voice.state(), app.whisper_ok);
     if h != app.last_h {
         app.last_h = h;
         let _ = SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, W, h, SWP_NOMOVE | SWP_NOACTIVATE);

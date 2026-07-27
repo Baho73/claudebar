@@ -57,6 +57,7 @@ pub(crate) struct App {
     pub(crate) drag: Option<i32>, // индекс перетаскиваемой строки во время drag
     pub(crate) voice: voice::Voice, // голосовой ввод: стейт-машина + активный Recorder — Phase-19
     pub(crate) voice_target: HWND, // окно-получатель вставки (foreground на старте записи) — Phase-19
+    pub(crate) whisper_ok: bool, // сервер распознавания поднят (фоновый /health) — баннер-предупреждение, Phase-27
 }
 
 thread_local! {
