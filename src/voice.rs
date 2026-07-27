@@ -19,6 +19,10 @@
 //   Voice::toggle        - переключатель записи/распознавания (always-on -> arm/disarm Mic, иначе Recorder cold-start)
 //   Voice::set_always_on - старт/дроп персистентного Mic по галочке (только на Idle)
 //   Voice::on_done       - вернуть в Idle после доставки текста
+//   Voice::poll          - авто-стоп по тишине (в записи) + watchdog зависшей Transcribing -> Idle (D-13)
+//   Voice::level         - текущий уровень микрофона активного источника (для индикатора-полосы)
+//   cue_start/cue_end    - короткие тоны старта/конца диктовки (Beep, в фоне)
+//   vlog                 - диагностический лог голосового ввода (%APPDATA%\claudebar\voice.log)
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY

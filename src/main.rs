@@ -3,6 +3,36 @@
 //! окнами редакторов (VS Code / Cursor), в которых крутится Claude Code.
 //! ЛКМ по строке — перейти в окно. ПКМ — задать цвет и метку. Привязка по имени проекта.
 
+// FILE: src/main.rs
+// VERSION: 1.0.0
+// START_MODULE_CONTRACT
+//   PURPOSE: Точка входа Win32 + оконная процедура + состояние App + оркестрация всех модулей панели.
+//   SCOPE: создание окна (always-on-top, tool-window), цикл сообщений, диспетчеризация WndProc; App (thread_local APP);
+//          опрос (окна/сигналы/недавние) по таймеру, анимационный таймер, глобальный хоткей; шапка/поиск/история;
+//          контекст-меню, tooltip, prompt-диалог, буфер обмена/Explorer; оркестрация голоса (M-VOICE) и вставки (M-PASTE).
+//   DEPENDS: M-CONFIG, M-WINENUM, M-ACTIVATE, M-RENDER, M-RECENT, M-ICON, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX, M-SDAEMON, M-VOICE, M-AUDIO, M-STT, M-TRANSFORM, M-PASTE
+//   LINKS: M-MAIN
+//   ROLE: ENTRY_POINT
+//   MAP_MODE: SUMMARY
+//   NOTE: Блочная разметка (START_BLOCK) отложена до рефактора «App -> state-модуль» (FPF D-5/D-23); контракт добавлен ретроспективно.
+// END_MODULE_CONTRACT
+//
+// START_MODULE_MAP
+//   App / APP            - состояние панели (thread_local RefCell); поля окон/недавних/поиска/сигналов/голоса
+//   wndproc              - оконная процедура: paint, клики/hover, таймеры, меню, WM_APP_* (поиск/голос)
+//   refresh_items        - опрос: окна (M-WINENUM), недавние (M-RECENT), сигналы bell/busy + sessions (M-SIGNAL)
+//   rebuild_rows         - пересборка строк (M-RENDER.build_rows) + фильтр недавних по поиску + блок «Найдено ещё»
+//   run_live_search / commit_search_enter - живой BM25 (M-SEARCH), история запросов
+//   handle_menu_command  - контекст-меню: цвет/метка/сортировка/⚙-настройки (шрифт, полные пути, голос-опции)
+//   update_anim_timer    - аним-таймер (змейка квадратов / полоса голоса) только при активности
+//   hotkey / voice       - глобальный хоткей -> voice.toggle; WM_APP_VOICE_DONE -> take_result + paste_text
+//   url_to_path / percent_decode / explorer_folder_path - «ссылка/проводник» (COM, побайтный percent-decode)
+// END_MODULE_MAP
+//
+// START_CHANGE_SUMMARY
+//   LAST_CHANGE: v1.0.0 - FPF D-23: добавлен MODULE_CONTRACT/MODULE_MAP (main.rs был единственным модулем без разметки). Контракт ретроспективный (SUMMARY); полная блочная разметка — в рефакторе App->state.
+// END_CHANGE_SUMMARY
+
 mod activate;
 mod audio;
 mod config;
