@@ -10,7 +10,7 @@
     <M-MAIN NAME="Main" TYPE="ENTRY_POINT" STATUS="partial">
       <purpose>Точка входа: GetModuleHandle, регистрация класса, создание topmost-окна, таймер опроса, message loop, диспетчеризация в обработчики. v0.3: опрос M-SIGNAL (bell_keys + reconcile) на тике, проброс bell в paint, зоны клика и режим reorder. v0.4: шрифт панели читается из конфига (make_font(face,…)); «⚙» в шапке открывает меню настроек → M-SETTINGS.choose_font → rebuild_fonts + repaint. v0.5 (Phase-14): в меню окна «Скопировать ссылку»/«Открыть в проводнике» — путь проекта (M-SEARCH.folder_for_project) или документа (фоновая карта doc_paths из Recent .lnk). Phase-15/16: идентичность проекта по полному пути из заголовка (extract_project_path) + нумерация дублей «(N)»; пункт ⚙ «Полные пути» (configure_editor_titles); настройка порядка окон sort=alpha|recent с картой ordinal первого появления.</purpose>
       <path>src/main.rs</path>
-      <depends>M-STATE, M-CONFIG, M-WINENUM, M-ACTIVATE, M-RENDER, M-RECENT, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX, M-VOICE, M-PASTE, M-PROMPT, M-TOOLTIP</depends>
+      <depends>M-STATE, M-CONFIG, M-WINENUM, M-ACTIVATE, M-RENDER, M-RECENT, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX, M-VOICE, M-PASTE, M-PROMPT, M-TOOLTIP, M-SEARCHBOX</depends>
       <verification-ref>V-M-MAIN</verification-ref>
       <annotations>
         <fn-main PURPOSE="Инициализация приложения и цикл сообщений" />
@@ -59,6 +59,23 @@
         <fn-hide_tooltip PURPOSE="Спрятать попап подсказки" />
       </annotations>
     </M-TOOLTIP>
+
+    <M-SEARCHBOX NAME="SearchBox" TYPE="UI_COMPONENT" STATUS="implemented">
+      <purpose>Виджет поиска в шапке: EDIT-поле (субкласс Enter/Esc/стрелки, значок ✕/▾, hover-тултип), выпадающий LISTBOX истории запросов с персистом в %APPDATA%\claudebar\search_history.txt, цвет поля (WM_CTLCOLOREDIT) и cue-подсказка (индикатор индексации). Вынесено из main.rs (рефактор god-object, FPF D-5). Сам поиск (M-SEARCH/M-INDEX, потоки, WM_APP_SEARCH) остаётся оркестрацией в M-MAIN — модуль зовёт run_live_search/commit_search_enter обратно.</purpose>
+      <path>src/searchbox.rs</path>
+      <depends>M-STATE, M-RENDER, M-TOOLTIP, M-MAIN</depends>
+      <verification-ref>V-M-SEARCHBOX</verification-ref>
+      <annotations>
+        <fn-create_search_box PURPOSE="Создать EDIT-поле в шапке + скрытый LISTBOX истории, субклассить EDIT (один раз при старте)" />
+        <fn-on_command PURPOSE="WM_COMMAND от родителя: EN_CHANGE поля → run_live_search; LBN_SELCHANGE истории → pick_history. true = обработано (иначе main зовёт handle_command)" />
+        <fn-ctl_color_edit PURPOSE="WM_CTLCOLOREDIT: фон/текст поля поиска + кэш кисти; возвращает HBRUSH как isize" />
+        <fn-set_search_cue PURPOSE="Сменить cue-подсказку пустого поля («⏳ Индексирую файлы…» / «Поиск по чатам…»)" />
+        <fn-record_history PURPOSE="Записать запрос в историю (дедуп, свежие первыми, лимит HIST_MAX) и сохранить в файл" />
+        <fn-load_history PURPOSE="Прочитать историю запросов из %APPDATA%\claudebar\search_history.txt при старте" />
+        <fn-hide_history_dropdown PURPOSE="Скрыть выпадающий список истории (изменение текста/потеря фокуса/Esc)" />
+        <const-SEARCH_MIN PURPOSE="Минимум символов для живого BM25 (делится с run_live_search в M-MAIN)" />
+      </annotations>
+    </M-SEARCHBOX>
 
     <M-WINENUM NAME="WindowEnum" TYPE="CORE_LOGIC" STATUS="implemented">
       <purpose>Перечисление видимых top-level окон, определение приложения по имени процесса И классу окна, извлечение имени проекта/документа из заголовка по правилам приложения. v0.4: класс окна (GetClassNameW) в кортеже окна; для классической консоли (ConsoleWindowClass) реальный shell (cmd/powershell/pwsh) разрешается по дереву процессов через conhost.</purpose>
@@ -354,6 +371,9 @@
     <CrossLink from="M-MAIN" to="M-STATE" relation="владеет App/APP (состояние UI-потока); строит и опрашивает" />
     <CrossLink from="M-MAIN" to="M-PROMPT" relation="меню окна «Метка» → prompt::prompt_text(hwnd, hinst, initial) для ввода метки проекта" />
     <CrossLink from="M-MAIN" to="M-TOOLTIP" relation="wndproc/subclass: create_tooltip при старте; arm_tip по hover/hit-test; show_tooltip по dwell-таймеру (ID_TIP_TIMER); hide_tooltip. Делит edit_text/recent_path/константы dwell" />
+    <CrossLink from="M-MAIN" to="M-SEARCHBOX" relation="wndproc: create_search_box при старте; WM_COMMAND → on_command; WM_CTLCOLOREDIT → ctl_color_edit; set_search_cue (индексация); load_history при инициализации App" />
+    <CrossLink from="M-SEARCHBOX" to="M-MAIN" relation="обратный вызов оркестрации поиска: EN_CHANGE → run_live_search, Enter → commit_search_enter (сам поиск/потоки остаются в M-MAIN)" />
+    <CrossLink from="M-SEARCHBOX" to="M-TOOLTIP" relation="субкласс поля: WM_MOUSEMOVE → arm_tip(TIP_SEARCHBOX) показывает правила поиска, WM_MOUSELEAVE → arm_tip(-1)" />
     <CrossLink from="M-RENDER" to="M-STATE" relation="paint читает &amp;App (состояние для отрисовки)" />
     <CrossLink from="M-MAIN" to="M-RENDER" relation="делегирует отрисовку и обработку кликов" />
     <CrossLink from="M-MAIN" to="M-CONFIG" relation="загружает/сохраняет конфигурацию" />

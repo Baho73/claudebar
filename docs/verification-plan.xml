@@ -356,6 +356,19 @@
         <scenario-1 kind="success">Наведение на строку окна/недавнего/результата → через ~0.5с попап с путём/сниппетом; над строкой поиска → правила; попап привязан к монитору под курсором. Ручной smoke (UI-dwell). Рефактор (вынос tooltip из main.rs, FPF D-5) не меняет поведение — 102/102 до и после</scenario-1>
       </scenarios>
     </V-M-TOOLTIP>
+
+    <V-M-SEARCHBOX MODULE="M-SEARCHBOX" PRIORITY="medium">
+      <test-files><file>—</file></test-files>
+      <module-checks>
+        <check-1>cargo test (debug компилируется; on_command/ctl_color_edit подключены в wndproc вместо инлайновых веток ID_SEARCH/ID_HIST_LIST/WM_CTLCOLOREDIT)</check-1>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">Ввод ≥3 символов → живой BM25 (run_live_search через on_command/EN_CHANGE); Enter → commit_search_enter; Esc → очистка поля; ✕ очищает, ▾ открывает историю; стрелки ↑↓ ходят по истории, Enter подставляет</scenario-1>
+        <scenario-2 kind="success">История переживает перезапуск (%APPDATA%\claudebar\search_history.txt); дедуп и лимит 15; запрос пишется при потере фокуса и при очистке</scenario-2>
+        <scenario-3 kind="success">Поле остаётся голубым (ctl_color_edit возвращает кэш-кисть); cue меняется на «⏳ Индексирую файлы…» во время индексации и обратно по WM_APP_SEARCH</scenario-3>
+        <scenario-4 kind="failure">Рефактор (вынос из main.rs, FPF D-5) не меняет поведение — 102/102 и 0 warnings до и после; ручной smoke UI обязателен (субкласс/фокус не покрыты автотестами)</scenario-4>
+      </scenarios>
+    </V-M-SEARCHBOX>
   </ModuleVerification>
 
   <PhaseGates>
