@@ -10,7 +10,7 @@
     <M-MAIN NAME="Main" TYPE="ENTRY_POINT" STATUS="partial">
       <purpose>Точка входа: GetModuleHandle, регистрация класса, создание topmost-окна, таймер опроса, message loop, диспетчеризация в обработчики. v0.3: опрос M-SIGNAL (bell_keys + reconcile) на тике, проброс bell в paint, зоны клика и режим reorder. v0.4: шрифт панели читается из конфига (make_font(face,…)); «⚙» в шапке открывает меню настроек → M-SETTINGS.choose_font → rebuild_fonts + repaint. v0.5 (Phase-14): в меню окна «Скопировать ссылку»/«Открыть в проводнике» — путь проекта (M-SEARCH.folder_for_project) или документа (фоновая карта doc_paths из Recent .lnk). Phase-15/16: идентичность проекта по полному пути из заголовка (extract_project_path) + нумерация дублей «(N)»; пункт ⚙ «Полные пути» (configure_editor_titles); настройка порядка окон sort=alpha|recent с картой ordinal первого появления.</purpose>
       <path>src/main.rs</path>
-      <depends>M-STATE, M-CONFIG, M-WINENUM, M-ACTIVATE, M-RENDER, M-RECENT, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX, M-VOICE, M-PASTE, M-PROMPT, M-TOOLTIP, M-SEARCHBOX</depends>
+      <depends>M-STATE, M-CONFIG, M-WINENUM, M-ACTIVATE, M-RENDER, M-RECENT, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX, M-VOICE, M-PASTE, M-PROMPT, M-TOOLTIP, M-SEARCHBOX, M-MENU</depends>
       <verification-ref>V-M-MAIN</verification-ref>
       <annotations>
         <fn-main PURPOSE="Инициализация приложения и цикл сообщений" />
@@ -76,6 +76,19 @@
         <const-SEARCH_MIN PURPOSE="Минимум символов для живого BM25 (делится с run_live_search в M-MAIN)" />
       </annotations>
     </M-SEARCHBOX>
+
+    <M-MENU NAME="Menu" TYPE="UI_COMPONENT" STATUS="implemented">
+      <purpose>Контекст-меню по ПКМ (ссылка/проводник + палитра цветов + метка; minimal=true для недавних/результатов) и ⚙-меню настроек (шрифт, поиск в файлах, полные пути, сортировка, 4 галочки диктовки, о программе), плюс обработчик всех команд меню и хелперы буфера обмена/Explorer. Вынесено из main.rs (рефактор god-object, FPF D-5). Флаг MENU_ACTIVE живёт здесь — wndproc читает его, чтобы тики таймера не закрывали модальный TrackPopupMenu (Phase-14 fix).</purpose>
+      <path>src/menu.rs</path>
+      <depends>M-STATE, M-CONFIG, M-SETTINGS, M-PROMPT, M-TOOLTIP, M-VOICE, M-SEARCHBOX, M-MAIN</depends>
+      <verification-ref>V-M-MENU</verification-ref>
+      <annotations>
+        <fn-show_menu PURPOSE="Меню по ПКМ: «Скопировать ссылку»/«Открыть в проводнике» (серые без menu_link) + при minimal=false палитра цветов и метка" />
+        <fn-show_settings_menu PURPOSE="⚙-меню настроек с галочками из конфига: шрифт, поиск в файлах, полные пути, сортировка, keep-clipboard/always-on/trailing-space/streaming, о программе" />
+        <fn-handle_command PURPOSE="Обработчик команд меню: применить настройку (персист config.save + rebuild), скопировать/открыть путь, задать цвет/метку проекта" />
+        <static-MENU_ACTIVE PURPOSE="Флаг «открыто модальное меню»: wndproc глушит WM_TIMER, иначе первый же тик закрывает TrackPopupMenu" />
+      </annotations>
+    </M-MENU>
 
     <M-WINENUM NAME="WindowEnum" TYPE="CORE_LOGIC" STATUS="implemented">
       <purpose>Перечисление видимых top-level окон, определение приложения по имени процесса И классу окна, извлечение имени проекта/документа из заголовка по правилам приложения. v0.4: класс окна (GetClassNameW) в кортеже окна; для классической консоли (ConsoleWindowClass) реальный shell (cmd/powershell/pwsh) разрешается по дереву процессов через conhost.</purpose>
@@ -374,6 +387,10 @@
     <CrossLink from="M-MAIN" to="M-SEARCHBOX" relation="wndproc: create_search_box при старте; WM_COMMAND → on_command; WM_CTLCOLOREDIT → ctl_color_edit; set_search_cue (индексация); load_history при инициализации App" />
     <CrossLink from="M-SEARCHBOX" to="M-MAIN" relation="обратный вызов оркестрации поиска: EN_CHANGE → run_live_search, Enter → commit_search_enter (сам поиск/потоки остаются в M-MAIN)" />
     <CrossLink from="M-SEARCHBOX" to="M-TOOLTIP" relation="субкласс поля: WM_MOUSEMOVE → arm_tip(TIP_SEARCHBOX) показывает правила поиска, WM_MOUSELEAVE → arm_tip(-1)" />
+    <CrossLink from="M-MAIN" to="M-MENU" relation="wndproc: ПКМ по строке → show_menu (menu_link заранее посчитан), «⚙» в шапке → show_settings_menu; WM_COMMAND (не searchbox) → handle_command; WM_TIMER читает MENU_ACTIVE" />
+    <CrossLink from="M-MENU" to="M-MAIN" relation="применение настроек: rebuild_rows/rebuild_fonts (шрифт, сортировка), spawn_files_index + run_live_search (scope «+Файлы»)" />
+    <CrossLink from="M-MENU" to="M-PROMPT" relation="пункт «Метка…» → prompt::prompt_text; результат пишется в config.set_label" />
+    <CrossLink from="M-MENU" to="M-SEARCHBOX" relation="scope «+Файлы» → set_search_cue(«⏳ Индексирую файлы…») пока строится индекс" />
     <CrossLink from="M-RENDER" to="M-STATE" relation="paint читает &amp;App (состояние для отрисовки)" />
     <CrossLink from="M-MAIN" to="M-RENDER" relation="делегирует отрисовку и обработку кликов" />
     <CrossLink from="M-MAIN" to="M-CONFIG" relation="загружает/сохраняет конфигурацию" />

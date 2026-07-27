@@ -369,6 +369,19 @@
         <scenario-4 kind="failure">Рефактор (вынос из main.rs, FPF D-5) не меняет поведение — 102/102 и 0 warnings до и после; ручной smoke UI обязателен (субкласс/фокус не покрыты автотестами)</scenario-4>
       </scenarios>
     </V-M-SEARCHBOX>
+
+    <V-M-MENU MODULE="M-MENU" PRIORITY="medium">
+      <test-files><file>—</file></test-files>
+      <module-checks>
+        <check-1>cargo test (debug компилируется; show_menu/show_settings_menu/handle_command/MENU_ACTIVE резолвятся в wndproc через use menu::{...})</check-1>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">ПКМ по строке окна → меню с палитрой и меткой; ПКМ по недавнему/результату → minimal-меню (только путь/проводник); «Скопировать ссылку» кладёт путь в буфер, «Открыть в проводнике» открывает папку или /select для документа</scenario-1>
+        <scenario-2 kind="success">⚙ → галочки отражают конфиг; переключение персистится (config.save) и применяется сразу: шрифт → rebuild_fonts, сортировка → rebuild_rows, «+Файлы» → spawn_files_index + cue + run_live_search</scenario-2>
+        <scenario-3 kind="failure">Меню не закрывается само: пока открыто, MENU_ACTIVE=true и WM_TIMER в wndproc выходит сразу (Phase-14 regression — dwell-тултип 0.5с и refresh 1с не трогают окно)</scenario-3>
+        <scenario-4 kind="failure">Тоггл «Микрофон всегда включён» во время записи игнорируется: config не меняется, в лог идёт «ID_MIC_ALWAYS: игнор» (FPF D-14)</scenario-4>
+      </scenarios>
+    </V-M-MENU>
   </ModuleVerification>
 
   <PhaseGates>
