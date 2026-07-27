@@ -954,6 +954,22 @@
         <on-fail>grace-fix; откат коммитом</on-fail>
       </checkpoint>
     </Phase-26>
+
+    <Phase-27 name="Индикация «whisper не запущен» + автозапуск сервера диктовки" status="done">
+      <goal>Сервер распознавания мог лежать (Docker ещё грузится после входа в систему; либо контейнер остановили руками — restart:unless-stopped его НЕ поднимает), и узнать об этом можно было только нажав хоткей и не получив текст. Дать явную индикацию в панели + поднимать сервер при входе в систему и по клику.</goal>
+      <step-1 module="M-STT" status="done" verification="V-M-STT">is_alive(url, timeout_ms): GET /health с коротким таймаутом, true только при HTTP 200 (закрытый порт/не-200 -&gt; false, без зависания). Чистая health_url: URL /transcribe -&gt; /health того же сервера. Тесты health_url_keeps_host_port, is_alive_false_on_closed_port</step-1>
+      <step-2 module="M-VOICE" status="done" verification="V-M-VOICE">Атомик WHISPER_OK (стартует true — не мигать баннером до первого опроса) + whisper_ok(); spawn_health_check(hwnd,url) опрашивает в ФОНОВОМ потоке (блокирующий вызов не на UI), гейт HEALTH_INFLIGHT не копит потоки на молчащем сервере; при СМЕНЕ статуса PostMessage(WM_APP_HEALTH) + запись в voice.log</step-2>
+      <step-3 module="M-STATE,M-RENDER" status="done" verification="V-M-RENDER">Поле App.whisper_ok; strip_h(state, whisper_ok) — нижний баннер получает высоту и когда голос простаивает, но сервер лежит; paint рисует тёмно-красное «⚠ Whisper не запущен — клик, чтобы поднять» (приглушённый C_WHISPER_DOWN, не кричит как «ЗАПИСЬ»)</step-3>
+      <step-4 module="M-MAIN" status="done" verification="V-M-MAIN">Опрос раз в 15с на тике таймера (HEALTH_EVERY_TICKS) + копирование статуса в App; WM_APP_HEALTH -&gt; resize+repaint сразу (не ждать тика); клик по нижней полосе при поднятом баннере -&gt; spawn_whisper_start (docker start whisper-dictate в фоне, CREATE_NO_WINDOW)</step-4>
+      <step-5 module="M-MAIN" status="done" verification="V-M-VOICE">tools/start-whisper.ps1: ждёт готовности движка Docker (docker info), идемпотентный compose up -d, ждёт /health, лог в %APPDATA%\claudebar\start-whisper.log. Файл в UTF-8 с BOM (powershell 5.1 иначе читает кириллицу как ANSI и падает на парсинге); ErrorActionPreference=Continue (docker compose пишет прогресс в stderr). tools/start-whisper.vbs — тихий запуск, копия в папке «Автозагрузка»</step-5>
+      <checkpoint>
+        <tests>cargo test 104/104 (в т.ч. health_url/is_alive); cargo build --release чист</tests>
+        <smoke>ПРОЙДЕН на живой сборке: docker stop whisper-dictate -&gt; детект за 6с (voice.log «health: whisper НЕ отвечает», окно +STRIP, баннер); start-whisper.ps1 поднял руками остановленный контейнер -&gt; «health: whisper поднялся» за 6с, баннер снят. Баннер визуально пользователем НЕ подтверждён (агент окно панели не видит)</smoke>
+        <artifacts>graph/plan/verification синхронны; XML well-formed (python minidom, т.к. grace lint читает только .grace)</artifacts>
+        <on-fail>grace-fix; откат коммитом d6b86cf</on-fail>
+      </checkpoint>
+      <risk id="env-27">Свежесобранный exe при voicealwayson=1 виснет на захвате микрофона до создания окна (поведенческий анализ Касперского на неизвестном бинаре) — воспроизведено контрольным экспериментом на сборке БЕЗ правок, кодом не лечится. Обход: exe/папка в доверенные программы Касперского. Диагностика старта — новая строка RegisterHotKey в voice.log; FindWindow/EnumWindows из агентской сессии окно панели не видят. Подробности — V-M-VOICE scenario-0</risk>
+    </Phase-27>
   </ImplementationOrder>
 
   <ExecutionPolicy>

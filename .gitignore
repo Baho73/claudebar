@@ -5,3 +5,6 @@ claudebar.ini
 _*.txt
 -=letter=-.txt
 image.png
+# клон спеки FPF (github.com/ailev/FPF) — сторонний репозиторий со своим .git, ~11,8 МБ.
+# Нужен локально для маршрутов FPF-ревью; в историю проекта не тянем.
+/.fpf-spec
