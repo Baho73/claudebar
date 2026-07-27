@@ -327,6 +327,15 @@
         <scenario-7 kind="regression">FPF D-14: тоггл «микрофон всегда вкл» во время записи сохранял конфиг, но set_always_on был no-op (не Idle) -&gt; ini/галочка разъезжались с реальностью. Фикс: set_always_on-&gt;bool; ID_MIC_ALWAYS меняет конфиг ТОЛЬКО при успехе (на Idle). Ручной smoke: тоггл во время записи не меняет галочку</scenario-7>
       </scenarios>
     </V-M-VOICE>
+    <V-M-STATE MODULE="M-STATE" PRIORITY="low">
+      <test-files><file>—</file></test-files>
+      <module-checks>
+        <check-1>cargo build --release (тип App компилируется; потребители видят через ре-экспорт crate::App)</check-1>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">M-STATE — держатель данных без логики: покрывается компиляцией + модульными тестами потребителей (M-RENDER/M-MAIN). Рефактор App-&gt;state (вынос из main.rs, FPF D-5) не меняет поведение — все тесты зелёные до и после (102/102)</scenario-1>
+      </scenarios>
+    </V-M-STATE>
   </ModuleVerification>
 
   <PhaseGates>

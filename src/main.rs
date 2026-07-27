@@ -47,10 +47,14 @@ mod sdaemon;
 mod search;
 mod settings;
 mod signal;
+mod state;
 mod stt;
 mod transform;
 mod voice;
 mod win_enum;
+
+// App/APP живут в M-STATE; ре-экспорт, чтобы crate::App работал для M-RENDER и прочих (рефактор god-object).
+pub(crate) use state::{App, APP};
 
 use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -142,39 +146,7 @@ const C_SEARCH_BG: u32 = 0x00ECC86D; // фон поля поиска = пали�
 const C_SEARCH_TXT: u32 = 0x003C2319; // тёмный текст поля (RGB 25,35,60)
 
 // ---------- состояние ----------
-pub(crate) struct App {
-    pub(crate) hinst: HINSTANCE,
-    pub(crate) items: Vec<win_enum::WinItem>,
-    pub(crate) recent: Vec<recent::RecentDoc>,
-    pub(crate) rows: Vec<render::Row>,
-    pub(crate) config: Config,
-    pub(crate) font_main: HFONT,
-    pub(crate) font_small: HFONT,
-    pub(crate) hover: i32,
-    pub(crate) menu_target: usize, // индекс строки, по которой открыли меню
-    pub(crate) menu_link: Option<(String, bool)>, // цель «ссылка/проводник»: (путь, is_file) — Phase-14
-    pub(crate) last_h: i32,
-    pub(crate) bell: HashSet<String>, // имена проектов со «звоночком» (lower) — подсветка строк (fallback)
-    pub(crate) bell_paths: HashSet<String>, // полные cwd со «звоночком» (lower) — точная подсветка по пути (Phase-15)
-    pub(crate) busy: HashSet<String>, // имена проектов с активным .busy (lower) — бегущие точки (fallback) — Phase-17
-    pub(crate) busy_paths: HashSet<String>, // полные cwd с активным .busy (lower) — точные точки по пути — Phase-17
-    pub(crate) sessions: Vec<signal::Sess>, // живые сессии-агенты (Phase-26 presence): агент + состояние на квадрат
-    pub(crate) anim_frame: u32, // кадр анимации бегущих точек — Phase-17
-    pub(crate) search_hits: Vec<search::FolderHit>, // папки-совпадения поиска (Phase-12)
-    pub(crate) search_edit: HWND, // EDIT-поле поиска в шапке (null = скрыто)
-    pub(crate) tooltip: HWND, // tracking-подсказка (путь/сниппет/правила) — Phase-13 Ф-B
-    pub(crate) tip_row: i32, // под подсказкой: -1 нет, -2 строка поиска, >=0 индекс строки
-    pub(crate) search_history: Vec<String>, // недавние запросы (свежие первыми) — Phase-13
-    pub(crate) hist_list: HWND, // выпадающий список истории (child LISTBOX, скрыт)
-    pub(crate) reorder: bool, // режим перетаскивания: ручки видны, ✕ скрыт
-    pub(crate) drag: Option<i32>, // индекс перетаскиваемой строки во время drag
-    pub(crate) voice: voice::Voice, // голосовой ввод: стейт-машина + активный Recorder — Phase-19
-    pub(crate) voice_target: HWND, // окно-получатель вставки (foreground на старте записи) — Phase-19
-}
-
-thread_local! {
-    static APP: RefCell<Option<App>> = RefCell::new(None);
-}
+// App / APP вынесены в M-STATE (src/state.rs); здесь доступны через ре-экспорт выше.
 
 thread_local! {
     // старый WNDPROC EDIT-поля поиска (для субкласса Enter/Esc)

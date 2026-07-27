@@ -10,7 +10,7 @@
     <M-MAIN NAME="Main" TYPE="ENTRY_POINT" STATUS="partial">
       <purpose>Точка входа: GetModuleHandle, регистрация класса, создание topmost-окна, таймер опроса, message loop, диспетчеризация в обработчики. v0.3: опрос M-SIGNAL (bell_keys + reconcile) на тике, проброс bell в paint, зоны клика и режим reorder. v0.4: шрифт панели читается из конфига (make_font(face,…)); «⚙» в шапке открывает меню настроек → M-SETTINGS.choose_font → rebuild_fonts + repaint. v0.5 (Phase-14): в меню окна «Скопировать ссылку»/«Открыть в проводнике» — путь проекта (M-SEARCH.folder_for_project) или документа (фоновая карта doc_paths из Recent .lnk). Phase-15/16: идентичность проекта по полному пути из заголовка (extract_project_path) + нумерация дублей «(N)»; пункт ⚙ «Полные пути» (configure_editor_titles); настройка порядка окон sort=alpha|recent с картой ordinal первого появления.</purpose>
       <path>src/main.rs</path>
-      <depends>M-CONFIG, M-WINENUM, M-ACTIVATE, M-RENDER, M-RECENT, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX, M-VOICE, M-PASTE</depends>
+      <depends>M-STATE, M-CONFIG, M-WINENUM, M-ACTIVATE, M-RENDER, M-RECENT, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX, M-VOICE, M-PASTE</depends>
       <verification-ref>V-M-MAIN</verification-ref>
       <annotations>
         <fn-main PURPOSE="Инициализация приложения и цикл сообщений" />
@@ -25,6 +25,17 @@
         <fn-rebuild_fonts PURPOSE="Пересоздать font_main/font_small после смены шрифта в настройках (удалить старые HFONT) — v0.4" />
       </annotations>
     </M-MAIN>
+
+    <M-STATE NAME="State" TYPE="DATA_LAYER" STATUS="implemented">
+      <purpose>Держатель состояния панели: структура App (окна/недавние/строки/конфиг/шрифты/сигналы/сессии/поиск/голос) и thread_local APP на UI-потоке. Логики нет. Вынесено из main.rs (рефактор god-object, FPF D-5) — развязка для отделения UI-кусков (tooltip/searchbox/menu/prompt) в свои файлы.</purpose>
+      <path>src/state.rs</path>
+      <depends>M-CONFIG, M-WINENUM, M-RECENT, M-RENDER, M-SEARCH, M-SIGNAL, M-VOICE</depends>
+      <verification-ref>V-M-STATE</verification-ref>
+      <annotations>
+        <type-App PURPOSE="Состояние UI-панели: 30+ полей (окна, недавние, строки, конфиг, шрифты, hover/drag, bell/busy, сессии, поиск+история, голос)" />
+        <static-APP PURPOSE="thread_local RefCell&lt;Option&lt;App&gt;&gt; — единственный экземпляр состояния на UI-потоке" />
+      </annotations>
+    </M-STATE>
 
     <M-WINENUM NAME="WindowEnum" TYPE="CORE_LOGIC" STATUS="implemented">
       <purpose>Перечисление видимых top-level окон, определение приложения по имени процесса И классу окна, извлечение имени проекта/документа из заголовка по правилам приложения. v0.4: класс окна (GetClassNameW) в кортеже окна; для классической консоли (ConsoleWindowClass) реальный shell (cmd/powershell/pwsh) разрешается по дереву процессов через conhost.</purpose>
@@ -80,7 +91,7 @@
     <M-RENDER NAME="Render" TYPE="UI_COMPONENT" STATUS="implemented">
       <purpose>Построение списка типизированных строк (заголовок секции, окно, под-заголовок недавних, недавний документ, «показать все»), отрисовка через GDI с двойной буферизацией, зональный hit-testing, контекст-меню цвет/метка. v0.3: иконки секций (M-ICON), кнопка ✕ и ручки drag, подсветка «звенящих» строк, ручной порядок. v0.4: глиф «⚙» (настройки) в шапке рядом с «✕».</purpose>
       <path>src/render.rs</path>
-      <depends>M-CONFIG, M-WINENUM, M-RECENT, M-ICON, M-SEARCH, M-SIGNAL, M-VOICE</depends>
+      <depends>M-STATE, M-CONFIG, M-WINENUM, M-RECENT, M-ICON, M-SEARCH, M-SIGNAL, M-VOICE</depends>
       <verification-ref>V-M-RENDER</verification-ref>
       <annotations>
         <fn-build_rows PURPOSE="Сгруппировать окна и недавние в строки по секциям: ручной порядок первичен, остальные по sort= (alpha=имя | recent=ordinal), новое окно -> вниз; showall (Row::RecentMore при &gt;6) — Phase-16. Аргумент query: при активном поиске (≥2 симв.) недавние фильтруются по имени (name_matches) и показываются даже из свёрнутого блока и за лимитом «6»; секция видна при наличии окон или совпавших недавних — fix(grace-fix)" />
@@ -317,6 +328,8 @@
     </M-VOICE>
 
     <CrossLink from="M-MAIN" to="M-WINENUM" relation="опрашивает окна по таймеру" />
+    <CrossLink from="M-MAIN" to="M-STATE" relation="владеет App/APP (состояние UI-потока); строит и опрашивает" />
+    <CrossLink from="M-RENDER" to="M-STATE" relation="paint читает &amp;App (состояние для отрисовки)" />
     <CrossLink from="M-MAIN" to="M-RENDER" relation="делегирует отрисовку и обработку кликов" />
     <CrossLink from="M-MAIN" to="M-CONFIG" relation="загружает/сохраняет конфигурацию" />
     <CrossLink from="M-RENDER" to="M-CONFIG" relation="читает цвета/метки/свёрнутость" />
