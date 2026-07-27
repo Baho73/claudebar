@@ -1,5 +1,5 @@
 // FILE: src/render.rs
-// VERSION: 1.17.0
+// VERSION: 1.18.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Построение строк-секций и отрисовка панели (GDI, двойной буфер) с группировкой по приложению.
 //   SCOPE: геометрия/цвета, Row, build_rows, paint (секции+иконки+окна+недавние+подсветка звоночка), resize, row_at.
@@ -15,6 +15,7 @@
 //   name_matches      - чистое: имя недавнего подходит запросу (token-AND, подстрока, регистронезависимо)
 //   paint             - отрисовать строки (секции + окна + ✕/ручки + подсветка drag + квадраты-статусы сессий)
 //   agent_color       - цвет квадрата по агенту (Claude бирюза / Kimi фиолет / нейтраль) — Phase-26
+//   squares_fit      - чистое: сколько квадратов-статусов влезает в доступную ширину строки (клип полосы, D-28)
 //   perimeter_point   - чистое: точка на периметре квадрата по параметру t (для бегущей змейки) — Phase-26
 //   draw_square_outline / draw_marching_dots - контур квадрата и бегущая змейка по периметру — Phase-26
 //   resize            - подогнать высоту окна под число строк
@@ -24,7 +25,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.17.0 - Phase-26 presence: квадрат на КАЖДУЮ живую сессию-агента (app.sessions/sess_matches_row), цвет по агенту (agent_color: Claude бирюза C_BUSY / Kimi фиолет C_KIMI / нейтраль); простой=контур, работает=контур+змейка, готово=золотая заливка. squares_to_draw убрана (заменена per-session отрисовкой).
+//   LAST_CHANGE: v1.18.0 - FPF D-28: чистая squares_fit — полоса квадратов клипается по доступной ширине до name_right (раньше min() зажимала только начало, и при 2+ сессиях хвост уезжал под метку/за край); «+» рисуется, когда что-то не поместилось. Phase-27: strip_h(state, whisper_ok) + баннер «Whisper не запущен». Тест squares_fit_clamps_strip_to_available_width.
+//   v1.17.0 - Phase-26 presence: квадрат на КАЖДУЮ живую сессию-агента (app.sessions/sess_matches_row), цвет по агенту (agent_color: Claude бирюза C_BUSY / Kimi фиолет C_KIMI / нейтраль); простой=контур, работает=контур+змейка, готово=золотая заливка. squares_to_draw убрана (заменена per-session отрисовкой).
 //   v1.16.0 - Phase-26: редизайн квадратов-статусов. Простаивает — пустой нейтральный контур (≥1 на КАЖДОЙ строке-окне); работает — приглушённый контур + бегущая «змейка» из точек по периметру (perimeter_point/draw_marching_dots, сдвиг по anim_frame); готово — РОВНАЯ золотая заливка (убрано яркое мигание). Чистая perimeter_point + тест. Убраны pulse_color/dim_color. (цвет по агенту — следующий шаг, нужен тег агента в сигнале)
 //   v1.15.0 - Phase-25: квадраты-статусы сессий на строке окна вместо бегущих точек — бирюзовый пульс (работает, count_for_row по busy_sessions) + золотой мигающий (готово, done_sessions), кап MAX_SQUARES=5 («+» при переборе). Чистая squares_to_draw (золото первым под капом) + тест; хелперы pulse_color/dim_color. dots_for_frame удалена (заменена). C_BUSY. Полоса-звоночек без изменений.
 //   v1.14.0 - fix(grace-fix): поиск не находил недавние. build_rows получил query; при активном запросе (≥2 симв.) недавние фильтруются по имени (name_matches, token-AND ci) и показываются даже из свёрнутого блока и за лимитом «6»; секция при поиске видна, если есть окна или совпавшие недавние. Чистая name_matches + тесты.
@@ -405,10 +407,16 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 DrawTextW(mem, &mut nb, &mut nr, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
                 let mut x = (42 + (nr.right - nr.left) + 6).min(name_right - (SQ_W + SQ_GAP));
                 let sq_top = top + (ROW - SQ_W) / 2;
+                // FPF D-28: min() выше зажимает только НАЧАЛО полосы — при 2+ сессиях хвост
+                // уезжал под метку/✕ (метка рисуется поверх) или за край панели. Считаем, сколько
+                // квадратов реально влезает до name_right, и рисуем только их.
+                let avail = name_right - x;
                 if sq.is_empty() {
-                    draw_square_outline(mem, x, sq_top, C_IDLE); // нет сессии -> нейтральный пустой контур
+                    if avail >= SQ_W {
+                        draw_square_outline(mem, x, sq_top, C_IDLE); // нет сессии -> нейтральный пустой контур
+                    }
                 } else {
-                    let show = sq.len().min(MAX_SQUARES);
+                    let show = squares_fit(avail, sq.len().min(MAX_SQUARES));
                     for s in &sq[..show] {
                         let col = agent_color(&s.agent);
                         match s.state {
@@ -426,9 +434,10 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                         }
                         x += SQ_W + SQ_GAP;
                     }
-                    if sq.len() > MAX_SQUARES {
+                    // «+» — если что-то не поместилось (кап MAX_SQUARES или не хватило ширины)
+                    if sq.len() > show && name_right - x >= 8 {
                         SetTextColor(mem, rgb(C_DIM.0, C_DIM.1, C_DIM.2));
-                        dt(mem, "+", RECT { left: x, top, right: x + 12, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+                        dt(mem, "+", RECT { left: x, top, right: name_right, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
                     }
                 }
                 if app.reorder {
@@ -734,6 +743,20 @@ fn perimeter_point(side: i32, t: i32) -> (i32, i32) {
     }
 }
 
+// START_CONTRACT: squares_fit
+//   PURPOSE: Сколько квадратов-статусов помещается в доступную ширину строки (FPF D-28).
+//   INPUTS: { avail_w: i32 - ширина от начала полосы до правой границы зоны имени; want: usize - сколько хотим }
+//   OUTPUTS: { usize - 0..=want; 0 если не влезает даже один квадрат }
+//   SIDE_EFFECTS: none
+//   NOTE: Шаг = SQ_W + SQ_GAP, но последнему квадрату зазор справа не нужен — отсюда +SQ_GAP в числителе.
+// END_CONTRACT: squares_fit
+pub fn squares_fit(avail_w: i32, want: usize) -> usize {
+    if avail_w < SQ_W || want == 0 {
+        return 0;
+    }
+    (((avail_w + SQ_GAP) / (SQ_W + SQ_GAP)) as usize).min(want)
+}
+
 // Пустой контур квадрата SQ_W x SQ_W (толщина 1px).
 unsafe fn draw_square_outline(mem: HDC, x: i32, y: i32, col: (u8, u8, u8)) {
     let s = SQ_W;
@@ -881,6 +904,18 @@ mod tests {
         assert_eq!(perimeter_point(10, 35), (0, 5)); // левая грань
         assert_eq!(perimeter_point(10, 40), (0, 0)); // оборот (rem_euclid)
         assert_eq!(perimeter_point(10, -1), (0, 1)); // отрицательный t оборачивается (-1 -> 39)
+    }
+
+    #[test]
+    fn squares_fit_clamps_strip_to_available_width() {
+        // SQ_W=10, SQ_GAP=3 -> шаг 13, последний без зазора
+        assert_eq!(squares_fit(9, 5), 0); // не влезает даже один
+        assert_eq!(squares_fit(10, 5), 1); // ровно один
+        assert_eq!(squares_fit(22, 5), 1); // на второй не хватает 1px
+        assert_eq!(squares_fit(23, 5), 2); // 10+3+10
+        assert_eq!(squares_fit(1000, 3), 3); // ограничение сверху — want
+        assert_eq!(squares_fit(1000, 0), 0);
+        assert_eq!(squares_fit(-50, 5), 0); // отрицательная ширина (имя длиннее строки)
     }
 
     #[test]

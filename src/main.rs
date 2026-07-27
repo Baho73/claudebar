@@ -630,8 +630,13 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             }
             m if m == voice::WM_APP_VOICE_DONE => {
                 // распознавание готово: lparam = id результата в реестре (НЕ сырой указатель);
-                // чужое сообщение с мусорным id -> None -> пустая строка, без UB (audit #3)
-                let text = voice::take_result(lp.0 as u64).unwrap_or_default();
+                // чужое сообщение с мусорным id -> None -> пустая строка, без UB (audit #3).
+                // FPF D-24: неизвестный id значит «это не наш воркер» — состояние НЕ трогаем
+                // (иначе любой процесс мог сбросить идущее распознавание в Idle и дать сигнал).
+                let Some(text) = voice::take_result(lp.0 as u64) else {
+                    voice::vlog("WM_APP_VOICE_DONE: чужой/просроченный id — игнор");
+                    return LRESULT(0);
+                };
                 let target = APP.with(|c| {
                     c.borrow_mut()
                         .as_mut()
@@ -648,8 +653,15 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 ));
                 voice::cue_end(); // звук конца распознавания
                 if !text.is_empty() {
-                    // вернуть фокус в исходное поле, если он увёлся, и вставить
-                    if !target.0.is_null() && GetForegroundWindow() != target {
+                    // Вернуть фокус в исходное поле, если он увёлся, и вставить.
+                    // FPF D-31: окно-получатель могло закрыться за время распознавания, а HWND —
+                    // переиспользоваться системой под чужое окно. Активируем только живой хендл,
+                    // иначе вставляем туда, где фокус сейчас (лучше, чем диктовка в чужое окно).
+                    let alive = !target.0.is_null() && IsWindow(target).as_bool();
+                    if !alive && !target.0.is_null() {
+                        voice::vlog("target закрыт/переиспользован -> вставка в текущий фокус (D-31)");
+                    }
+                    if alive && GetForegroundWindow() != target {
                         activate::activate(target);
                     }
                     let keep = APP.with(|c| {
@@ -848,8 +860,17 @@ fn spawn_whisper_start() {
     });
 }
 
-// Построить/освежить в фоне карты для меню «ссылка/проводник»: пути документов (резолв .lnk Recent
-// через COM) и папки проектов (DB-скан chats_db). Не морозит UI.
+// START_CONTRACT: spawn_doc_paths
+//   PURPOSE: Построить/освежить в фоне карты для меню «ссылка/проводник»: пути документов
+//            (резолв .lnk из Windows Recent через COM) и папки проектов (DB-скан chats_db).
+//   INPUTS: {}
+//   OUTPUTS: { () - результат в статиках DOC_PATHS / PROJ_FOLDERS }
+//   SIDE_EFFECTS: спавн потока, COM-резолв ярлыков, чтение chats_db; UI не морозит (D-02)
+//   STALENESS: карта пересобирается на старте и раз в ~3 мин (INDEX_EVERY_TICKS), поэтому путь
+//              в меню живёт до 3 мин после удаления/переноса файла. Потребитель обязан проверять
+//              существование перед использованием — см. open_in_explorer_select (FPF D-20).
+//   LINKS: M-MAIN, M-MENU (потребитель), M-SEARCH (project_folders)
+// END_CONTRACT: spawn_doc_paths
 fn spawn_doc_paths() {
     if DOC_PATHS_BUILDING.swap(true, Ordering::SeqCst) {
         return;

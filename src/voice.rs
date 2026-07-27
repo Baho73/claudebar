@@ -1,5 +1,5 @@
 // FILE: src/voice.rs
-// VERSION: 1.4.0
+// VERSION: 1.5.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Оркестрация голосового ввода: стейт-машина idle->recording->transcribing, спавн worker-потока распознавания, доставка текста в UI.
 //   SCOPE: VoiceState/VoiceEvent + чистая next_state; Voice (toggle: старт/стоп записи + спавн worker stt->transform; on_done; state; set_always_on). Worker шлёт текст в UI через PostMessage(WM_APP_VOICE_DONE).
@@ -27,11 +27,13 @@
 //   Voice::on_partial    - приём сегментов: committed_segs -> фикс + сдвиг окна по end-тайму (Phase-24)
 //   WM_APP_STREAM_PARTIAL - оконное сообщение стрим-worker -> UI (lparam = id сегментов в реестре) — Phase-24
 //   stash_partial/take_partial - реестр сегментов стрим-захода по id
+//   whisper_ok / spawn_health_check / WM_APP_HEALTH - фоновый опрос /health сервера диктовки и сигнал смены статуса в UI (Phase-27)
 //   StreamState          - состояние стриминга: committed_text, window_start(сэмплы), prev_texts, rate
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.4.0 - Phase-24 step-5 (стриминг, вариант A): StreamState + stream_tick (срез окна [window_start..now] -> фон transcribe_segments -> WM_APP_STREAM_PARTIAL, троттлинг STREAM_TICK_SECS, без наложения) + on_partial (committed_segs LocalAgreement-2 -> committed_text + сдвиг window_start по end-тайму сегмента × rate). stop_to_transcribe: при streaming отдаёт хвост+committed (prefix) в spawn_worker (merge_committed+process на стопе, разом). Реестр stash_partial/take_partial. Только при voice_streaming; иначе legacy. Сброс stream в on_done/watchdog.
+//   LAST_CHANGE: v1.5.0 - Phase-27: фоновый health-опрос whisper (WHISPER_OK/whisper_ok/spawn_health_check/WM_APP_HEALTH, гейт HEALTH_INFLIGHT). FPF D-25: MAX_RECORD_SECS=600 — потолок одной записи в poll (забытая диктовка не растёт в памяти и не морозит UI на encode_wav).
+//   v1.4.0 - Phase-24 step-5 (стриминг, вариант A): StreamState + stream_tick (срез окна [window_start..now] -> фон transcribe_segments -> WM_APP_STREAM_PARTIAL, троттлинг STREAM_TICK_SECS, без наложения) + on_partial (committed_segs LocalAgreement-2 -> committed_text + сдвиг window_start по end-тайму сегмента × rate). stop_to_transcribe: при streaming отдаёт хвост+committed (prefix) в spawn_worker (merge_committed+process на стопе, разом). Реестр stash_partial/take_partial. Только при voice_streaming; иначе legacy. Сброс stream в on_done/watchdog.
 //   v1.3.0 - fix(grace-fix, FPF D-13/D-14): (D-13) воркер оборачивает stt/transform в catch_unwind — паника (panic=unwind) не оставляет UI в Transcribing, текст постится всегда; watchdog в poll (transcribe_start + TRANSCRIBE_TIMEOUT_SECS=150) возвращает зависшую Transcribing в Idle. (D-14) set_always_on -> bool: тоггл «микрофон всегда вкл» во время записи не применяется и НЕ меняет конфиг (ini/галочка не разъезжаются с реальностью).
 //   v1.2.1 - fix(grace-fix, audit #3): worker->UI отдаёт текст через id-реестр (stash_result/take_result), а не Box::into_raw в lparam. Раньше обработчик WM_APP_VOICE_DONE безусловно разыменовывал lparam как *mut String -> любой процесс мог послать мусор -> UB/порча кучи. Теперь мусорный id -> None. Тест stash_take_result_roundtrip_and_unknown_none.
 //   v1.2.0 - Phase-22: always-on микрофон + pre-roll. Voice держит Option<Mic>; set_always_on(on) стартует/дропает персистентный Mic (только на Idle). toggle/stop/poll/level ветвятся: при Mic -> arm/disarm_take (тёплый поток, pre-roll, первое слово не теряется), иначе legacy Recorder (cold-start). Галочка деф. ВЫКЛ (M-CONFIG voice_always_on).
@@ -105,6 +107,7 @@ pub fn take_partial(id: u64) -> Option<Vec<crate::stt::Segment>> {
 // Авто-стоп записи по молчанию (чтобы не писать часами, если забыл выключить).
 const SILENCE_STOP_SECS: f32 = 2.0; // была речь -> стоп после стольких секунд тишины
 const NO_SPEECH_CAP_SECS: f32 = 8.0; // речи вообще не было -> стоп через столько
+const MAX_RECORD_SECS: f32 = 600.0; // потолок одной записи (10 мин): забытая диктовка не растёт вечно (D-25)
 const TRANSCRIBE_TIMEOUT_SECS: f32 = 150.0; // watchdog: зависшая Transcribing (паника воркера/отказ Post) -> Idle (D-13)
 const STREAM_TICK_SECS: f32 = 3.0; // не чаще этого — стрим-заход (Phase-24)
 const STREAM_MARGIN_SEGS: usize = 1; // держать последний сегмент незафиксированным (плавающий хвост)
@@ -409,14 +412,19 @@ impl Voice {
         } else {
             self.rec.as_ref().map(|rec| (rec.had_speech(), rec.trailing_silence(), rec.duration()))
         };
-        let stop = match m {
-            Some((had, trailing, dur)) => {
-                (had && trailing >= SILENCE_STOP_SECS) || (!had && dur >= NO_SPEECH_CAP_SECS)
-            }
-            None => false,
+        let (stop, why) = match m {
+            // FPF D-25: жёсткий потолок длительности. Без него забытая запись (говорят рядом, тишины
+            // нет) копится часами: буфер растёт в памяти, а encode_wav на стопе делает вторую полную
+            // копию на UI-потоке — фриз тем длиннее, чем дольше писали.
+            Some((_, _, dur)) if dur >= MAX_RECORD_SECS => (true, "лимит длительности"),
+            Some((had, trailing, dur)) => (
+                (had && trailing >= SILENCE_STOP_SECS) || (!had && dur >= NO_SPEECH_CAP_SECS),
+                "тишина",
+            ),
+            None => (false, ""),
         };
         if stop {
-            self.stop_to_transcribe(hwnd, cfg, "тишина");
+            self.stop_to_transcribe(hwnd, cfg, why);
             return true;
         }
         false

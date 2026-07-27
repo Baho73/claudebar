@@ -1,5 +1,5 @@
 // FILE: src/menu.rs
-// VERSION: 1.0.0
+// VERSION: 1.1.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Контекст-меню окна/строки и ⚙-меню настроек + обработчик команд меню (цвет, метка, ссылка/проводник, галочки настроек).
 //   SCOPE: show_menu / show_settings_menu (TrackPopupMenu + флаг MENU_ACTIVE), handle_command (все ID_*), copy_to_clipboard, open_in_explorer_select.
@@ -16,11 +16,13 @@
 //   show_settings_menu     - ⚙-меню: шрифт, поиск в файлах, полные пути, сортировка, 4 голосовые галочки, о программе
 //   handle_command         - обработчик всех команд меню (ID_SET_FONT..ID_STREAMING, ID_COPY_LINK/ID_OPEN_DIR, палитра, метка)
 //   copy_to_clipboard      - положить текст в буфер обмена (CF_UNICODETEXT), корректное владение hmem (D-03)
+//   (open_in_explorer_select проверяет существование пути и отклоняет кавычку — D-20/D-21)
 //   open_in_explorer_select - открыть Проводник с выделением файла: explorer.exe /select,"<path>"
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.0.0 - рефактор: меню и обработчик команд вынесены из main.rs в отдельный UI-модуль (M-MENU), без изменения поведения.
+//   LAST_CHANGE: v1.1.0 - FPF D-20/D-21: open_in_explorer_select проверяет существование пути (протухшая карта путей — до 3 мин) и падает на ближайшую живую папку-родителя вместо пустого окна «Библиотеки»; путь с кавычкой отклоняется (разорвал бы аргумент командной строки).
+//   v1.0.0 - рефактор: меню и обработчик команд вынесены из main.rs в отдельный UI-модуль (M-MENU), без изменения поведения.
 // END_CHANGE_SUMMARY
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -339,8 +341,28 @@ unsafe fn copy_to_clipboard(hwnd: HWND, text: &str) {
 }
 
 // Открыть Проводник с выделением файла: explorer.exe /select,"<path>".
+// FPF D-20: карта путей документов освежается фоном раз в ~3 мин, поэтому путь может быть
+// протухшим (файл удалили/переместили). Без проверки Проводник открывал пустое окно «Библиотеки»
+// без объяснений — вместо этого падаем на папку-родителя, а если и её нет, честно ничего не делаем.
+// FPF D-21: путь подставляется в командную строку в кавычках, поэтому `"` внутри пути разорвала бы
+// аргумент. В именах файлов Windows кавычка запрещена, но путь приходит из .lnk/индекса, не от ФС.
 unsafe fn open_in_explorer_select(path: &str) {
+    if path.contains('"') {
+        crate::voice::vlog(&format!("open_in_explorer_select: кавычка в пути, отказ ({path})"));
+        return;
+    }
+    let p = std::path::Path::new(path);
     let file: Vec<u16> = "explorer.exe".encode_utf16().chain(std::iter::once(0)).collect();
-    let params: Vec<u16> = format!("/select,\"{}\"", path).encode_utf16().chain(std::iter::once(0)).collect();
+    let params = if p.exists() {
+        format!("/select,\"{path}\"")
+    } else {
+        // файла нет: открыть ближайшую существующую папку выше по дереву
+        let Some(dir) = p.ancestors().skip(1).find(|a| a.exists()) else {
+            crate::voice::vlog(&format!("open_in_explorer_select: путь не существует ({path})"));
+            return;
+        };
+        format!("\"{}\"", dir.display())
+    };
+    let params: Vec<u16> = params.encode_utf16().chain(std::iter::once(0)).collect();
     ShellExecuteW(None, w!("open"), PCWSTR(file.as_ptr()), PCWSTR(params.as_ptr()), PCWSTR::null(), SW_SHOWNORMAL);
 }

@@ -1,5 +1,5 @@
 // FILE: src/audio.rs
-// VERSION: 1.3.0
+// VERSION: 1.3.1
 // START_MODULE_CONTRACT
 //   PURPOSE: Захват аудио с микрофона по умолчанию (cpal) в WAV 16-bit PCM mono в память для голосового ввода.
 //   SCOPE: start_recording (разовая запись -> Recorder), start_persistent (always-on поток + кольцо pre-roll -> Mic, arm/disarm_take), чистая encode_wav, чистые ring_keep/pre_roll_samples (логика кольца).
@@ -24,7 +24,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.3.0 - Phase-24: снимок буфера для стриминга. Recorder/Mic += samples_len() + snapshot_from(start) -> WAV среза [start..] БЕЗ остановки записи (поток/armed не трогаем). Чистая wav_slice (через encode_wav), тест wav_slice_basic.
+//   LAST_CHANGE: v1.3.1 - FPF D-30: err_fn cpal-потока пишет в voice.log вместо eprintln! — у GUI-exe нет консоли, поэтому обрыв потока (выдернули микрофон) был невидим, а кольцо pre-roll молча устаревало.
+//   v1.3.0 - Phase-24: снимок буфера для стриминга. Recorder/Mic += samples_len() + snapshot_from(start) -> WAV среза [start..] БЕЗ остановки записи (поток/armed не трогаем). Чистая wav_slice (через encode_wav), тест wav_slice_basic.
 //   v1.2.0 - Phase-22: always-on микрофон + pre-roll. start_persistent -> Mic: поток крутится постоянно,
 //                при !armed обрезает перёд до cap (кольцо ~500мс), arm() перестаёт обрезать (кольцо = голова записи),
 //                disarm_take() -> WAV(pre-roll+live), сброс в кольцо без дропа потока. Чистые ring_keep/pre_roll_samples.
@@ -283,7 +284,10 @@ fn build_mono_stream(
     channels: usize,
     sink: impl Fn(&[i16]) + Send + Clone + 'static,
 ) -> Result<cpal::Stream, String> {
-    let err_fn = |e: cpal::StreamError| eprintln!("[M-AUDIO][stream] {e}");
+    // FPF D-30: у exe нет консоли (windows_subsystem="windows"), поэтому eprintln! уходил в никуда —
+    // смерть потока (выдернули микрофон, сменилось устройство по умолчанию) была невидима, а кольцо
+    // pre-roll молча устаревало. Пишем в тот же voice.log, где вся диагностика диктовки.
+    let err_fn = |e: cpal::StreamError| crate::voice::vlog(&format!("[M-AUDIO][stream] поток оборван: {e}"));
     let stream = match fmt {
         cpal::SampleFormat::F32 => {
             let s = sink.clone();

@@ -1,5 +1,5 @@
 // FILE: src/settings.rs
-// VERSION: 1.3.1
+// VERSION: 1.4.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Настройки и сведения панели: нативный выбор шрифта (ChooseFontW); окно «О программе»; включение полных путей в заголовках редакторов (window.title с ${rootPath}).
 //   SCOPE: choose_font (модальный диалог -> (face, size, weight) или None), parse_face (чистое), about_text (чистое), show_about (модальный MessageBox), set_window_title (чистое: правка settings.json без порчи JSONC), configure_editor_titles (бэкап+запись settings.json VS Code/Cursor).
@@ -17,11 +17,13 @@
 //   show_about   - модальный MessageBox «О программе» (версия, Telegram, GitHub)
 //   wide         - &str -> UTF-16 с завершающим \0 (приватный помощник для Win32-строк)
 //   set_window_title       - чистое: вставить/обновить "window.title" в settings.json (TitleEdit), не корёжа JSONC
+//   find_root_brace        - чистое (приват): индекс '{' КОРНЕВОГО объекта JSONC (пропуск комментариев и строк) — D-29
 //   configure_editor_titles - бэкап + запись window.title с ${rootPath} в settings.json VS Code/Cursor (Phase-15)
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.3.1 - fix(grace-fix, FPF D-15): ошибка чтения settings.json больше НЕ трактуется как пустой файл (было unwrap_or_default -> backup+write затирали залоченный/не-UTF-8 существующий файл синтезированным window.title). На Err — «ошибка чтения — не тронут», continue.
+//   LAST_CHANGE: v1.4.0 - FPF D-29: чистая find_root_brace — вставка в JSONC идёт после скобки КОРНЕВОГО объекта, а не после первой «{» в файле (скобка в ведущем комментарии резала файл). Тесты find_root_brace_skips_comments_and_strings, set_window_title_jsonc_inserts_after_real_brace.
+//   v1.3.1 - fix(grace-fix, FPF D-15): ошибка чтения settings.json больше НЕ трактуется как пустой файл (было unwrap_or_default -> backup+write затирали залоченный/не-UTF-8 существующий файл синтезированным window.title). На Err — «ошибка чтения — не тронут», continue.
 //   v1.3.0 - Phase-15 step-5: configure_editor_titles + чистое set_window_title (включение полных путей в заголовках; бэкап, идемпотентно, JSONC-устойчиво).
 //   v1.2.0 - Phase-11: пункт «О программе» в меню ⚙ — окно с версией, Telegram (@IvanPonomarev) и GitHub. about_text (чистое, тестируемо) + show_about (MessageBoxW).
 //   v1.1.0 - fix(grace-fix): choose_font принимает/возвращает вес; lf.lfWeight предзаполняется текущим (стиль больше не сбрасывается); флаги канонические (CF_SCREENFONTS|CF_INITTOLOGFONTSTRUCT).
@@ -168,9 +170,9 @@ pub fn set_window_title(content: &str, value: &str) -> TitleEdit {
             return TitleEdit::Updated(s);
         }
     }
-    // JSONC: если ключа ещё нет — вставить сразу после первой '{'
+    // JSONC: если ключа ещё нет — вставить сразу после открывающей скобки корневого объекта
     if !content.contains("\"window.title\"") {
-        if let Some(pos) = content.find('{') {
+        if let Some(pos) = find_root_brace(content) {
             let mut s = String::with_capacity(content.len() + value.len() + 24);
             s.push_str(&content[..=pos]);
             s.push_str(&format!("\n  \"window.title\": \"{}\",", value));
@@ -179,6 +181,40 @@ pub fn set_window_title(content: &str, value: &str) -> TitleEdit {
         }
     }
     TitleEdit::SkipManual // JSONC с существующим window.title — не трогаем (risk-24)
+}
+
+// START_CONTRACT: find_root_brace
+//   PURPOSE: Найти '{' корневого объекта JSONC, пропуская комментарии и строки (FPF D-29).
+//   INPUTS: { s: &str - содержимое settings.json (возможно с // и /* */ комментариями) }
+//   OUTPUTS: { Option<usize> - байтовый индекс '{'; None если не найдена }
+//   SIDE_EFFECTS: none
+//   NOTE: Раньше брали content.find('{') — '{' в ведущем комментарии («// пресет {work}»)
+//         принималась за корень, и вставка резала файл посреди комментария.
+// END_CONTRACT: find_root_brace
+fn find_root_brace(s: &str) -> Option<usize> {
+    let b = s.as_bytes();
+    let mut i = 0usize;
+    while i < b.len() {
+        match b[i] {
+            b'/' if i + 1 < b.len() && b[i + 1] == b'/' => {
+                i = b[i..].iter().position(|&c| c == b'\n').map(|p| i + p + 1).unwrap_or(b.len());
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
+                i = s[i + 2..].find("*/").map(|p| i + 2 + p + 2).unwrap_or(b.len());
+            }
+            b'"' => {
+                // строка до закрывающей кавычки, экранированные пропускаем
+                i += 1;
+                while i < b.len() && b[i] != b'"' {
+                    i += if b[i] == b'\\' { 2 } else { 1 };
+                }
+                i += 1;
+            }
+            b'{' => return Some(i),
+            _ => i += 1,
+        }
+    }
+    None
 }
 
 // START_CONTRACT: configure_editor_titles
@@ -223,6 +259,30 @@ pub fn configure_editor_titles() -> Vec<(String, &'static str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_root_brace_skips_comments_and_strings() {
+        // индекс байтовый (кириллица — 2 байта), поэтому сверяем по остатку строки, не по числу
+        let at = |s: &str| find_root_brace(s).map(|p| s[p..].to_string());
+        // '{' в ведущих комментариях не считается корнем (FPF D-29)
+        assert_eq!(at("// пресет {work}\n{\"a\":1}").as_deref(), Some("{\"a\":1}"));
+        assert_eq!(at("/* блок { */ {\"a\":1}").as_deref(), Some("{\"a\":1}"));
+        // '{' внутри строки тоже не корень
+        assert_eq!(at("\"{\" {\"a\":1}").as_deref(), Some("{\"a\":1}"));
+        assert_eq!(find_root_brace("{\"a\":1}"), Some(0));
+        assert_eq!(find_root_brace("// только комментарий"), None);
+    }
+
+    #[test]
+    fn set_window_title_jsonc_inserts_after_real_brace() {
+        // раньше вставка резала комментарий: '{' из «{work}» принималась за корень
+        let src = "// пресет {work}\n{\n  \"editor.fontSize\": 14\n}";
+        let TitleEdit::Updated(s) = set_window_title(src, "${rootPath}") else {
+            panic!("ожидалось Updated");
+        };
+        assert!(s.starts_with("// пресет {work}\n{"), "комментарий должен остаться целым: {s}");
+        assert!(s.contains("\"window.title\""));
+    }
 
     #[test]
     fn set_window_title_cases() {

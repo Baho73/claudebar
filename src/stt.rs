@@ -1,5 +1,5 @@
 // FILE: src/stt.rs
-// VERSION: 1.2.0
+// VERSION: 1.2.1
 // START_MODULE_CONTRACT
 //   PURPOSE: Синхронное распознавание речи: POST WAV на whisper-dictate /transcribe (localhost http через std::net), разбор {"text","segments"}; проверка живости сервера (/health).
 //   SCOPE: transcribe (текст) / transcribe_segments (текст+сегменты с таймингами, Phase-24) поверх общего request; is_alive (/health, Phase-27); чистые build_multipart / parse_text / parse_segments / parse_url / health_url.
@@ -23,7 +23,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.2.0 - Phase-27: is_alive + чистая health_url для индикации «whisper не запущен» (баннер M-RENDER, фоновый опрос M-VOICE). Тесты health_url_keeps_host_port, is_alive_false_on_closed_port.
+//   LAST_CHANGE: v1.2.1 - FPF D-26: кап ответа MAX_RESPONSE_BYTES=8МБ (Read::take) — молотящий байтами сервис не раздувает Vec до OOM; статус HTTP проверяется ДО поиска тела (ответ без тела больше не маскируется под NO_BODY).
+//   v1.2.0 - Phase-27: is_alive + чистая health_url для индикации «whisper не запущен» (баннер M-RENDER, фоновый опрос M-VOICE). Тесты health_url_keeps_host_port, is_alive_false_on_closed_port.
 //   v1.1.0 - Phase-24 step-4 (вариант A): transcribe_segments -> (текст, Vec<Segment>{start,end,text}); чистая parse_segments; общий request (transcribe/transcribe_segments — тонкие обёртки). Сервер /transcribe отдаёт "segments" (сырой текст). Тест parse_segments_extracts.
 //   v1.0.0 - Phase-18 step-3: клиент whisper-dictate. Синхронный POST multipart WAV через
 //                std::net::TcpStream (без HTTP-крейта, как M-SDAEMON); чистые build_multipart/parse_text/parse_url.
@@ -33,6 +34,9 @@
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
+
+// Потолок ответа /transcribe: реплика — килобайты, 8 МБ с запасом (FPF D-26).
+const MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
 
 // Сегмент распознавания с таймингами (Phase-24 вариант A): сдвиг стриминг-окна по end-тайму.
 #[derive(Clone, Debug, PartialEq)]
@@ -212,16 +216,23 @@ fn request(url: &str, wav: &[u8], language: &str, hotwords: &str, initial_prompt
     // END_BLOCK_SEND
 
     // START_BLOCK_READ
+    // FPF D-26: кап на размер ответа. Раньше единственной защитой был 120-с таймаут чтения —
+    // сервис, льющий байты без остановки, раздувал Vec до OOM. Распознанная реплика — килобайты.
     let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).map_err(|e| format!("READ_FAILED: {e}"))?;
-    let text = String::from_utf8_lossy(&buf);
-    let status_ok = text.lines().next().map(|l| l.contains(" 200")).unwrap_or(false);
-    let idx = text.find("\r\n\r\n").ok_or("NO_BODY")?;
-    let resp_body = &text[idx + 4..];
-    if !status_ok {
-        return Err(format!("HTTP_ERROR: {}", text.lines().next().unwrap_or("")));
+    let mut limited = std::io::Read::take(&mut stream, MAX_RESPONSE_BYTES + 1);
+    limited.read_to_end(&mut buf).map_err(|e| format!("READ_FAILED: {e}"))?;
+    if buf.len() as u64 > MAX_RESPONSE_BYTES {
+        return Err(format!("RESPONSE_TOO_LARGE: >{MAX_RESPONSE_BYTES} байт"));
     }
-    Ok(resp_body.to_string())
+    let text = String::from_utf8_lossy(&buf);
+    // FPF D-26: статус проверяем ДО поиска тела. Раньше ответ без тела (голый 500/413) падал
+    // с NO_BODY, пряча настоящую причину — код ошибки сервера.
+    let status_line = text.lines().next().unwrap_or("");
+    if !status_line.contains(" 200") {
+        return Err(format!("HTTP_ERROR: {status_line}"));
+    }
+    let idx = text.find("\r\n\r\n").ok_or("NO_BODY")?;
+    Ok(text[idx + 4..].to_string())
     // END_BLOCK_READ
 }
 
