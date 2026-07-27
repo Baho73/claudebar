@@ -215,7 +215,7 @@
       <test-files><file>src/search.rs (#[cfg(test)])</file></test-files>
       <module-checks>
         <check-1>cargo test search</check-1>
-        <check-2>Ручной smoke: поиск «telegram» подсвечивает папки жёлтым; на пустом BM25 поднимается демон и появляются синие</check-2>
+        <check-2>Ручной smoke: поиск «telegram» подсвечивает папки жёлтым (BM25 нативно, Python не запускается). Вторая половина проверки — «на пустом BM25 поднимается демон и появляются синие» — DORMANT: dense-ветка усыплена с Phase-13, проверять при оживлении Python-модуля (см. scenario-6)</check-2>
       </module-checks>
       <scenarios>
         <scenario-1 kind="success">fts_query Google-синтаксис: пробел=И (a b*); a+b=фраза («a b»); a++b=NEAR(a b, 10); -w=исключить ((q) NOT w); OR=или; последнее слово — префикс; кириллица сохраняется. Тест fts_query_operators</scenario-1>
@@ -512,6 +512,22 @@
         <evidence-4>graph/plan/verification синхронны; grace lint = 0; M-VOICE/M-AUDIO/M-STT/M-TRANSFORM/M-PASTE STATUS implemented</evidence-4>
       </required-evidence>
     </Gate-Phase-19>
+
+    <!-- FPF D-32: после Phase-19 фазовые гейты не заводились. Причина не в забывчивости, а в смене
+         режима работы: Phase-20..27 — это доводки одной подсистемы (диктовка) и UI, каждая в один-два
+         шага, где фазовый гейт дублировал бы модульные сценарии. Фиксируем это как ЯВНУЮ политику,
+         а не как пробел, и оставляем один общий гейт вместо семи почти одинаковых. -->
+    <Gate-Phase-20-27 PHASE="Phase-20..27" policy="общий гейт для доводочных фаз">
+      <goal>Доводки диктовки (20-24), квадраты-статусы (25-26) и индикация сервера (27) не меняют архитектуру: гейт — зелёные модульные сценарии + ручной smoke затронутой фичи + синхронные артефакты</goal>
+      <commands><command-1>cargo test</command-1><command-2>cargo build --release (панель убить — держит exe)</command-2><command-3>python -c "import xml.dom.minidom as m; [m.parse(f) for f in (...)]"</command-3></commands>
+      <required-evidence>
+        <evidence-1>cargo test зелёный целиком (на момент Phase-27 — 107/107), release без warnings</evidence-1>
+        <evidence-2>Ручной smoke сценария фазы пройден и записан в её checkpoint в development-plan.xml (Phase-27 — с оговоркой, что баннер визуально пользователем не подтверждён)</evidence-2>
+        <evidence-3>Три XML-артефакта well-formed. ВАЖНО: `grace lint` тут не доказательство — grace 4.x валидирует только .grace-модель и docs GRACE-3 не читает (exit 1 независимо от их состояния), поэтому гейт опирается на XML-parse, а не на линт</evidence-3>
+        <evidence-4>Затронутые модули: VERSION поднят, CHANGE_SUMMARY описывает изменение, MODULE_MAP покрывает новые экспорты</evidence-4>
+      </required-evidence>
+      <on-fail>grace-fix по конкретному модулю; откат коммитом фазы (история — один коммит на фазу)</on-fail>
+    </Gate-Phase-20-27>
   </PhaseGates>
 
   <FailurePackets>

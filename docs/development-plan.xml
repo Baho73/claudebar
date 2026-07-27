@@ -538,11 +538,11 @@
     </DF-APPS>
     <DF-SEARCH-BM25 NAME="Живой поиск по словам" TRIGGER="Ввод в окошке поиска (≥3 символов, debounce ~120мс)">
       <step-1>M-MAIN отдаёт строку запроса в M-SEARCH (debounce, отмена предыдущего)</step-1>
-      <step-2>M-SEARCH.fts_query строит MATCH (последний токен -&gt; префикс); bm25_search через rusqlite по clfind.db (FTS5, WAL ro)</step-2>
+      <step-2>M-SEARCH.fts_query строит MATCH (последний токен -&gt; префикс); bm25_search через rusqlite по СВОЕЙ базе chats_db (%APPDATA%\claudebar\claudebar_chats.db; при scope «+Файлы» — ещё и files_db). ИСТОРИЧЕСКОЕ: в Phase-12 читалась clfind.db, с Phase-13 индекс строит сам ClaudeBar (M-INDEX), clfind не участвует</step-2>
       <step-3>aggregate_to_folders -&gt; папки (жёлтый); M-RENDER подсвечивает открытые строки и блок «Найдено ещё» для закрытых</step-3>
       <evidence>Папки-совпадения подсвечены жёлтым на лету; Python не запускался</evidence>
     </DF-SEARCH-BM25>
-    <DF-SEARCH-DENSE NAME="Семантический fallback" TRIGGER="BM25 вернул пусто">
+    <DF-SEARCH-DENSE NAME="Семантический fallback" TRIGGER="BM25 вернул пусто" status="dormant" note="ОТЛОЖЕНО с Phase-13: search() = BM25-only, M-SDAEMON усыплён (dormant), демон clfind не спавнится. Поток описывает целевое поведение при оживлении Python-модуля смысла, НЕ текущее (FPF D-22)">
       <step-1>M-SEARCH видит пустой BM25 -&gt; M-SDAEMON.ensure_running (спавн clfind serve при молчащем /health, поллинг до ready)</step-1>
       <step-2>M-SDAEMON.dense_search HTTP POST /search {mode:dense}; parse_dense_response -&gt; папки</step-2>
       <step-3>M-RENDER подсвечивает найденное синим (открытые строки + «Найдено ещё»)</step-3>

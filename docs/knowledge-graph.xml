@@ -255,7 +255,7 @@
         <fn-aggregate_to_folders PURPOSE="Чистое: чанки -> папки с флагами bm25/dense и лучшим чанком (тестируемо)" />
         <fn-parse_dense_response PURPOSE="Чистое: JSON ответа демона -> папки с dense-скором (ручной разбор)" />
         <type-Color PURPOSE="Цвет подсветки папки: Bm25 (жёлтый) | Dense (синий) — модальность, без отдельной функции (dense только при пустом BM25)" />
-        <fn-search PURPOSE="Оркестрация: live BM25; при пустом результате -> dense-fallback через M-SDAEMON" />
+        <fn-search PURPOSE="Оркестрация: live BM25 по своим базам (chats_db + files_db при scope «+Файлы»). Dense-fallback через M-SDAEMON — DORMANT с Phase-13: ветка усыплена, демон не спавнится; оживёт вместе с Python-модулем смысла (FPF D-22)" />
         <fn-project_folders PURPOSE="DB-скан (ro): DISTINCT project_folder источника 'chat' — фоновый кэш для меню (Phase-14; D-02: полный скан в фоне, не на UI)" />
         <fn-folder_for_project PURPOSE="Чистое: матч папки по basename имени окна (регистронезависимо) в кэше project_folders; для меню «ссылка/проводник»" />
         <type-FolderHit PURPOSE="Папка-совпадение: folder, bm25, dense, best, цвет" />
@@ -405,7 +405,9 @@
     <CrossLink from="M-MAIN" to="M-RENDER" relation="делегирует отрисовку и обработку кликов" />
     <CrossLink from="M-MAIN" to="M-CONFIG" relation="загружает/сохраняет конфигурацию" />
     <CrossLink from="M-RENDER" to="M-CONFIG" relation="читает цвета/метки/свёрнутость" />
-    <CrossLink from="M-RENDER" to="M-ACTIVATE" relation="вызывает активацию по клику окна" />
+    <!-- CrossLink M-RENDER -> M-ACTIVATE удалён (FPF D-18): render только рисует и делает hit-test,
+         активацию по клику вызывает M-MAIN из wndproc (render.rs не импортирует activate). -->
+
     <CrossLink from="M-RENDER" to="M-RECENT" relation="показывает и открывает недавние документы" />
     <CrossLink from="M-RECENT" to="M-WINENUM" relation="сопоставляет недавние с открытыми по basename" />
     <CrossLink from="M-WINENUM" to="M-CONFIG" relation="использует AppDef для распознавания приложения" />
