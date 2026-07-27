@@ -1,5 +1,5 @@
 // FILE: src/signal.rs
-// VERSION: 1.5.2
+// VERSION: 1.5.3
 // START_MODULE_CONTRACT
 //   PURPOSE: «Звоночек» завершения ИИ: читать файлы-сигналы из %APPDATA%\claudebar\signals\, отдавать проекты для подсветки, гасить сигнал при фокусе окна проекта.
 //   SCOPE: путь папки сигналов, парсинг .signal (cwd проекта), ключ проекта (basename) + полный cwd, наборы «звенящих» (basename и cwd), сброс по фокусу с матчем по полному пути.
@@ -27,11 +27,13 @@
 //   Sess/SessState    - живая сессия-агент (cwd, key, agent, state Idle|Working|Done) — Phase-26
 //   sessions          - склейка .alive/.busy/.signal по session-id -> Vec<Sess> (состояние busy>signal>idle) — Phase-26
 //   sess_matches_row  - чистое: относится ли сессия к строке окна (path_within/basename) — Phase-26
+//   sort_sessions     - детерминированный порядок квадратов: Claude слева, Kimi справа, внутри — по sid
 //   reconcile         - удалить .signal, чьё окно проекта сейчас foreground (по полному пути)
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.5.2 - cleanup(FPF D-27): снос busy_list/done_list/count_for_row (мертвы после Phase-26 — render на sessions(); слэш-покрытие осталось в parse_agent_and_sess_matches_row).
+//   LAST_CHANGE: v1.5.3 - fix(grace-fix): квадраты тасовались местами каждый опрос (порядок HashMap в sessions() недетерминирован). Sess += sid; sort_sessions фиксирует порядок: Claude слева, Kimi справа, внутри агента — по sid. Тест sort_sessions_claude_left_kimi_right.
+//   v1.5.2 - cleanup(FPF D-27): снос busy_list/done_list/count_for_row (мертвы после Phase-26 — render на sessions(); слэш-покрытие осталось в parse_agent_and_sess_matches_row).
 //   v1.5.1 - fix(grace-fix, FPF D-16): .alive читается с TTL ALIVE_STALE_SECS (12ч) — краш/ребут без graceful SessionEnd больше не оставляет вечный фантомный квадрат; busy-хук keep-alive трогает .alive, держа активные сессии свежими.
 //   v1.5.0 - Phase-26 presence: Signal += agent (parse_agent из строки agent=); тип Sess/SessState + sessions() (склейка .alive присутствие + .busy работает + .signal готово по session-id, состояние busy>signal>idle); sess_matches_row (матч сессии к строке). Для квадратов «на каждого запущенного агента, свой цвет».
 //   v1.4.1 - fix(grace-fix): path_within нормализует слэши (/ -> \). Kimi через Git Bash пишет cwd со слэшами (D:/Python/claudebar), Claude — с бэкслэшами; матч по пути не срабатывал -> квадрат/подсветка сессии Kimi пропадали. Тест count_for_row_normalizes_slashes.
@@ -68,6 +70,7 @@ pub enum SessState {
 // Живая сессия-агент: где, какой агент, в каком состоянии (Phase-26).
 #[derive(Clone, Debug)]
 pub struct Sess {
+    pub sid: String,       // session-id (стабильный ключ сессии) — детерминированный порядок квадратов
     pub cwd: String,       // полный cwd (lower)
     pub key: String,       // basename (lower)
     pub agent: String,     // "claude" | "kimi" | ""
@@ -312,9 +315,14 @@ pub fn sessions() -> Vec<Sess> {
     let sid = |s: &Signal| s.path.file_stem().and_then(|x| x.to_str()).unwrap_or("").to_string();
     let mut m: HashMap<String, Sess> = HashMap::new();
     let mut put = |s: Signal, st: SessState, force: bool| {
-        let e = m
-            .entry(sid(&s))
-            .or_insert(Sess { cwd: s.cwd.clone(), key: s.key.clone(), agent: String::new(), state: SessState::Idle });
+        let id = sid(&s);
+        let e = m.entry(id.clone()).or_insert(Sess {
+            sid: id,
+            cwd: s.cwd.clone(),
+            key: s.key.clone(),
+            agent: String::new(),
+            state: SessState::Idle,
+        });
         if e.agent.is_empty() && !s.agent.is_empty() {
             e.agent = s.agent.clone();
         }
@@ -333,7 +341,30 @@ pub fn sessions() -> Vec<Sess> {
     for s in list_ext("busy", Some(BUSY_STALE_SECS)) {
         put(s, SessState::Working, true);
     }
-    m.into_values().collect()
+    let mut out: Vec<Sess> = m.into_values().collect();
+    sort_sessions(&mut out); // детерминированный порядок: HashMap иначе тасует квадраты каждый опрос
+    out
+}
+
+// Порядок агента в ряду квадратов: Claude слева (0), Kimi (1), прочие (2).
+fn agent_rank(agent: &str) -> u8 {
+    match agent {
+        "claude" => 0,
+        "kimi" => 1,
+        _ => 2,
+    }
+}
+
+// START_CONTRACT: sort_sessions
+//   PURPOSE: Детерминированный порядок квадратов на строке: Claude слева, Kimi справа, прочие дальше;
+//            внутри агента — по sid (стабильно между опросами). Без этого HashMap-порядок тасует квадраты.
+//   INPUTS: { v: &mut [Sess] }
+//   OUTPUTS: { () - сортирует на месте }
+//   SIDE_EFFECTS: none
+//   LINKS: M-RENDER (порядок отрисовки квадратов)
+// END_CONTRACT: sort_sessions
+pub fn sort_sessions(v: &mut [Sess]) {
+    v.sort_by(|a, b| agent_rank(&a.agent).cmp(&agent_rank(&b.agent)).then_with(|| a.sid.cmp(&b.sid)));
 }
 
 // START_CONTRACT: sess_matches_row
@@ -428,6 +459,23 @@ mod tests {
         assert!(sess_matches_row("d:/python/claudebar", "claudebar", Some("D:\\Python\\claudebar"), "claudebar"));
         assert!(!sess_matches_row("d:\\other\\claudebar", "claudebar", Some("D:\\Python\\claudebar"), "claudebar"));
         assert!(sess_matches_row("d:\\x", "claudebar", None, "ClaudeBar")); // basename, регистронезависимо
+    }
+
+    #[test]
+    fn sort_sessions_claude_left_kimi_right() {
+        let mk = |sid: &str, agent: &str| Sess {
+            sid: sid.into(),
+            cwd: "c".into(),
+            key: "k".into(),
+            agent: agent.into(),
+            state: SessState::Idle,
+        };
+        let mut v = vec![mk("z", "kimi"), mk("a", "claude"), mk("b", "kimi"), mk("q", "")];
+        sort_sessions(&mut v);
+        let agents: Vec<&str> = v.iter().map(|s| s.agent.as_str()).collect();
+        assert_eq!(agents, vec!["claude", "kimi", "kimi", ""]); // Claude слева, прочий в конце
+        assert_eq!(v[1].sid, "b"); // внутри Kimi по sid стабильно: b < z
+        assert_eq!(v[2].sid, "z");
     }
 
     #[test]
