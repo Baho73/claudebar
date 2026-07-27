@@ -10,7 +10,7 @@
     <M-MAIN NAME="Main" TYPE="ENTRY_POINT" STATUS="partial">
       <purpose>Точка входа: GetModuleHandle, регистрация класса, создание topmost-окна, таймер опроса, message loop, диспетчеризация в обработчики. v0.3: опрос M-SIGNAL (bell_keys + reconcile) на тике, проброс bell в paint, зоны клика и режим reorder. v0.4: шрифт панели читается из конфига (make_font(face,…)); «⚙» в шапке открывает меню настроек → M-SETTINGS.choose_font → rebuild_fonts + repaint. v0.5 (Phase-14): в меню окна «Скопировать ссылку»/«Открыть в проводнике» — путь проекта (M-SEARCH.folder_for_project) или документа (фоновая карта doc_paths из Recent .lnk). Phase-15/16: идентичность проекта по полному пути из заголовка (extract_project_path) + нумерация дублей «(N)»; пункт ⚙ «Полные пути» (configure_editor_titles); настройка порядка окон sort=alpha|recent с картой ordinal первого появления.</purpose>
       <path>src/main.rs</path>
-      <depends>M-STATE, M-CONFIG, M-WINENUM, M-ACTIVATE, M-RENDER, M-RECENT, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX, M-VOICE, M-PASTE</depends>
+      <depends>M-STATE, M-CONFIG, M-WINENUM, M-ACTIVATE, M-RENDER, M-RECENT, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX, M-VOICE, M-PASTE, M-PROMPT</depends>
       <verification-ref>V-M-MAIN</verification-ref>
       <annotations>
         <fn-main PURPOSE="Инициализация приложения и цикл сообщений" />
@@ -36,6 +36,16 @@
         <static-APP PURPOSE="thread_local RefCell&lt;Option&lt;App&gt;&gt; — единственный экземпляр состояния на UI-потоке" />
       </annotations>
     </M-STATE>
+
+    <M-PROMPT NAME="Prompt" TYPE="UI_COMPONENT" STATUS="implemented">
+      <purpose>Модальный prompt-диалог ввода одной строки (метка проекта): своя WNDCLASS + EDIT + OK/Отмена + локальный модальный цикл. Вынесено из main.rs (рефактор god-object, FPF D-5). Не зависит от App/APP — чистый Win32-диалог.</purpose>
+      <path>src/prompt.rs</path>
+      <depends></depends>
+      <verification-ref>V-M-PROMPT</verification-ref>
+      <annotations>
+        <fn-prompt_text PURPOSE="Показать модальный ввод строки (parent, hinst, initial); вернуть Some(текст) при OK либо None при отмене/закрытии" />
+      </annotations>
+    </M-PROMPT>
 
     <M-WINENUM NAME="WindowEnum" TYPE="CORE_LOGIC" STATUS="implemented">
       <purpose>Перечисление видимых top-level окон, определение приложения по имени процесса И классу окна, извлечение имени проекта/документа из заголовка по правилам приложения. v0.4: класс окна (GetClassNameW) в кортеже окна; для классической консоли (ConsoleWindowClass) реальный shell (cmd/powershell/pwsh) разрешается по дереву процессов через conhost.</purpose>
@@ -329,6 +339,7 @@
 
     <CrossLink from="M-MAIN" to="M-WINENUM" relation="опрашивает окна по таймеру" />
     <CrossLink from="M-MAIN" to="M-STATE" relation="владеет App/APP (состояние UI-потока); строит и опрашивает" />
+    <CrossLink from="M-MAIN" to="M-PROMPT" relation="меню окна «Метка» → prompt::prompt_text(hwnd, hinst, initial) для ввода метки проекта" />
     <CrossLink from="M-RENDER" to="M-STATE" relation="paint читает &amp;App (состояние для отрисовки)" />
     <CrossLink from="M-MAIN" to="M-RENDER" relation="делегирует отрисовку и обработку кликов" />
     <CrossLink from="M-MAIN" to="M-CONFIG" relation="загружает/сохраняет конфигурацию" />

@@ -9,8 +9,8 @@
 //   PURPOSE: Точка входа Win32 + оконная процедура + состояние App + оркестрация всех модулей панели.
 //   SCOPE: создание окна (always-on-top, tool-window), цикл сообщений, диспетчеризация WndProc; App (thread_local APP);
 //          опрос (окна/сигналы/недавние) по таймеру, анимационный таймер, глобальный хоткей; шапка/поиск/история;
-//          контекст-меню, tooltip, prompt-диалог, буфер обмена/Explorer; оркестрация голоса (M-VOICE) и вставки (M-PASTE).
-//   DEPENDS: M-CONFIG, M-WINENUM, M-ACTIVATE, M-RENDER, M-RECENT, M-ICON, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX, M-SDAEMON, M-VOICE, M-AUDIO, M-STT, M-TRANSFORM, M-PASTE
+//          контекст-меню, tooltip, буфер обмена/Explorer; оркестрация голоса (M-VOICE) и вставки (M-PASTE).
+//   DEPENDS: M-CONFIG, M-WINENUM, M-ACTIVATE, M-RENDER, M-RECENT, M-ICON, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX, M-SDAEMON, M-VOICE, M-AUDIO, M-STT, M-TRANSFORM, M-PASTE, M-PROMPT
 //   LINKS: M-MAIN
 //   ROLE: ENTRY_POINT
 //   MAP_MODE: SUMMARY
@@ -39,6 +39,7 @@ mod config;
 mod paste;
 mod icon;
 mod index;
+mod prompt;
 mod recent;
 mod render;
 #[allow(dead_code)] // dormant: dense отложен (Phase-13); M-SDAEMON оживёт с Python-модулем смысла
@@ -85,7 +86,6 @@ use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM
 use windows::Win32::UI::WindowsAndMessaging::*;
 use std::os::windows::ffi::OsStrExt;
 
-const EM_SETSEL: u32 = 0x00B1;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 const ID_TIP_TIMER: usize = 3; // dwell-таймер подсказки (~0.5с)
 const TIP_DELAY: u32 = 500; // мс выдержки перед показом подсказки
@@ -226,152 +226,6 @@ fn update_anim_timer(hwnd: HWND, app: &App) {
         } else {
             let _ = KillTimer(hwnd, ID_ANIM_TIMER);
         }
-    }
-}
-
-// ---------- ввод метки (модальный prompt) ----------
-thread_local! {
-    static PROMPT_RESULT: RefCell<Option<String>> = RefCell::new(None);
-    static PROMPT_EDIT: RefCell<HWND> = RefCell::new(HWND(std::ptr::null_mut()));
-}
-
-extern "system" fn prompt_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    unsafe {
-        match msg {
-            WM_COMMAND => {
-                let id = (wp.0 & 0xFFFF) as usize;
-                if id == 1 {
-                    // OK
-                    let edit = PROMPT_EDIT.with(|e| *e.borrow());
-                    let len = GetWindowTextLengthW(edit);
-                    let mut buf = vec![0u16; (len + 1) as usize];
-                    let n = GetWindowTextW(edit, &mut buf);
-                    let s = String::from_utf16_lossy(&buf[..n.max(0) as usize]);
-                    PROMPT_RESULT.with(|r| *r.borrow_mut() = Some(s));
-                    let _ = DestroyWindow(hwnd);
-                    return LRESULT(0);
-                } else if id == 2 {
-                    let _ = DestroyWindow(hwnd);
-                    return LRESULT(0);
-                }
-            }
-            WM_CLOSE => {
-                let _ = DestroyWindow(hwnd);
-                return LRESULT(0);
-            }
-            _ => {}
-        }
-        DefWindowProcW(hwnd, msg, wp, lp)
-    }
-}
-
-fn prompt_text(parent: HWND, hinst: HINSTANCE, initial: &str) -> Option<String> {
-    unsafe {
-        PROMPT_RESULT.with(|r| *r.borrow_mut() = None);
-        let cls = w!("claudebar_prompt");
-        let wc = WNDCLASSW {
-            lpfnWndProc: Some(prompt_proc),
-            hInstance: hinst,
-            lpszClassName: cls,
-            hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
-            hbrBackground: GetSysColorBrush(COLOR_3DFACE),
-            ..Default::default()
-        };
-        RegisterClassW(&wc);
-
-        let mut pr = RECT::default();
-        let _ = GetWindowRect(parent, &mut pr);
-        let dw = 320;
-        let dh = 132;
-        let x = pr.left + 10;
-        let y = pr.top + 10;
-
-        let dlg = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_DLGMODALFRAME,
-            cls,
-            w!("Метка для проекта"),
-            WS_POPUP | WS_CAPTION | WS_SYSMENU,
-            x,
-            y,
-            dw,
-            dh,
-            parent,
-            None,
-            hinst,
-            None,
-        )
-        .unwrap_or_default();
-        if dlg.0.is_null() {
-            return None;
-        }
-
-        let init: Vec<u16> = initial.encode_utf16().chain(std::iter::once(0)).collect();
-        let edit = CreateWindowExW(
-            WS_EX_CLIENTEDGE,
-            w!("EDIT"),
-            PCWSTR(init.as_ptr()),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
-            12,
-            14,
-            dw - 36,
-            24,
-            dlg,
-            None,
-            hinst,
-            None,
-        )
-        .unwrap_or_default();
-        PROMPT_EDIT.with(|e| *e.borrow_mut() = edit);
-
-        let _ = CreateWindowExW(
-            WINDOW_EX_STYLE(0),
-            w!("BUTTON"),
-            w!("OK"),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_DEFPUSHBUTTON as u32),
-            dw - 200,
-            52,
-            86,
-            28,
-            dlg,
-            HMENU(1isize as *mut core::ffi::c_void),
-            hinst,
-            None,
-        );
-        let _ = CreateWindowExW(
-            WINDOW_EX_STYLE(0),
-            w!("BUTTON"),
-            w!("Отмена"),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-            dw - 106,
-            52,
-            86,
-            28,
-            dlg,
-            HMENU(2isize as *mut core::ffi::c_void),
-            hinst,
-            None,
-        );
-
-        let _ = ShowWindow(dlg, SW_SHOW);
-        let _ = SetFocus(edit);
-        SendMessageW(edit, EM_SETSEL, WPARAM(0), LPARAM(-1));
-
-        // локальный модальный цикл
-        let _ = EnableWindow(parent, false);
-        let mut msg = MSG::default();
-        while IsWindow(dlg).as_bool() {
-            let r = GetMessageW(&mut msg, None, 0, 0);
-            if r.0 <= 0 {
-                break;
-            }
-            if !IsDialogMessageW(dlg, &mut msg).as_bool() {
-                let _ = TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
-        }
-        let _ = EnableWindow(parent, true);
-        let _ = SetForegroundWindow(parent);
-        PROMPT_RESULT.with(|r| r.borrow_mut().take())
     }
 }
 
@@ -1936,7 +1790,7 @@ fn handle_command(hwnd: HWND, id: usize) {
             let a = a.as_ref()?;
             Some((a.hinst, a.config.label(&project)))
         }) else { return };
-        if let Some(s) = prompt_text(hwnd, hinst, &cur) {
+        if let Some(s) = prompt::prompt_text(hwnd, hinst, &cur) {
             APP.with(|c| {
                 if let Some(a) = c.borrow_mut().as_mut() {
                     a.config.set_label(&project, s.trim().to_string());
