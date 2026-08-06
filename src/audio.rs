@@ -1,5 +1,5 @@
 // FILE: src/audio.rs
-// VERSION: 1.3.1
+// VERSION: 1.3.2
 // START_MODULE_CONTRACT
 //   PURPOSE: Захват аудио с микрофона по умолчанию (cpal) в WAV 16-bit PCM mono в память для голосового ввода.
 //   SCOPE: start_recording (разовая запись -> Recorder), start_persistent (always-on поток + кольцо pre-roll -> Mic, arm/disarm_take), чистая encode_wav, чистые ring_keep/pre_roll_samples (логика кольца).
@@ -24,7 +24,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.3.1 - FPF D-30: err_fn cpal-потока пишет в voice.log вместо eprintln! — у GUI-exe нет консоли, поэтому обрыв потока (выдернули микрофон) был невидим, а кольцо pre-roll молча устаревало.
+//   LAST_CHANGE: v1.3.2 - diag: #[ignore]-зонд probe_input_devices (cargo test -- --ignored --nocapture) печатает устройство по умолчанию и результат открытия каждого входа — им и был распутан отказ 0x88890010.
+//   v1.3.1 - FPF D-30: err_fn cpal-потока пишет в voice.log вместо eprintln! — у GUI-exe нет консоли, поэтому обрыв потока (выдернули микрофон) был невидим, а кольцо pre-roll молча устаревало.
 //   v1.3.0 - Phase-24: снимок буфера для стриминга. Recorder/Mic += samples_len() + snapshot_from(start) -> WAV среза [start..] БЕЗ остановки записи (поток/armed не трогаем). Чистая wav_slice (через encode_wav), тест wav_slice_basic.
 //   v1.2.0 - Phase-22: always-on микрофон + pre-roll. start_persistent -> Mic: поток крутится постоянно,
 //                при !armed обрезает перёд до cap (кольцо ~500мс), arm() перестаёт обрезать (кольцо = голова записи),
@@ -453,5 +454,44 @@ mod tests {
         assert_eq!(i16::from_le_bytes([w[44], w[45]]), 30); // первый сэмпл среза
         // start за границей -> пустой WAV (44 байта, только заголовок)
         assert_eq!(wav_slice(&s, 99, 16000).len(), 44);
+    }
+
+    // Диагностика микрофона (не автотест — трогает реальное железо, поэтому #[ignore]).
+    // Запуск:  cargo test probe_input_devices -- --ignored --nocapture
+    // Зачем: отказ захвата виден только кодом WASAPI в voice.log («STREAM_BUILD_FAILED: 0x888900xx»),
+    // а он не говорит, КАКОЕ устройство выбрано дефолтным и открывается ли хоть одно. Зонд печатает
+    // дефолт и результат открытия каждого входа — этого хватает, чтобы отличить «сломан дефолт»
+    // от «сломан весь стек аудио».
+    #[test]
+    #[ignore = "трогает реальное аудио-устройство"]
+    fn probe_input_devices() {
+        use cpal::traits::{DeviceTrait, HostTrait};
+        let host = cpal::default_host();
+        match host.default_input_device() {
+            Some(d) => println!("ДЕФОЛТНЫЙ ВХОД: {:?}", d.name()),
+            None => println!("ДЕФОЛТНЫЙ ВХОД: НЕТ (NO_INPUT_DEVICE)"),
+        }
+        let devices = match host.input_devices() {
+            Ok(it) => it.collect::<Vec<_>>(),
+            Err(e) => {
+                println!("input_devices() FAILED: {e}");
+                return;
+            }
+        };
+        println!("всего входных устройств: {}", devices.len());
+        for d in devices {
+            let name = d.name().unwrap_or_else(|_| "<без имени>".into());
+            match d.default_input_config() {
+                Err(e) => println!("  [{name}] конфиг НЕ читается: {e}"),
+                Ok(sup) => {
+                    let (rate, ch, fmt) = (sup.sample_rate().0, sup.channels(), sup.sample_format());
+                    let cfg: cpal::StreamConfig = sup.into();
+                    match build_mono_stream(&d, &cfg, fmt, ch as usize, |_: &[i16]| {}) {
+                        Ok(_) => println!("  [{name}] OK — {rate} Гц, {ch} кан., {fmt:?}"),
+                        Err(e) => println!("  [{name}] ОТКРЫТЬ НЕ УДАЛОСЬ: {e}"),
+                    }
+                }
+            }
+        }
     }
 }

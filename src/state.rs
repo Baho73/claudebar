@@ -1,5 +1,5 @@
 // FILE: src/state.rs
-// VERSION: 1.0.0
+// VERSION: 1.1.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Состояние панели: структура App (окна/недавние/поиск/сигналы/голос) и thread_local APP.
 //   SCOPE: тип App (данные UI-состояния) + APP (RefCell<Option<App>> на UI-потоке). Логики нет — держатель состояния.
@@ -16,7 +16,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.0.0 - рефактор: App/APP вынесены из main.rs в отдельный модуль состояния (M-STATE), без изменения поведения.
+//   LAST_CHANGE: v1.1.0 - поля whisper_ok (Phase-27) и mic_error (отказ захвата) — источники нижнего баннера.
+//   v1.0.0 - рефактор: App/APP вынесены из main.rs в отдельный модуль состояния (M-STATE), без изменения поведения.
 // END_CHANGE_SUMMARY
 
 use std::cell::RefCell;
@@ -58,6 +59,7 @@ pub(crate) struct App {
     pub(crate) voice: voice::Voice, // голосовой ввод: стейт-машина + активный Recorder — Phase-19
     pub(crate) voice_target: HWND, // окно-получатель вставки (foreground на старте записи) — Phase-19
     pub(crate) whisper_ok: bool, // сервер распознавания поднят (фоновый /health) — баннер-предупреждение, Phase-27
+    pub(crate) mic_error: String, // текст отказа захвата микрофона (пусто = порядок) — баннер, fix 2026-08-06
 }
 
 thread_local! {

@@ -34,6 +34,7 @@
       <annotations>
         <type-App PURPOSE="Состояние UI-панели: 30+ полей (окна, недавние, строки, конфиг, шрифты, hover/drag, bell/busy, сессии, поиск+история, голос)" />
         <static-APP PURPOSE="thread_local RefCell&lt;Option&lt;App&gt;&gt; — единственный экземпляр состояния на UI-потоке" />
+        <field-mic_error PURPOSE="Текст отказа захвата микрофона (пусто = порядок): источник баннера «Микрофон недоступен», копируется из M-VOICE на тике" />
         <field-whisper_ok PURPOSE="Сервер распознавания поднят (копия атомика M-VOICE, обновляется на тике и по WM_APP_HEALTH) — управляет баннером-предупреждением — Phase-27" />
       </annotations>
     </M-STATE>
@@ -383,7 +384,8 @@
         <type-VoiceState PURPOSE="Idle | Recording | Transcribing" />
         <fn-whisper_ok PURPOSE="Последний известный статус сервера whisper (атомик; до первого опроса — true, чтобы не мигать баннером на старте) — Phase-27" />
         <fn-spawn_health_check PURPOSE="Фоновый поток: stt::is_alive(/health) -&gt; обновить статус; при СМЕНЕ статуса PostMessage(WM_APP_HEALTH). Гейт HEALTH_INFLIGHT не копит потоки, если сервер молчит — Phase-27" />
-        <fn-WM_APP_HEALTH PURPOSE="Оконное сообщение: статус whisper сменился -&gt; UI пересчитывает высоту окна под баннер и перерисовывает (WM_APP+4) — Phase-27" />
+        <fn-mic_error PURPOSE="Текст последней ошибки захвата микрофона (set_mic_error/short_mic_error переводят код WASAPI в человеческую строку); пусто = порядок" />
+        <fn-WM_APP_HEALTH PURPOSE="Оконное сообщение: статус whisper или микрофона сменился -&gt; UI пересчитывает высоту окна под баннер и перерисовывает (WM_APP+4) — Phase-27" />
       </annotations>
     </M-VOICE>
 

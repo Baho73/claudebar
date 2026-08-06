@@ -219,6 +219,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                             app.config.save(hwnd); // новые № путей -> сохранить реестр
                         }
                         app.whisper_ok = voice::whisper_ok(); // статус сервера диктовки (Phase-27)
+                        app.mic_error = voice::mic_error(); // отказ захвата микрофона -> баннер
                         update_anim_timer(hwnd, app); // вкл/выкл анимацию точек по наличию busy
                         render::resize(hwnd, app);
                     }
@@ -611,6 +612,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 APP.with(|c| {
                     if let Some(a) = c.borrow_mut().as_mut() {
                         a.whisper_ok = voice::whisper_ok();
+                        a.mic_error = voice::mic_error();
                         render::resize(hwnd, a);
                     }
                 });
@@ -781,13 +783,12 @@ pub(crate) fn spawn_files_index(hwnd: HWND) {
     }
     let hwnd_i = hwnd.0 as isize;
     std::thread::spawn(move || {
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        }
+        // COM поднимаем на СВОЁМ потоке; уносим только если реально подняли (см. explorer_folder_path)
+        let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
         let docs = collect_history_docs();
         let _ = index::ensure_files_index(&files_db, &docs);
-        unsafe {
-            CoUninitialize();
+        if hr.is_ok() {
+            unsafe { CoUninitialize() };
         }
         FILES_INDEXING.store(false, Ordering::SeqCst);
         unsafe {
@@ -877,9 +878,8 @@ fn spawn_doc_paths() {
     }
     let chats_db = APP.with(|c| c.borrow().as_ref().map(|a| a.config.chats_db.clone()).unwrap_or_default());
     std::thread::spawn(move || {
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        }
+        // COM поднимаем на СВОЁМ потоке; уносим только если реально подняли (см. explorer_folder_path)
+        let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
         // ponytail: повторяет проход collect_history_docs с files-индексом; терпимо (фон, редко)
         let mut map = BTreeMap::new();
         for path in collect_history_docs() {
@@ -895,8 +895,8 @@ fn spawn_doc_paths() {
         if let Ok(mut g) = PROJ_FOLDERS.lock() {
             *g = folders;
         }
-        unsafe {
-            CoUninitialize();
+        if hr.is_ok() {
+            unsafe { CoUninitialize() };
         }
         DOC_PATHS_BUILDING.store(false, Ordering::SeqCst);
     });
@@ -1055,8 +1055,16 @@ fn percent_decode(s: &str) -> String {
 }
 
 // Путь открытой папки окна Проводника через Shell COM (IShellWindows -> IWebBrowserApp по hwnd).
+//
+// ВАЖНО (fix 2026-08-06): CoUninitialize зовём ТОЛЬКО если наш CoInitializeEx реально
+// проинициализировал COM. Это UI-поток, и cpal (M-AUDIO) уже поднял на нём COM как MTA и держит
+// его всё время жизни потока. Наш запрос APARTMENTTHREADED в таком случае возвращает
+// RPC_E_CHANGED_MODE и счётчик НЕ увеличивает — а безусловный CoUninitialize его уменьшал и сносил
+// COM целиком. После этого любой захват микрофона с UI-потока падал с AUDCLNT_E_SERVICE_NOT_RUNNING
+// (0x88890010) до перезапуска панели: диктовка «переставала работать» после первого же ПКМ по окну
+// Проводника, а лог показывал STREAM_BUILD_FAILED без намёка на причину.
 unsafe fn explorer_folder_path(target: HWND) -> Option<String> {
-    let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED); // UI-поток; баланс CoUninitialize ниже
+    let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     let result = (|| {
         let shell: IShellWindows = CoCreateInstance(&ShellWindows, None, CLSCTX_ALL).ok()?;
         let count = shell.Count().ok()?;
@@ -1071,7 +1079,11 @@ unsafe fn explorer_folder_path(target: HWND) -> Option<String> {
         }
         None
     })();
-    CoUninitialize();
+    // is_ok() = S_OK или S_FALSE (мы подняли COM либо он уже был поднят НАМИ ранее).
+    // RPC_E_CHANGED_MODE (COM уже MTA от cpal) -> is_ok()==false -> не трогаем чужой счётчик.
+    if hr.is_ok() {
+        CoUninitialize();
+    }
     result
 }
 
@@ -1162,6 +1174,7 @@ fn main() -> Result<()> {
             voice: voice::Voice::new(),
             voice_target: HWND(std::ptr::null_mut()),
             whisper_ok: true, // оптимистично до первого health-опроса (Phase-27) — не мигать баннером на старте
+            mic_error: String::new(), // отказов захвата ещё не было
         };
         if refresh_items(&mut app) {
             app.config.save_pos(); // окна ещё нет -> сохраняем с известной позицией
@@ -1192,7 +1205,7 @@ fn main() -> Result<()> {
         // visible_start_pos в этом случае возвращает дефолт на первичном экране.
         let sw = GetSystemMetrics(SM_CXSCREEN);
         let n = app.rows.len().max(1) as i32;
-        let h = render::HEAD + render::ROW * n + render::strip_h(app.voice.state(), app.whisper_ok);
+        let h = render::HEAD + render::ROW * n + render::strip_h(app.voice.state(), app.whisper_ok, !app.mic_error.is_empty());
         let default_pos = (sw - render::W - 20, 40);
         let (vx, vy, vw, vh) = (
             GetSystemMetrics(SM_XVIRTUALSCREEN),

@@ -1,5 +1,5 @@
 // FILE: src/render.rs
-// VERSION: 1.18.0
+// VERSION: 1.19.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Построение строк-секций и отрисовка панели (GDI, двойной буфер) с группировкой по приложению.
 //   SCOPE: геометрия/цвета, Row, build_rows, paint (секции+иконки+окна+недавние+подсветка звоночка), resize, row_at.
@@ -25,7 +25,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.18.0 - FPF D-28: чистая squares_fit — полоса квадратов клипается по доступной ширине до name_right (раньше min() зажимала только начало, и при 2+ сессиях хвост уезжал под метку/за край); «+» рисуется, когда что-то не поместилось. Phase-27: strip_h(state, whisper_ok) + баннер «Whisper не запущен». Тест squares_fit_clamps_strip_to_available_width.
+//   LAST_CHANGE: v1.19.0 - fix: баннер «Микрофон недоступен» (приоритетнее баннера whisper: без микрофона распознавать нечего); strip_h(state, whisper_ok, mic_error).
+//   v1.18.0 - FPF D-28: чистая squares_fit — полоса квадратов клипается по доступной ширине до name_right (раньше min() зажимала только начало, и при 2+ сессиях хвост уезжал под метку/за край); «+» рисуется, когда что-то не поместилось. Phase-27: strip_h(state, whisper_ok) + баннер «Whisper не запущен». Тест squares_fit_clamps_strip_to_available_width.
 //   v1.17.0 - Phase-26 presence: квадрат на КАЖДУЮ живую сессию-агента (app.sessions/sess_matches_row), цвет по агенту (agent_color: Claude бирюза C_BUSY / Kimi фиолет C_KIMI / нейтраль); простой=контур, работает=контур+змейка, готово=золотая заливка. squares_to_draw убрана (заменена per-session отрисовкой).
 //   v1.16.0 - Phase-26: редизайн квадратов-статусов. Простаивает — пустой нейтральный контур (≥1 на КАЖДОЙ строке-окне); работает — приглушённый контур + бегущая «змейка» из точек по периметру (perimeter_point/draw_marching_dots, сдвиг по anim_frame); готово — РОВНАЯ золотая заливка (убрано яркое мигание). Чистая perimeter_point + тест. Убраны pulse_color/dim_color. (цвет по агенту — следующий шаг, нужен тег агента в сигнале)
 //   v1.15.0 - Phase-25: квадраты-статусы сессий на строке окна вместо бегущих точек — бирюзовый пульс (работает, count_for_row по busy_sessions) + золотой мигающий (готово, done_sessions), кап MAX_SQUARES=5 («+» при переборе). Чистая squares_to_draw (золото первым под капом) + тест; хелперы pulse_color/dim_color. dots_for_frame удалена (заменена). C_BUSY. Полоса-звоночек без изменений.
@@ -65,13 +66,13 @@ pub const ROW: i32 = 30;
 pub const STRIP: i32 = 22; // высота баннера голосового ввода, когда активен (запись/распознавание) — Phase-19
 
 // START_CONTRACT: strip_h
-//   PURPOSE: Высота нижнего баннера: 0 в простое (окно не растёт), STRIP при активном голосе ИЛИ когда сервер whisper не поднят.
-//   INPUTS: { state: VoiceState; whisper_ok: bool - последний health-статус (Phase-27) }
+//   PURPOSE: Высота нижнего баннера: 0 в простое (окно не растёт), STRIP при активном голосе, когда сервер whisper не поднят ИЛИ когда отказал захват микрофона.
+//   INPUTS: { state: VoiceState; whisper_ok: bool - последний health-статус (Phase-27); mic_error: bool - был отказ захвата }
 //   OUTPUTS: { i32 - 0 или STRIP }
 //   SIDE_EFFECTS: none
 // END_CONTRACT: strip_h
-pub fn strip_h(state: crate::voice::VoiceState, whisper_ok: bool) -> i32 {
-    if state != crate::voice::VoiceState::Idle || !whisper_ok {
+pub fn strip_h(state: crate::voice::VoiceState, whisper_ok: bool, mic_error: bool) -> i32 {
+    if state != crate::voice::VoiceState::Idle || !whisper_ok || mic_error {
         STRIP
     } else {
         0
@@ -530,7 +531,20 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
 
     // индикатор голосового ввода — заметный баннер в самом низу окна (Phase-19)
     let st = app.voice.state();
-    if st == crate::voice::VoiceState::Idle && !app.whisper_ok {
+    if st == crate::voice::VoiceState::Idle && !app.mic_error.is_empty() {
+        // Отказ захвата микрофона: раньше это было видно только в voice.log — пользователь жал
+        // хоткей и не понимал, почему тишина. Приоритетнее баннера whisper: без микрофона
+        // распознавать нечего, даже если сервер жив.
+        let sy = h - STRIP;
+        fill(mem, RECT { left: 0, top: sy, right: w, bottom: h }, C_WHISPER_DOWN);
+        SetTextColor(mem, rgb(255, 226, 226));
+        dt(
+            mem,
+            &format!("\u{26A0} {}", app.mic_error),
+            RECT { left: 10, top: sy, right: w - 6, bottom: h },
+            DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+        );
+    } else if st == crate::voice::VoiceState::Idle && !app.whisper_ok {
         // Phase-27: сервер распознавания не поднят — диктовать нельзя, говорим об этом прямо.
         // Клик по баннеру запускает контейнер (M-MAIN), поэтому подсказываем действие.
         let sy = h - STRIP;
@@ -595,7 +609,7 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
 // END_CONTRACT: resize
 pub unsafe fn resize(hwnd: HWND, app: &mut App) {
     let n = app.rows.len().max(1) as i32;
-    let h = HEAD + ROW * n + strip_h(app.voice.state(), app.whisper_ok);
+    let h = HEAD + ROW * n + strip_h(app.voice.state(), app.whisper_ok, !app.mic_error.is_empty());
     if h != app.last_h {
         app.last_h = h;
         let _ = SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, W, h, SWP_NOMOVE | SWP_NOACTIVATE);
