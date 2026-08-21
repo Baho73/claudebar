@@ -173,7 +173,14 @@ unsafe fn draw_framed_icon(hdc: HDC, x: i32, top: i32, icon: HICON, c: (u8, u8, 
 //   OUTPUTS: { Vec<Row> - заголовки секций и (если развёрнуто/совпало) строки окон и недавних }
 //   SIDE_EFFECTS: none
 // END_CONTRACT: build_rows
-pub fn build_rows(items: &[WinItem], recent: &[RecentDoc], apps: &[AppDef], cfg: &Config, query: &str) -> Vec<Row> {
+pub fn build_rows(
+    items: &[WinItem],
+    recent: &[RecentDoc],
+    apps: &[AppDef],
+    cfg: &Config,
+    query: &str,
+    hits: &[FolderHit],
+) -> Vec<Row> {
     let q = query.trim();
     let searching = q.chars().count() >= 2; // поиск активен от 2 символов
     let mut win_by_app: Vec<Vec<usize>> = vec![Vec::new(); apps.len()];
@@ -210,9 +217,20 @@ pub fn build_rows(items: &[WinItem], recent: &[RecentDoc], apps: &[AppDef], cfg:
     let mut rows = Vec::new();
     // START_BLOCK_GROUP_SECTIONS
     for a in cfg.section_index_order(apps) {
-        // при поиске — совпавшие по имени недавние (иначе не считаем)
+        // При поиске раскрываем недавние этой секции по ДВУМ основаниям:
+        //   1) имя подходит запросу (name_matches) — «искал по названию проекта»;
+        //   2) папка проекта найдена по СОДЕРЖИМОМУ чатов (search_color_for) — «искал по словам
+        //      из переписки». Такой закрытый проект показывается здесь, в секции своего редактора,
+        //      а не отдельным блоком внизу: клик открывает его тем же редактором (OpenCmd::Editor).
         let matched: Vec<usize> = if searching {
-            rec_by_app[a].iter().copied().filter(|&r| name_matches(&recent[r].name, q)).collect()
+            rec_by_app[a]
+                .iter()
+                .copied()
+                .filter(|&r| {
+                    name_matches(&recent[r].name, q)
+                        || search_color_for(hits, &recent[r].name.to_lowercase()).is_some()
+                })
+                .collect()
         } else {
             Vec::new()
         };
@@ -470,6 +488,12 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                     fill(mem, full, C_HOVER);
                 }
                 let d: &RecentDoc = &app.recent[*ridx];
+                // Совпадение поиска по содержимому чатов — та же полоса, что у открытых окон,
+                // чтобы найденный закрытый проект читался как результат, а не как обычный «недавний».
+                if let Some(scol) = search_color_for(&app.search_hits, &d.name.to_lowercase()) {
+                    let fc = match scol { Color::Bm25 => C_SRCH_BM25, Color::Dense => C_SRCH_DENSE };
+                    fill(mem, RECT { left: 0, top: top + 3, right: 4, bottom: top + ROW - 3 }, fc);
+                }
                 SelectObject(mem, app.font_main);
                 SetTextColor(mem, rgb(C_REC.0, C_REC.1, C_REC.2));
                 dt(mem, "◌", RECT { left: 42, top, right: 56, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
@@ -816,16 +840,22 @@ pub fn search_color_for(hits: &[FolderHit], project_lower: &str) -> Option<Color
 }
 
 // START_CONTRACT: search_result_rows
-//   PURPOSE: Строки блока «Найдено ещё» — совпадения поиска, чей проект НЕ открыт.
-//   INPUTS: { hits: &[FolderHit]; open_projects: &HashSet<String> - открытые проекты (lower) }
-//   OUTPUTS: { Vec<Row> - SearchHeader + SearchResult по закрытым; пусто, если закрытых нет }
+//   PURPOSE: Строки блока «Найдено ещё» — ТОЛЬКО находки-сироты: проект не открыт И не показан
+//            в недавних ни одной секции (значит, ни один редактор его не помнит).
+//   INPUTS: { hits: &[FolderHit]; covered: &HashSet<String> - проекты (lower), уже показанные
+//             выше: открытые окна + недавние, раскрытые поиском }
+//   OUTPUTS: { Vec<Row> - SearchHeader + SearchResult по сиротам; пусто, если сирот нет }
 //   SIDE_EFFECTS: none
+//   NOTE: Раньше сюда падали ВСЕ закрытые совпадения, и «Найдено ещё» дублировал недавние.
+//         Теперь совпадение приземляется в секцию своего редактора (build_rows), а этот блок —
+//         страховка, чтобы результат не пропал у проектов, которых нет ни в одном workspaceStorage
+//         (например, работа шла только в терминале). Клик по такой строке открывает папку.
 // END_CONTRACT: search_result_rows
-pub fn search_result_rows(hits: &[FolderHit], open_projects: &HashSet<String>) -> Vec<Row> {
+pub fn search_result_rows(hits: &[FolderHit], covered: &HashSet<String>) -> Vec<Row> {
     let closed: Vec<usize> = hits
         .iter()
         .enumerate()
-        .filter(|(_, h)| !open_projects.contains(&folder_project(&h.folder)))
+        .filter(|(_, h)| !covered.contains(&folder_project(&h.folder)))
         .map(|(i, _)| i)
         .collect();
     if closed.is_empty() {
@@ -891,7 +921,7 @@ mod tests {
         alpha.ordinal = 2; // открыт позже
         let items = vec![bravo, alpha];
         let names = |cfg: &Config| -> Vec<String> {
-            build_rows(&items, &[], &apps, cfg, "")
+            build_rows(&items, &[], &apps, cfg, "", &[])
                 .into_iter()
                 .filter_map(|r| match r {
                     Row::Window { idx } => Some(items[idx].name.clone()),
@@ -986,7 +1016,7 @@ mod tests {
         };
         // 2 окна VS Code (app 0) + 1 окно Word (app 2)
         let items = vec![item(0, "A"), item(0, "B"), item(2, "Doc")];
-        let rows = build_rows(&items, &[], &apps, &cfg, "");
+        let rows = build_rows(&items, &[], &apps, &cfg, "", &[]);
         // section VS Code + 2 окна + section Word + 1 окно = 5 строк
         assert_eq!(rows.len(), 5);
         assert!(matches!(rows[0], Row::Section { app: 0 }));
@@ -1022,16 +1052,47 @@ mod tests {
             .collect();
         let items: Vec<WinItem> = vec![];
         // свёрнуто + без запроса: строк Recent нет
-        let plain = build_rows(&items, &recent, &apps, &cfg, "");
+        let plain = build_rows(&items, &recent, &apps, &cfg, "", &[]);
         assert_eq!(plain.iter().filter(|r| matches!(r, Row::Recent { .. })).count(), 0);
         // запрос "договор": матч показан несмотря на свёрнутость и лимит, без RecentMore
-        let found = build_rows(&items, &recent, &apps, &cfg, "договор");
+        let found = build_rows(&items, &recent, &apps, &cfg, "договор", &[]);
         let idxs: Vec<usize> = found
             .iter()
             .filter_map(|r| if let Row::Recent { ridx } = r { Some(*ridx) } else { None })
             .collect();
         assert_eq!(idxs, vec![7]);
         assert!(!found.iter().any(|r| matches!(r, Row::RecentMore { .. })));
+    }
+
+    #[test]
+    fn content_hit_expands_recent_in_its_section() {
+        // Находка по СОДЕРЖИМОМУ чатов (имя проекта запросу не подходит) должна раскрыть
+        // недавние своей секции, а не уехать в отдельный блок «Найдено ещё».
+        let apps = default_apps();
+        let cfg = mock_cfg(); // недавние свёрнуты
+        let mk = |name: &str| RecentDoc {
+            name: name.into(),
+            app: 0,
+            mtime: 0,
+            open: crate::recent::OpenCmd::Editor { exe: "code".into(), folder: format!("D:\\Python\\{name}") },
+        };
+        let recent: Vec<RecentDoc> = (0..7).map(|i| mk(&format!("proj{i}"))).chain(std::iter::once(mk("margo"))).collect();
+        let items: Vec<WinItem> = vec![];
+        let hits = vec![FolderHit { folder: "D:\\Python\\margo".into(), color: Color::Bm25, score: 3.0 }];
+        // запрос по словам из переписки: имени «margo» в запросе нет, находка — из индекса чатов
+        let rows = build_rows(&items, &recent, &apps, &cfg, "телеграм ник", &hits);
+        let idxs: Vec<usize> = rows
+            .iter()
+            .filter_map(|r| if let Row::Recent { ridx } = r { Some(*ridx) } else { None })
+            .collect();
+        assert_eq!(idxs, vec![7], "найденный проект показан в недавних своей секции");
+        // и он же считается «покрытым» -> в блок сирот не попадает
+        let covered: std::collections::HashSet<String> =
+            idxs.iter().map(|&i| recent[i].name.to_lowercase()).collect();
+        assert!(search_result_rows(&hits, &covered).is_empty(), "дубля в «Найдено ещё» быть не должно");
+        // а сирота (нет в недавних) — попадает
+        let orphan = vec![FolderHit { folder: "D:\\Python\\only_terminal".into(), color: Color::Bm25, score: 1.0 }];
+        assert!(!search_result_rows(&orphan, &covered).is_empty(), "сирота должна остаться видимой");
     }
 
     #[test]
@@ -1107,7 +1168,7 @@ mod tests {
         };
         cfg.toggle_collapsed("VS Code");
         let items = vec![item(0, "A"), item(0, "B")];
-        let rows = build_rows(&items, &[], &apps, &cfg, "");
+        let rows = build_rows(&items, &[], &apps, &cfg, "", &[]);
         // только заголовок, тело скрыто
         assert_eq!(rows.len(), 1);
         assert!(matches!(rows[0], Row::Section { app: 0 }));

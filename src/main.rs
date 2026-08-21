@@ -716,13 +716,25 @@ pub(crate) fn edit_text(edit: HWND) -> String {
     }
 }
 
-// Пересобрать строки панели + (если активен поиск) дописать блок «Найдено ещё».
+// Пересобрать строки панели + (если активен поиск) дописать блок «Найдено ещё» для находок-сирот.
 pub(crate) fn rebuild_rows(app: &mut App) {
-    let q = edit_text(app.search_edit); // текст поиска: недавние фильтруются по имени (build_rows)
-    app.rows = render::build_rows(&app.items, &app.recent, &app.config.apps, &app.config, q.trim());
+    let q = edit_text(app.search_edit);
+    // build_rows раскрывает недавние секции и по имени, и по совпадению содержимого (search_hits):
+    // найденный закрытый проект показывается В СВОЕЙ секции и открывается её редактором.
+    app.rows =
+        render::build_rows(&app.items, &app.recent, &app.config.apps, &app.config, q.trim(), &app.search_hits);
     if !app.search_hits.is_empty() {
-        let open: HashSet<String> = app.items.iter().map(|it| it.name.to_lowercase()).collect();
-        app.rows.extend(render::search_result_rows(&app.search_hits, &open));
+        // «Найдено ещё» — только сироты: ни открытого окна, ни строки в недавних (иначе блок
+        // дублировал бы то, что уже показано выше).
+        let mut covered: HashSet<String> = app.items.iter().map(|it| it.name.to_lowercase()).collect();
+        for r in &app.rows {
+            if let render::Row::Recent { ridx } = r {
+                if let Some(d) = app.recent.get(*ridx) {
+                    covered.insert(d.name.to_lowercase());
+                }
+            }
+        }
+        app.rows.extend(render::search_result_rows(&app.search_hits, &covered));
     }
 }
 
