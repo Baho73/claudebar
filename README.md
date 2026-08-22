@@ -131,9 +131,10 @@ not when you open a session.
 
 - **One badge**, at the far left of the row, cycling through the sources once a second (a single
   source stays static — no blinking).
-- **Real logos**: drop `<source>.ico` into `%APPDATA%\claudebar\mail-icons\` (e.g. `mailru.ico`,
-  `telegram.ico`). A new source key just needs a new file — no code change. Without a file, a
-  brand-coloured mark is drawn instead, so sources stay distinguishable.
+- **Real logos**: ready-made icons ship in [`assets/mail-icons/`](assets/mail-icons/) — copy them to
+  `%APPDATA%\claudebar\mail-icons\` and the panel picks them up on the next start. A new source key
+  just needs a new `<source>.ico` there — no code change. Without a file, a brand-coloured mark is
+  drawn instead, so sources stay distinguishable.
 - **Hover** shows the breakdown: `✉ 7 новых: Mail.ru 6, Яндекс 1`.
 - **Right-click → "Запустить Claude Code здесь"** starts a session in that folder. The command is
   the `sessioncmd=` ini key, `wt.exe -d {dir} claude` by default.
@@ -370,7 +371,7 @@ powershell -ExecutionPolicy Bypass -File "hooks\install-kimi-hook.ps1"   # Kimi 
 
 Если письма и сообщения раскладываются по папкам проектов внешним роутером, панель показывает, **куда что прилетело** — и на живых сессиях, и на закрытых проектах в «Недавних». Роутер кладёт по файлу на проект в `%APPDATA%\claudebar\mail\`; ClaudeBar эти файлы только **читает** — в `.inbox` не ходит и сигналы не удаляет. Поэтому значок гаснет, когда работа сделана, а не когда ты открыла сессию.
 
-Значок **один**, в самом левом краю строки, и раз в секунду циклится по источникам (при единственном источнике — статичен). Логотипы берутся из `%APPDATA%\claudebar\mail-icons\<ключ>.ico` — новый источник у роутера означает просто новый файл, код не трогаем; без файла рисуется марка фирменного цвета. Наведение показывает разбивку: `✉ 7 новых: Mail.ru 6, Яндекс 1`. ПКМ → **«Запустить Claude Code здесь»** открывает сессию в этой папке (команда — ключ `sessioncmd=`, по умолчанию `wt.exe -d {dir} claude`).
+Значок **один**, в самом левом краю строки, и раз в секунду циклится по источникам (при единственном источнике — статичен). Логотипы берутся из `%APPDATA%\claudebar\mail-icons\<ключ>.ico`; готовый набор лежит в [`assets/mail-icons/`](assets/mail-icons/) — скопировать оттуда и перезапустить панель. Новый источник у роутера означает просто новый файл, код не трогаем; без файла рисуется марка фирменного цвета. Наведение показывает разбивку: `✉ 7 новых: Mail.ru 6, Яндекс 1`. ПКМ → **«Запустить Claude Code здесь»** открывает сессию в этой папке (команда — ключ `sessioncmd=`, по умолчанию `wt.exe -d {dir} claude`).
 
 ### Диктовка
 
