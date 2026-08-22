@@ -1,5 +1,5 @@
 // FILE: src/render.rs
-// VERSION: 1.19.0
+// VERSION: 1.20.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Построение строк-секций и отрисовка панели (GDI, двойной буфер) с группировкой по приложению.
 //   SCOPE: геометрия/цвета, Row, build_rows, paint (секции+иконки+окна+недавние+подсветка звоночка), resize, row_at.
@@ -25,7 +25,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.19.0 - fix: баннер «Микрофон недоступен» (приоритетнее баннера whisper: без микрофона распознавать нечего); strip_h(state, whisper_ok, mic_error).
+//   LAST_CHANGE: v1.20.0 - M-MAIL: значок входящих в самом левом краю строки (окна и «Недавние»), один значок циклится по источникам раз в секунду (draw_mail_badge + cycle_pick); нет <ключ>.ico -> запасная марка фирменного цвета.
+//   v1.19.0 - fix: баннер «Микрофон недоступен» (приоритетнее баннера whisper: без микрофона распознавать нечего); strip_h(state, whisper_ok, mic_error).
 //   v1.18.0 - FPF D-28: чистая squares_fit — полоса квадратов клипается по доступной ширине до name_right (раньше min() зажимала только начало, и при 2+ сессиях хвост уезжал под метку/за край); «+» рисуется, когда что-то не поместилось. Phase-27: strip_h(state, whisper_ok) + баннер «Whisper не запущен». Тест squares_fit_clamps_strip_to_available_width.
 //   v1.17.0 - Phase-26 presence: квадрат на КАЖДУЮ живую сессию-агента (app.sessions/sess_matches_row), цвет по агенту (agent_color: Claude бирюза C_BUSY / Kimi фиолет C_KIMI / нейтраль); простой=контур, работает=контур+змейка, готово=золотая заливка. squares_to_draw убрана (заменена per-session отрисовкой).
 //   v1.16.0 - Phase-26: редизайн квадратов-статусов. Простаивает — пустой нейтральный контур (≥1 на КАЖДОЙ строке-окне); работает — приглушённый контур + бегущая «змейка» из точек по периметру (perimeter_point/draw_marching_dots, сдвиг по anim_frame); готово — РОВНАЯ золотая заливка (убрано яркое мигание). Чистая perimeter_point + тест. Убраны pulse_color/dim_color. (цвет по агенту — следующий шаг, нужен тег агента в сигнале)
@@ -393,6 +394,11 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                         fill(mem, RECT { left: 0, top, right: 5, bottom: top + ROW }, fc);
                     }
                 }
+                // значок входящих (M-MAIL) — в самом левом краю строки, до цветной плашки проекта:
+                // «пришло письмо» читается раньше имени и не толкает квадраты сессий.
+                if let Some(m) = crate::mail::mail_for_row(&app.mails, it.path.as_deref(), &it.name) {
+                    draw_mail_badge(mem, MAIL_X, top + (ROW - MAIL_PX) / 2, m, app.mail_tick);
+                }
                 // цветная плашка (с отступом — окна вложены в секцию)
                 let cy = top + (ROW - SWATCH) / 2;
                 let (_, r, g, b) = PALETTE[app.config.color_idx_for(id_key, &it.name)];
@@ -497,6 +503,16 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 SelectObject(mem, app.font_main);
                 SetTextColor(mem, rgb(C_REC.0, C_REC.1, C_REC.2));
                 dt(mem, "◌", RECT { left: 42, top, right: 56, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+                // значок входящих для ЗАКРЫТОГО проекта: справа, где у недавних пусто.
+                // Путь берём из OpenCmd::Editor.folder -> матч по полному пути (ТЗ), не по basename.
+                let dpath = match &d.open {
+                    crate::recent::OpenCmd::Editor { folder, .. } => Some(folder.as_str()),
+                    crate::recent::OpenCmd::Lnk(_) => None,
+                };
+                // тот же левый край, что и у строк окон — значки входящих выстраиваются в колонку
+                if let Some(m) = crate::mail::mail_for_row(&app.mails, dpath, &d.name) {
+                    draw_mail_badge(mem, MAIL_X, top + (ROW - MAIL_PX) / 2, m, app.mail_tick);
+                }
                 dt(mem, &d.name, RECT { left: 58, top, right: w - 10, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
             }
             Row::RecentMore { app: a } => {
@@ -795,6 +811,46 @@ pub fn squares_fit(avail_w: i32, want: usize) -> usize {
     (((avail_w + SQ_GAP) / (SQ_W + SQ_GAP)) as usize).min(want)
 }
 
+// Размер значка входящих в строке (ROW=30, значок не должен спорить с именем).
+const MAIL_PX: i32 = 14;
+// Значок входящих стоит в самом левом краю строки: 0..4 занимает полоса совпадения поиска,
+// цветная плашка проекта начинается с 22 — между ними ровно место под 14px значок.
+const MAIL_X: i32 = 6;
+const MAIL_GAP: i32 = 4;
+
+// START_CONTRACT: draw_mail_badge
+//   PURPOSE: Нарисовать ОДИН значок входящих: логотип текущего источника (цикл раз в секунду).
+//   INPUTS: { mem: HDC; x,y: левый верх; m: &Mail; tick: u32 - секундный такт }
+//   OUTPUTS: { i32 - занятая ширина (0, если рисовать нечего) }
+//   SIDE_EFFECTS: рисование в контекст
+//   NOTE: Значок один и меняется по кругу между источниками (требование ТЗ), а не ряд иконок.
+//         При единственном источнике cycle_pick всегда даёт 0 — значок статичен, без мигания.
+//         Нет файла <ключ>.ico -> запасная марка: кружок фирменного цвета с белой полосой.
+// END_CONTRACT: draw_mail_badge
+unsafe fn draw_mail_badge(mem: HDC, x: i32, y: i32, m: &crate::mail::Mail, tick: u32) -> i32 {
+    let Some(pick) = crate::mail::cycle_pick(m.sources.len(), tick) else {
+        return 0;
+    };
+    let key = &m.sources[pick].0;
+    if let Some(hicon) = crate::mail::source_icon(key) {
+        let _ = DrawIconEx(mem, x, y, hicon, MAIL_PX, MAIL_PX, 0, HBRUSH(std::ptr::null_mut()), DI_NORMAL);
+    } else {
+        // запасная марка: залитый кружок фирменного цвета + белая полоса («конверт»)
+        let (r, g, b) = crate::mail::fallback_color(key);
+        let br = CreateSolidBrush(rgb(r, g, b));
+        let pen = CreatePen(PS_SOLID, 1, rgb(r, g, b));
+        let ob = SelectObject(mem, br);
+        let op = SelectObject(mem, pen);
+        let _ = Ellipse(mem, x, y, x + MAIL_PX, y + MAIL_PX);
+        SelectObject(mem, ob);
+        SelectObject(mem, op);
+        let _ = DeleteObject(br);
+        let _ = DeleteObject(pen);
+        fill(mem, RECT { left: x + 3, top: y + 6, right: x + MAIL_PX - 3, bottom: y + 8 }, (255, 255, 255));
+    }
+    MAIL_PX + MAIL_GAP
+}
+
 // Пустой контур квадрата SQ_W x SQ_W (толщина 1px).
 unsafe fn draw_square_outline(mem: HDC, x: i32, y: i32, col: (u8, u8, u8)) {
     let s = SQ_W;
@@ -892,6 +948,7 @@ mod tests {
             pos: None,
             search_db: String::new(),
             search_cmd: String::new(),
+            session_cmd: String::new(),
             search_port: crate::config::DEFAULT_SEARCH_PORT,
             chats_db: String::new(),
             files_db: String::new(),
@@ -996,6 +1053,7 @@ mod tests {
             pos: None,
             search_db: String::new(),
             search_cmd: String::new(),
+            session_cmd: String::new(),
             search_port: crate::config::DEFAULT_SEARCH_PORT,
             chats_db: String::new(),
             files_db: String::new(),
@@ -1148,6 +1206,7 @@ mod tests {
             pos: None,
             search_db: String::new(),
             search_cmd: String::new(),
+            session_cmd: String::new(),
             search_port: crate::config::DEFAULT_SEARCH_PORT,
             chats_db: String::new(),
             files_db: String::new(),

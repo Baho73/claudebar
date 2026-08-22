@@ -118,6 +118,26 @@ Options in the **⚙** menu:
 Custom vocabulary is applied as a **post-replacement** (`vocab=` in the ini), not passed to the model —
 the fine-tuned Russian model ignores `hotwords`/`initial_prompt` and degrades if you use them.
 
+## Incoming badge
+
+If you route your mail and messenger traffic into project folders, ClaudeBar can show **where
+something landed** — on live sessions and on closed projects in the *Recent* list alike.
+
+An external router (kept out of this repo) drops one file per project into
+`%APPDATA%\claudebar\mail\`, holding the project folder, how many items are unsorted, and the
+breakdown by source. ClaudeBar only ever **reads** those files: it never touches your `.inbox`
+folders and never deletes a signal. The badge therefore clears when the work is actually done —
+not when you open a session.
+
+- **One badge**, at the far left of the row, cycling through the sources once a second (a single
+  source stays static — no blinking).
+- **Real logos**: drop `<source>.ico` into `%APPDATA%\claudebar\mail-icons\` (e.g. `mailru.ico`,
+  `telegram.ico`). A new source key just needs a new file — no code change. Without a file, a
+  brand-coloured mark is drawn instead, so sources stay distinguishable.
+- **Hover** shows the breakdown: `✉ 7 новых: Mail.ru 6, Яндекс 1`.
+- **Right-click → "Запустить Claude Code здесь"** starts a session in that folder. The command is
+  the `sessioncmd=` ini key, `wt.exe -d {dir} claude` by default.
+
 ## Install
 
 **Option A — download.** Grab `claudebar.exe` from [Releases](https://github.com/Baho73/claudebar/releases), drop it anywhere, run it.
@@ -256,6 +276,11 @@ p=ConstructMan	3	opus
 - `voicetrailspace=0|1` — append a space after the phrase. Default `1`.
 - `voicestreaming=0|1` — transcribe in a sliding window while you talk. Default `0`.
 
+**Sessions**
+
+- `sessioncmd=<template>` — command behind "Запустить Claude Code здесь"; `{dir}` is replaced with
+  the quoted folder path. Default `wt.exe -d {dir} claude`.
+
 ## Build from source
 
 Needs Rust. Without Visual Studio, use the self-contained GNU toolchain:
@@ -340,6 +365,12 @@ powershell -ExecutionPolicy Bypass -File "hooks\install-kimi-hook.ps1"   # Kimi 
 ```
 
 Обе делают бэкап файла настроек и идемпотентны (повторный запуск обновляет блок, а не плодит дубли). Ставят четыре события: `SessionStart` (сессия появилась), `UserPromptSubmit`/`PostToolUse` (работает), `Stop` (закончил), `SessionEnd` (сессия закрыта). **После установки перезапусти сессии агентов** — хуки читаются при старте. Подробности — `hooks/README.md`.
+
+### Значок входящих
+
+Если письма и сообщения раскладываются по папкам проектов внешним роутером, панель показывает, **куда что прилетело** — и на живых сессиях, и на закрытых проектах в «Недавних». Роутер кладёт по файлу на проект в `%APPDATA%\claudebar\mail\`; ClaudeBar эти файлы только **читает** — в `.inbox` не ходит и сигналы не удаляет. Поэтому значок гаснет, когда работа сделана, а не когда ты открыла сессию.
+
+Значок **один**, в самом левом краю строки, и раз в секунду циклится по источникам (при единственном источнике — статичен). Логотипы берутся из `%APPDATA%\claudebar\mail-icons\<ключ>.ico` — новый источник у роутера означает просто новый файл, код не трогаем; без файла рисуется марка фирменного цвета. Наведение показывает разбивку: `✉ 7 новых: Mail.ru 6, Яндекс 1`. ПКМ → **«Запустить Claude Code здесь»** открывает сессию в этой папке (команда — ключ `sessioncmd=`, по умолчанию `wt.exe -d {dir} claude`).
 
 ### Диктовка
 

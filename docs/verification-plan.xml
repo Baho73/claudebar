@@ -378,6 +378,21 @@
       </scenarios>
     </V-M-SEARCHBOX>
 
+    <V-M-MAIL MODULE="M-MAIL" PRIORITY="medium">
+      <test-files><file>src/mail.rs (#[cfg(test)])</file></test-files>
+      <module-checks>
+        <check-1>cargo test mail (parse_mail/parse_sources/mail_for_row/tooltip_text/cycle_pick/safe_key)</check-1>
+        <check-2>Ручной smoke по ТЗ: python D:\Python\mail-mcp\router.py --sync -&gt; значки у проектов с неразобранным</check-2>
+      </module-checks>
+      <scenarios>
+        <scenario-1 kind="success">parse_mail читает формат роутера (cwd/count/sources) и терпит незнакомые ключи; count=0 или пустой cwd -&gt; сигнала нет. Тест parse_mail_reads_router_format</scenario-1>
+        <scenario-2 kind="success">Матч со строкой идёт по ПОЛНОМУ пути (окно — WinItem.path, недавнее — OpenCmd::Editor.folder): вложенная папка засчитывается проекту-родителю, одноимённый проект в другом месте НЕ ловится (наследие D-06), регистр и слэши не мешают. Тест mail_for_row_matches_full_path_and_subfolders</scenario-2>
+        <scenario-3 kind="success">Значок ОДИН и циклится по источникам раз в секунду; при единственном источнике статичен (cycle_pick всегда 0) — без мигания. Тест cycle_pick_is_static_for_single_source</scenario-3>
+        <scenario-4 kind="failure">Граница доверия: ключ источника приходит из файла ВНЕШНЕГО роутера и подставляется в имя файла иконки. safe_key пропускает только [a-z0-9_-] -&gt; «..», пути и пробелы отклоняются, чтения за пределами mail-icons нет. Тест safe_key_blocks_path_tricks</scenario-4>
+        <scenario-5 kind="success">Нет %APPDATA%\claudebar\mail-icons\&lt;ключ&gt;.ico -&gt; рисуется запасная марка фирменного цвета (источники различимы), значок не пропадает. Положенный .ico подхватывается при следующем запуске без правок кода</scenario-5>
+        <scenario-6 kind="success">Жизненный цикл сигнала принадлежит роутеру: панель НЕ удаляет .mail, не ходит в .inbox проектов, TTL не заводит. Разобрал входящее -&gt; роутер убрал файл -&gt; значок погас. Запуск сессии из меню значок НЕ гасит</scenario-6>
+      </scenarios>
+    </V-M-MAIL>
     <V-M-MENU MODULE="M-MENU" PRIORITY="medium">
       <test-files><file>—</file></test-files>
       <module-checks>

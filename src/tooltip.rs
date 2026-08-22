@@ -1,5 +1,5 @@
 // FILE: src/tooltip.rs
-// VERSION: 1.0.0
+// VERSION: 1.1.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Собственный popup-тултип (Phase-13 Ф-B): окно подсказки, dwell-таймер, позиционирование по монитору, текст цели.
 //   SCOPE: create_tooltip/arm_tip/show_tooltip/hide_tooltip (плюмбинг окна + dwell) и tip_text_for (правила/путь/сниппет) поверх App.
@@ -21,7 +21,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.0.0 - рефактор: tooltip-кластер вынесен из main.rs в отдельный UI-модуль (M-TOOLTIP), без изменения поведения.
+//   LAST_CHANGE: v1.1.0 - M-MAIL: к подсказке строки дописывается «✉ 7 новых: Mail.ru 6, Яндекс 1» (источники и количества) для окон и «Недавних».
+//   v1.0.0 - рефактор: tooltip-кластер вынесен из main.rs в отдельный UI-модуль (M-TOOLTIP), без изменения поведения.
 // END_CHANGE_SUMMARY
 
 use std::cell::RefCell;
@@ -185,17 +186,34 @@ fn tip_text_for(app: &App, tip_row: i32) -> Option<String> {
     if tip_row < 0 {
         return None;
     }
+    // Входящие (M-MAIL): строка «7 новых: Mail.ru 6, Яндекс 1» дописывается к обычной подсказке,
+    // чтобы наведение на значок объясняло, что за источники и сколько.
+    let mail_line = |path: Option<&str>, name: &str| {
+        crate::mail::mail_for_row(&app.mails, path, name).map(crate::mail::tooltip_text)
+    };
+    let with_mail = |base: String, extra: Option<String>| match extra {
+        Some(m) => format!("{base}\r\n\u{2709} {m}"),
+        None => base,
+    };
     match app.rows.get(tip_row as usize)? {
         render::Row::Window { idx } => app.items.get(*idx).map(|it| {
             // совпавшее с поиском открытое окно -> полный путь папки из хита, иначе имя
             let proj = it.name.to_lowercase();
-            app.search_hits
+            let base = app
+                .search_hits
                 .iter()
                 .find(|h| tip_basename(&h.folder) == proj)
                 .map(|h| h.folder.clone())
-                .unwrap_or_else(|| it.name.clone())
+                .unwrap_or_else(|| it.name.clone());
+            with_mail(base, mail_line(it.path.as_deref(), &it.name))
         }),
-        render::Row::Recent { ridx } => app.recent.get(*ridx).map(recent_path),
+        render::Row::Recent { ridx } => app.recent.get(*ridx).map(|d| {
+            let dpath = match &d.open {
+                crate::recent::OpenCmd::Editor { folder, .. } => Some(folder.as_str()),
+                crate::recent::OpenCmd::Lnk(_) => None,
+            };
+            with_mail(recent_path(d), mail_line(dpath, &d.name))
+        }),
         render::Row::SearchResult { hit } => app.search_hits.get(*hit).map(|h| {
             let q = edit_text(app.search_edit);
             // сниппет: сперва из чатов, иначе (если scope «+Файлы») из файлов

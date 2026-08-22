@@ -10,7 +10,7 @@
     <M-MAIN NAME="Main" TYPE="ENTRY_POINT" STATUS="partial">
       <purpose>Точка входа: GetModuleHandle, регистрация класса, создание topmost-окна, таймер опроса, message loop, диспетчеризация в обработчики. v0.3: опрос M-SIGNAL (bell_keys + reconcile) на тике, проброс bell в paint, зоны клика и режим reorder. v0.4: шрифт панели читается из конфига (make_font(face,…)); «⚙» в шапке открывает меню настроек → M-SETTINGS.choose_font → rebuild_fonts + repaint. v0.5 (Phase-14): в меню окна «Скопировать ссылку»/«Открыть в проводнике» — путь проекта (M-SEARCH.folder_for_project) или документа (фоновая карта doc_paths из Recent .lnk). Phase-15/16: идентичность проекта по полному пути из заголовка (extract_project_path) + нумерация дублей «(N)»; пункт ⚙ «Полные пути» (configure_editor_titles); настройка порядка окон sort=alpha|recent с картой ordinal первого появления.</purpose>
       <path>src/main.rs</path>
-      <depends>M-STATE, M-CONFIG, M-WINENUM, M-ACTIVATE, M-RENDER, M-RECENT, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX, M-VOICE, M-PASTE, M-PROMPT, M-TOOLTIP, M-SEARCHBOX, M-MENU</depends>
+      <depends>M-STATE, M-CONFIG, M-WINENUM, M-ACTIVATE, M-RENDER, M-RECENT, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX, M-VOICE, M-PASTE, M-PROMPT, M-TOOLTIP, M-SEARCHBOX, M-MENU, M-MAIL</depends>
       <verification-ref>V-M-MAIN</verification-ref>
       <annotations>
         <fn-main PURPOSE="Инициализация приложения и цикл сообщений" />
@@ -78,6 +78,24 @@
         <const-SEARCH_MIN PURPOSE="Минимум символов для живого BM25 (делится с run_live_search в M-MAIN)" />
       </annotations>
     </M-SEARCHBOX>
+
+    <M-MAIL NAME="Mail" TYPE="INTEGRATION" STATUS="implemented">
+      <purpose>Индикатор входящих: читает сигналы внешнего роутера почты/мессенджеров (%APPDATA%\claudebar\mail\&lt;hash&gt;.mail, по файлу на проект) и отдаёт панели, в какой проект что-то прилетело и из каких источников. Работает и для живых сессий, и для проектов в «Недавних». ТЗ: docs/TZ-mail-badge.md.</purpose>
+      <path>src/mail.rs</path>
+      <depends>M-SIGNAL</depends>
+      <verification-ref>V-M-MAIL</verification-ref>
+      <annotations>
+        <type-Mail PURPOSE="Сигнал по проекту: cwd, count (всего неразобранного), sources (ключ источника -&gt; количество)" />
+        <fn-list PURPOSE="Скан каталога сигналов -&gt; Vec&lt;Mail&gt;, отсортировано по cwd (порядок не пляшет между тиками); зовётся из refresh_items раз в секунду" />
+        <fn-parse_mail PURPOSE="Чистое: файл ключ=значение -&gt; Option&lt;Mail&gt;; незнакомые ключи игнорируются (формат роутера вправе расширяться), count=0 -&gt; сигнала нет" />
+        <fn-mail_for_row PURPOSE="Матч сигнала со строкой панели через M-SIGNAL.sess_matches_row: полный путь (окно — WinItem.path, недавнее — OpenCmd::Editor.folder), иначе имя" />
+        <fn-source_icon PURPOSE="HICON логотипа источника из %APPDATA%\claudebar\mail-icons\&lt;ключ&gt;.ico (LoadImageW, кэш на UI-потоке, в т.ч. отрицательный); None -&gt; M-RENDER рисует запасную марку" />
+        <fn-safe_key PURPOSE="Граница доверия: ключ источника приходит из файла ВНЕШНЕГО роутера и идёт в имя файла — разрешены только [a-z0-9_-], иначе выход из каталога" />
+        <fn-cycle_pick PURPOSE="Чистое: какой источник показать на этом такте (значок ОДИН и циклится); при единственном источнике всегда 0 — без мигания" />
+        <fn-tooltip_text PURPOSE="Чистое: «7 новых: Mail.ru 6, Яндекс 1» (source_label переводит машинные ключи в человеческие названия)" />
+        <fn-fallback_color PURPOSE="Чистое: фирменный цвет запасной марки, когда .ico не положен; незнакомый ключ -&gt; серый" />
+      </annotations>
+    </M-MAIL>
 
     <M-MENU NAME="Menu" TYPE="UI_COMPONENT" STATUS="implemented">
       <purpose>Контекст-меню по ПКМ (ссылка/проводник + палитра цветов + метка; minimal=true для недавних/результатов) и ⚙-меню настроек (шрифт, поиск в файлах, полные пути, сортировка, 4 галочки диктовки, о программе), плюс обработчик всех команд меню и хелперы буфера обмена/Explorer. Вынесено из main.rs (рефактор god-object, FPF D-5). Флаг MENU_ACTIVE живёт здесь — wndproc читает его, чтобы тики таймера не закрывали модальный TrackPopupMenu (Phase-14 fix).</purpose>
@@ -390,6 +408,11 @@
     </M-VOICE>
 
     <CrossLink from="M-MAIN" to="M-WINENUM" relation="опрашивает окна по таймеру" />
+    <CrossLink from="M-MAIN" to="M-MAIL" relation="refresh_items раз в секунду читает mail::list() в App.mails; MAIL_TICK даёт секундный такт цикла значка; spawn_session запускает сессию агента в папке проекта" />
+    <CrossLink from="M-MAIL" to="M-SIGNAL" relation="матч сигнала со строкой панели переиспользует sess_matches_row (вложенные папки, одноимённые проекты D-06, регистр) — своего матчера нет" />
+    <CrossLink from="M-RENDER" to="M-MAIL" relation="paint: значок входящих в левом краю строк окна и «Недавнего» (draw_mail_badge -&gt; source_icon или запасная марка)" />
+    <CrossLink from="M-TOOLTIP" to="M-MAIL" relation="к подсказке строки дописывается «✉ N новых: источник N, …» (tooltip_text)" />
+    <CrossLink from="M-MENU" to="M-MAIL" relation="пункт «Запустить Claude Code здесь»: сценарий «прилетело письмо -&gt; открыть сессию в этой папке»; значок при этом НЕ гаснет" />
     <CrossLink from="M-MAIN" to="M-STATE" relation="владеет App/APP (состояние UI-потока); строит и опрашивает" />
     <CrossLink from="M-MAIN" to="M-PROMPT" relation="меню окна «Метка» → prompt::prompt_text(hwnd, hinst, initial) для ввода метки проекта" />
     <CrossLink from="M-MAIN" to="M-TOOLTIP" relation="wndproc/subclass: create_tooltip при старте; arm_tip по hover/hit-test; show_tooltip по dwell-таймеру (ID_TIP_TIMER); hide_tooltip. Делит edit_text/recent_path/константы dwell" />

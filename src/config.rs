@@ -1,5 +1,5 @@
 // FILE: src/config.rs
-// VERSION: 1.13.0
+// VERSION: 1.14.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Конфигурация: приложения (по процессу и классу окна), настройки проектов (цвет, метка), свёрнутость секций, «показать все» недавних, позиция, шрифт панели.
 //   SCOPE: палитра, авто-цвет, AppDef (proc/proc_alts/class)/NameMode (вкл. Whole), дефолтный набор приложений (редакторы, Office, терминалы, Проводник), свёрнутость секций, раскрытие/showall недавних, шрифт (font_face/font_size/font_weight), парсинг/сериализация ini.
@@ -30,7 +30,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.18.0 - Phase-24: опция voice_streaming (ключ voicestreaming=, деф. false) — инкрементально распознавать длинную диктовку во время записи (стабильный префикс), финиш мгновенный. ⚙-галочка в M-MAIN; оркестрация в M-VOICE.
+//   LAST_CHANGE: v1.14.0 - M-MAIL: ключ sessioncmd= (команда запуска сессии агента в папке проекта, {dir} -> путь в кавычках; дефолт «wt.exe -d {dir} claude»).
+//   v1.18.0 - Phase-24: опция voice_streaming (ключ voicestreaming=, деф. false) — инкрементально распознавать длинную диктовку во время записи (стабильный префикс), финиш мгновенный. ⚙-галочка в M-MAIN; оркестрация в M-VOICE.
 //   v1.17.0 - Phase-23: опция voice_trailing_space (ключ voicetrailspace=, деф. true) — добавлять пробел после надиктованной фразы, чтобы следующая вставка не липла к точке. ⚙-галочка в M-MAIN; хвостовой пробел в M-TRANSFORM.process.
 //   v1.16.0 - Phase-22: опция voice_always_on (ключ voicealwayson=, деф. false) — держать микрофон включённым постоянно (always-on + pre-roll, первое слово не теряется). ⚙-галочка в M-MAIN; персистентный Mic в M-VOICE/M-AUDIO.
 //   v1.15.0 - Phase-20: опция voice_keep_clipboard (ключ voicekeepclip=, деф. true) — сохранять прежний буфер обмена после вставки диктовки. ⚙-галочка в M-MAIN; M-PASTE.paste_text(text, keep) восстанавливает буфер только при keep.
@@ -70,6 +71,10 @@ pub const DEFAULT_SEARCH_PORT: u16 = 8799;
 // Голосовой ввод (Phase-18): глобальный хоткей диктовки, URL контейнера whisper-dictate, язык.
 pub const DEFAULT_VOICE_HOTKEY: &str = "Ctrl+Space";
 pub const DEFAULT_WHISPER_URL: &str = "http://127.0.0.1:8771/transcribe";
+
+// Команда запуска сессии агента в папке проекта (пункт меню «Запустить Claude Code здесь»).
+// {dir} подставляется как путь в кавычках. Ключ ini: sessioncmd=
+pub const DEFAULT_SESSION_CMD: &str = "wt.exe -d {dir} claude";
 pub const DEFAULT_VOICE_LANG: &str = "ru";
 
 // Модификаторы RegisterHotKey (значения Win32 MOD_*); держим локально, чтобы config не тянул UI-импорты.
@@ -156,6 +161,7 @@ pub struct Config {
     pub pos: Option<(i32, i32)>,
     pub search_db: String, // путь к индексу clfind.db (нативный BM25 через rusqlite) — Phase-12
     pub search_cmd: String, // команда запуска dense-демона (clfind serve) — Phase-12
+    pub session_cmd: String, // команда запуска сессии агента в папке (ключ sessioncmd=) — M-MAIL
     pub search_port: u16, // порт HTTP-демона dense — Phase-12
     pub chats_db: String, // своя FTS5-база чатов (нативный BM25 на Rust) — Phase-13
     pub files_db: String, // своя FTS5-база файлов (Ф-C) — Phase-13
@@ -312,6 +318,7 @@ struct ParsedIni {
     pos: Option<(i32, i32)>,
     search_db: String,
     search_cmd: String,
+    session_cmd: String,
     search_port: u16,
     chats_db: String,
     files_db: String,
@@ -344,6 +351,7 @@ fn parse_ini(text: &str) -> ParsedIni {
     let mut pos: Option<(i32, i32)> = None;
     let mut search_db: String = default_search_db();
     let mut search_cmd: String = DEFAULT_SEARCH_CMD.to_string();
+    let mut session_cmd: String = DEFAULT_SESSION_CMD.to_string();
     let mut search_port: u16 = DEFAULT_SEARCH_PORT;
     let mut chats_db: String = default_chats_db();
     let mut files_db: String = default_files_db();
@@ -434,6 +442,10 @@ fn parse_ini(text: &str) -> ParsedIni {
             if !v.trim().is_empty() {
                 voice_hotkey = v.trim().to_string();
             }
+        } else if let Some(v) = line.strip_prefix("sessioncmd=") {
+            if !v.trim().is_empty() {
+                session_cmd = v.trim().to_string();
+            }
         } else if let Some(v) = line.strip_prefix("whisperurl=") {
             if !v.trim().is_empty() {
                 whisper_url = v.trim().to_string();
@@ -490,7 +502,7 @@ fn parse_ini(text: &str) -> ParsedIni {
         }
     }
     // END_BLOCK_PARSE_LINES
-    ParsedIni { projects, proj_numbers, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, search_port, chats_db, files_db, projects_root, search_files, sort_recent, voice_hotkey, whisper_url, voice_language, vocab, hotwords, initial_prompt, voice_keep_clipboard, voice_always_on, voice_trailing_space, voice_streaming }
+    ParsedIni { projects, proj_numbers, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, session_cmd, search_port, chats_db, files_db, projects_root, search_files, sort_recent, voice_hotkey, whisper_url, voice_language, vocab, hotwords, initial_prompt, voice_keep_clipboard, voice_always_on, voice_trailing_space, voice_streaming }
 }
 
 impl Config {
@@ -512,6 +524,7 @@ impl Config {
             pos: p.pos,
             search_db: p.search_db,
             search_cmd: p.search_cmd,
+            session_cmd: p.session_cmd,
             search_port: p.search_port,
             chats_db: p.chats_db,
             files_db: p.files_db,
@@ -854,6 +867,7 @@ mod tests {
             search_files: false,
             sort_recent: false,
             voice_hotkey: DEFAULT_VOICE_HOTKEY.to_string(),
+            session_cmd: DEFAULT_SESSION_CMD.to_string(),
             whisper_url: DEFAULT_WHISPER_URL.to_string(),
             voice_language: DEFAULT_VOICE_LANG.to_string(),
             vocab: String::new(),

@@ -970,6 +970,22 @@
       </checkpoint>
       <risk id="env-27">Свежесобранный exe при voicealwayson=1 виснет на захвате микрофона до создания окна (поведенческий анализ Касперского на неизвестном бинаре) — воспроизведено контрольным экспериментом на сборке БЕЗ правок, кодом не лечится. Обход: exe/папка в доверенные программы Касперского. Диагностика старта — новая строка RegisterHotKey в voice.log; FindWindow/EnumWindows из агентской сессии окно панели не видят. Подробности — V-M-VOICE scenario-0</risk>
     </Phase-27>
+
+    <Phase-28 name="Индикатор входящих (M-MAIL): значок писем на строке + запуск сессии" status="done">
+      <goal>Видеть в панели, в какой проект прилетело письмо или сообщение — и для живых сессий, и для проектов в «Недавних», где сессия не запущена; запускать сессию оттуда же. Поставщик данных внешний: роутер D:\Python\mail-mcp кладёт по файлу на проект в %APPDATA%\claudebar\mail\. ТЗ: docs/TZ-mail-badge.md.</goal>
+      <step-1 module="M-MAIL" status="done" verification="V-M-MAIL">Новый модуль src/mail.rs: тип Mail (cwd/count/sources), mail_dir, чистые parse_mail/parse_sources (терпимы к незнакомым ключам), list (скан раз в секунду в общем тике, сортировка по cwd), source_label/tooltip_text, cycle_pick. TTL НЕ заводим — файл живёт, пока есть неразобранное</step-1>
+      <step-2 module="M-MAIL" status="done" verification="V-M-MAIL">Матч со строкой панели переиспользует M-SIGNAL.sess_matches_row (своего матчера нет): окно — WinItem.path, недавнее — OpenCmd::Editor.folder, то есть по ПОЛНОМУ пути, а не по basename</step-2>
+      <step-3 module="M-MAIL,M-RENDER" status="done" verification="V-M-RENDER">Иконки источников: source_icon грузит %APPDATA%\claudebar\mail-icons\&lt;ключ&gt;.ico (LoadImageW, кэш, safe_key против выхода из каталога); нет файла -&gt; запасная марка fallback_color. draw_mail_badge рисует ОДИН значок с циклом раз в секунду, в самом левом краю строки (до цветной плашки) — одинаково для окон и «Недавних»</step-3>
+      <step-4 module="M-STATE,M-MAIN" status="done" verification="V-M-MAIN">Поля App.mails/App.mail_tick; заполнение в refresh_items; MAIL_TICK как счётчик секундных тактов поверх существующего таймера (отдельный таймер не заводили)</step-4>
+      <step-5 module="M-TOOLTIP" status="done" verification="V-M-TOOLTIP">К подсказке строки дописывается «✉ 7 новых: Mail.ru 6, Яндекс 1» — человеческие названия источников, не машинные ключи</step-5>
+      <step-6 module="M-MENU,M-CONFIG,M-MAIN" status="done" verification="V-M-MENU">Пункт «Запустить Claude Code здесь» (ID_RUN_SESSION) -&gt; spawn_session: шаблон из ini sessioncmd= ({dir} -&gt; путь в кавычках, дефолт «wt.exe -d {dir} claude»), запуск в фоновом потоке через cmd /C, путь валидируется как в D-20/D-21. Значок входящих запуск сессии НЕ гасит</step-6>
+      <checkpoint>
+        <tests>cargo test 114/114 (6 новых в M-MAIL); release без warnings</tests>
+        <smoke>ПРОЙДЕН на живых данных: 9 сигналов роутера, значки у проектов; иконки Mail.ru/Яндекс/Telegram/MAX подхвачены из mail-icons; у sca_order — запасная марка (у домена нет фавикона). Позиция значка согласована с заказчиком: левый край строки, а не между именем и квадратами сессий</smoke>
+        <artifacts>M-MAIL в графе (23 модуля), V-M-MAIL в верификации, версии модулей подняты</artifacts>
+        <on-fail>grace-fix; сигналы пересобрать «router.py --sync»</on-fail>
+      </checkpoint>
+    </Phase-28>
   </ImplementationOrder>
 
   <ExecutionPolicy>

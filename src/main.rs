@@ -41,6 +41,7 @@ mod config;
 mod paste;
 mod icon;
 mod index;
+mod mail;
 mod menu;
 mod prompt;
 mod recent;
@@ -102,6 +103,9 @@ pub(crate) const TIP_DELAY: u32 = 500; // мс выдержки перед по�
 const ID_ANIM_TIMER: usize = 4; // таймер анимации бегущих точек busy (Phase-17)
 const ANIM_MS: u32 = 350; // мс между кадрами анимации точек
 const HOTKEY_VOICE: i32 = 1; // id глобального хоткея диктовки (RegisterHotKey) — Phase-19
+// Секундный такт для значка входящих: один значок циклится по источникам раз в секунду (M-MAIL).
+// Отдельного таймера не заводим — общий тик панели и так секундный (SetTimer(hwnd, 1, 1000)).
+static MAIL_TICK: AtomicU32 = AtomicU32::new(0);
 pub(crate) const TIP_SEARCHBOX: i32 = -2; // tip_row: курсор над строкой поиска -> правила — M-TOOLTIP + wndproc
 
 // id команд меню (ID_COLOR_BASE/ID_LABEL/ID_SET_FONT/…) и флаг MENU_ACTIVE — в M-MENU (src/menu.rs)
@@ -164,6 +168,8 @@ fn refresh_items(app: &mut App) -> bool {
     app.busy = signal::busy_keys();
     app.busy_paths = signal::busy_cwds(); // бегущие точки «идёт работа» (Phase-17)
     app.sessions = signal::sessions(); // Phase-26 presence: агент + состояние (idle/working/done) на квадрат
+    app.mails = mail::list(); // M-MAIL: неразобранные входящие по проектам (сигналы роутера, только чтение)
+    app.mail_tick = MAIL_TICK.load(Ordering::Relaxed); // такт цикла значка
     numbered
 }
 
@@ -226,6 +232,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 });
                 let _ = InvalidateRect(hwnd, None, BOOL(0));
                 // фоновая переиндексация раз в ~3 мин
+                MAIL_TICK.fetch_add(1, Ordering::Relaxed); // такт цикла значка входящих (M-MAIL)
                 let t = INDEX_TICKS.fetch_add(1, Ordering::Relaxed);
                 if t > 0 && t % INDEX_EVERY_TICKS == 0 {
                     spawn_index(hwnd);
@@ -873,6 +880,35 @@ fn spawn_whisper_start() {
     });
 }
 
+// START_CONTRACT: spawn_session
+//   PURPOSE: Запустить сессию агента в папке проекта (пункт меню «Запустить Claude Code здесь»).
+//   INPUTS: { cmd: &str - шаблон из ini (sessioncmd=), {dir} -> путь в кавычках; dir: &str - папка }
+//   OUTPUTS: { () }
+//   SIDE_EFFECTS: спавн процесса в фоновом потоке (окно терминала показываем — оно и есть цель)
+//   LINKS: M-MAIN, M-MENU (вызов), M-MAIL (сценарий: прилетело письмо -> открыть сессию оттуда)
+//   NOTE: Путь проверяется и кавычится ровно как в open_in_explorer_select (FPF D-20/D-21):
+//         кавычка внутри разорвала бы командную строку, а несуществующая папка дала бы
+//         невнятную ошибку терминала. Запуск сессии НЕ гасит значок входящих — его гасит
+//         только разбор входящего роутером.
+// END_CONTRACT: spawn_session
+pub(crate) fn spawn_session(cmd: &str, dir: &str) {
+    if cmd.trim().is_empty() || dir.contains('"') {
+        voice::vlog(&format!("spawn_session: отказ (пустая команда или кавычка в пути): {dir}"));
+        return;
+    }
+    if !std::path::Path::new(dir).is_dir() {
+        voice::vlog(&format!("spawn_session: папки нет: {dir}"));
+        return;
+    }
+    let line = cmd.replace("{dir}", &format!("\"{dir}\""));
+    voice::vlog(&format!("spawn_session: {line}"));
+    // Через cmd /C, чтобы шаблон из ini мог быть любой командой с аргументами, а не только exe.
+    std::thread::spawn(move || {
+        let r = std::process::Command::new("cmd").args(["/C", &line]).status();
+        voice::vlog(&format!("spawn_session -> {r:?}"));
+    });
+}
+
 // START_CONTRACT: spawn_doc_paths
 //   PURPOSE: Построить/освежить в фоне карты для меню «ссылка/проводник»: пути документов
 //            (резолв .lnk из Windows Recent через COM) и папки проектов (DB-скан chats_db).
@@ -1187,6 +1223,8 @@ fn main() -> Result<()> {
             voice_target: HWND(std::ptr::null_mut()),
             whisper_ok: true, // оптимистично до первого health-опроса (Phase-27) — не мигать баннером на старте
             mic_error: String::new(), // отказов захвата ещё не было
+            mails: Vec::new(), // заполняется первым же тиком (M-MAIL)
+            mail_tick: 0,
         };
         if refresh_items(&mut app) {
             app.config.save_pos(); // окна ещё нет -> сохраняем с известной позицией

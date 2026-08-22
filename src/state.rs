@@ -1,5 +1,5 @@
 // FILE: src/state.rs
-// VERSION: 1.1.0
+// VERSION: 1.2.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Состояние панели: структура App (окна/недавние/поиск/сигналы/голос) и thread_local APP.
 //   SCOPE: тип App (данные UI-состояния) + APP (RefCell<Option<App>> на UI-потоке). Логики нет — держатель состояния.
@@ -16,7 +16,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.1.0 - поля whisper_ok (Phase-27) и mic_error (отказ захвата) — источники нижнего баннера.
+//   LAST_CHANGE: v1.2.0 - M-MAIL: поля mails (сигналы входящих по проектам) и mail_tick (секундный такт цикла значка).
+//   v1.1.0 - поля whisper_ok (Phase-27) и mic_error (отказ захвата) — источники нижнего баннера.
 //   v1.0.0 - рефактор: App/APP вынесены из main.rs в отдельный модуль состояния (M-STATE), без изменения поведения.
 // END_CHANGE_SUMMARY
 
@@ -27,7 +28,7 @@ use windows::Win32::Foundation::{HINSTANCE, HWND};
 use windows::Win32::Graphics::Gdi::HFONT;
 
 use crate::config::Config;
-use crate::{recent, render, search, signal, voice, win_enum};
+use crate::{mail, recent, render, search, signal, voice, win_enum};
 
 // ---------- состояние ----------
 pub(crate) struct App {
@@ -60,6 +61,8 @@ pub(crate) struct App {
     pub(crate) voice_target: HWND, // окно-получатель вставки (foreground на старте записи) — Phase-19
     pub(crate) whisper_ok: bool, // сервер распознавания поднят (фоновый /health) — баннер-предупреждение, Phase-27
     pub(crate) mic_error: String, // текст отказа захвата микрофона (пусто = порядок) — баннер, fix 2026-08-06
+    pub(crate) mails: Vec<mail::Mail>, // неразобранные входящие по проектам (сигналы роутера) — M-MAIL
+    pub(crate) mail_tick: u32, // секундный такт: значок входящих циклится по источникам — M-MAIL
 }
 
 thread_local! {
