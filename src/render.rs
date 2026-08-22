@@ -1,5 +1,5 @@
 // FILE: src/render.rs
-// VERSION: 1.20.0
+// VERSION: 1.20.1
 // START_MODULE_CONTRACT
 //   PURPOSE: Построение строк-секций и отрисовка панели (GDI, двойной буфер) с группировкой по приложению.
 //   SCOPE: геометрия/цвета, Row, build_rows, paint (секции+иконки+окна+недавние+подсветка звоночка), resize, row_at.
@@ -25,7 +25,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.20.0 - M-MAIL: значок входящих в самом левом краю строки (окна и «Недавние»), один значок циклится по источникам раз в секунду (draw_mail_badge + cycle_pick); нет <ключ>.ico -> запасная марка фирменного цвета.
+//   LAST_CHANGE: v1.20.1 - MAIL_X/MAIL_PX сделаны pub: M-MAIN определяет по ним попадание клика в значок входящих.
+//   v1.20.0 - M-MAIL: значок входящих в самом левом краю строки (окна и «Недавние»), один значок циклится по источникам раз в секунду (draw_mail_badge + cycle_pick); нет <ключ>.ico -> запасная марка фирменного цвета.
 //   v1.19.0 - fix: баннер «Микрофон недоступен» (приоритетнее баннера whisper: без микрофона распознавать нечего); strip_h(state, whisper_ok, mic_error).
 //   v1.18.0 - FPF D-28: чистая squares_fit — полоса квадратов клипается по доступной ширине до name_right (раньше min() зажимала только начало, и при 2+ сессиях хвост уезжал под метку/за край); «+» рисуется, когда что-то не поместилось. Phase-27: strip_h(state, whisper_ok) + баннер «Whisper не запущен». Тест squares_fit_clamps_strip_to_available_width.
 //   v1.17.0 - Phase-26 presence: квадрат на КАЖДУЮ живую сессию-агента (app.sessions/sess_matches_row), цвет по агенту (agent_color: Claude бирюза C_BUSY / Kimi фиолет C_KIMI / нейтраль); простой=контур, работает=контур+змейка, готово=золотая заливка. squares_to_draw убрана (заменена per-session отрисовкой).
@@ -812,10 +813,10 @@ pub fn squares_fit(avail_w: i32, want: usize) -> usize {
 }
 
 // Размер значка входящих в строке (ROW=30, значок не должен спорить с именем).
-const MAIL_PX: i32 = 14;
+pub const MAIL_PX: i32 = 14;
 // Значок входящих стоит в самом левом краю строки: 0..4 занимает полоса совпадения поиска,
 // цветная плашка проекта начинается с 22 — между ними ровно место под 14px значок.
-const MAIL_X: i32 = 6;
+pub const MAIL_X: i32 = 6;
 const MAIL_GAP: i32 = 4;
 
 // START_CONTRACT: draw_mail_badge
@@ -949,6 +950,7 @@ mod tests {
             search_db: String::new(),
             search_cmd: String::new(),
             session_cmd: String::new(),
+            mail_done_cmd: String::new(),
             search_port: crate::config::DEFAULT_SEARCH_PORT,
             chats_db: String::new(),
             files_db: String::new(),
@@ -1054,6 +1056,7 @@ mod tests {
             search_db: String::new(),
             search_cmd: String::new(),
             session_cmd: String::new(),
+            mail_done_cmd: String::new(),
             search_port: crate::config::DEFAULT_SEARCH_PORT,
             chats_db: String::new(),
             files_db: String::new(),
@@ -1207,6 +1210,7 @@ mod tests {
             search_db: String::new(),
             search_cmd: String::new(),
             session_cmd: String::new(),
+            mail_done_cmd: String::new(),
             search_port: crate::config::DEFAULT_SEARCH_PORT,
             chats_db: String::new(),
             files_db: String::new(),

@@ -1,5 +1,5 @@
 // FILE: src/menu.rs
-// VERSION: 1.2.0
+// VERSION: 1.3.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Контекст-меню окна/строки и ⚙-меню настроек + обработчик команд меню (цвет, метка, ссылка/проводник, галочки настроек).
 //   SCOPE: show_menu / show_settings_menu (TrackPopupMenu + флаг MENU_ACTIVE), handle_command (все ID_*), copy_to_clipboard, open_in_explorer_select.
@@ -21,7 +21,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.2.0 - M-MAIL: пункт «Запустить Claude Code здесь» (ID_RUN_SESSION) -> spawn_session по шаблону sessioncmd= из ini; для документа берётся его папка.
+//   LAST_CHANGE: v1.3.0 - M-MAIL: пункты «Открыть входящие (N)» и «Входящие разобраны» (видны только когда по папке есть неразобранное). «Разобраны» зовёт РОУТЕР командой maildonecmd= — панель в .inbox не лезет; без ключа пункт серый.
+//   v1.2.0 - M-MAIL: пункт «Запустить Claude Code здесь» (ID_RUN_SESSION) -> spawn_session по шаблону sessioncmd= из ini; для документа берётся его папка.
 //   v1.1.0 - FPF D-20/D-21: open_in_explorer_select проверяет существование пути (протухшая карта путей — до 3 мин) и падает на ближайшую живую папку-родителя вместо пустого окна «Библиотеки»; путь с кавычкой отклоняется (разорвал бы аргумент командной строки).
 //   v1.0.0 - рефактор: меню и обработчик команд вынесены из main.rs в отдельный UI-модуль (M-MENU), без изменения поведения.
 // END_CHANGE_SUMMARY
@@ -51,6 +52,8 @@ const ID_LABEL_CLEAR: usize = 21;
 const ID_COPY_LINK: usize = 22; // меню окна: скопировать путь (Phase-14)
 const ID_OPEN_DIR: usize = 23; // меню окна: открыть в проводнике (Phase-14)
 const ID_RUN_SESSION: usize = 24; // меню: запустить сессию агента в папке проекта — M-MAIL
+const ID_MAIL_OPEN: usize = 25; // меню: открыть папку .inbox проекта — M-MAIL
+const ID_MAIL_DONE: usize = 26; // меню: «входящие разобраны» (просим роутер) — M-MAIL
 const CF_UNICODETEXT: u32 = 13; // формат буфера обмена Win32 (clipboard CF_UNICODETEXT)
 const ID_SET_FONT: usize = 30; // меню настроек: выбрать шрифт
 const ID_ABOUT: usize = 31; // меню настроек: о программе
@@ -74,6 +77,29 @@ pub(crate) unsafe fn show_menu(hwnd: HWND, minimal: bool) {
     let _ = AppendMenuW(menu, lflag, ID_COPY_LINK, w!("Скопировать ссылку"));
     let _ = AppendMenuW(menu, lflag, ID_OPEN_DIR, w!("Открыть в проводнике"));
     let _ = AppendMenuW(menu, lflag, ID_RUN_SESSION, w!("Запустить Claude Code здесь"));
+    // Входящие (M-MAIL): пункты появляются только если по этой папке есть неразобранное.
+    // «Разобраны» просит РОУТЕР (команда из ini) — панель сама .inbox не трогает.
+    let mail = APP.with(|c| {
+        let b = c.borrow();
+        let a = b.as_ref()?;
+        let (p, is_file) = a.menu_link.clone()?;
+        let dir = if is_file {
+            std::path::Path::new(&p).parent()?.display().to_string()
+        } else {
+            p
+        };
+        let m = crate::mail::mail_for_path(&a.mails, &dir)?;
+        Some((m.count, a.config.mail_done_cmd.trim().is_empty()))
+    });
+    if let Some((count, done_off)) = mail {
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+        let open: Vec<u16> =
+            format!("Открыть входящие ({count})").encode_utf16().chain(std::iter::once(0)).collect();
+        let _ = AppendMenuW(menu, MF_STRING, ID_MAIL_OPEN, PCWSTR(open.as_ptr()));
+        // без maildonecmd= в ini снимать нечем — пункт виден, но серый (объясняет, что настроить)
+        let dflag = if done_off { MF_STRING | MF_GRAYED } else { MF_STRING };
+        let _ = AppendMenuW(menu, dflag, ID_MAIL_DONE, w!("Входящие разобраны"));
+    }
     if !minimal {
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
         for (i, p) in PALETTE.iter().enumerate() {
@@ -252,6 +278,34 @@ pub(crate) fn handle_command(hwnd: HWND, id: usize) {
             unsafe { set_search_cue(w!("⏳ Индексирую файлы…")) };
         }
         run_live_search(hwnd); // пересчитать выдачу с учётом нового scope
+        return;
+    }
+    // M-MAIL: открыть папку .inbox / попросить роутер разобрать входящие.
+    if id == ID_MAIL_OPEN || id == ID_MAIL_DONE {
+        let ctx = APP.with(|c| {
+            let b = c.borrow();
+            let a = b.as_ref()?;
+            let (p, is_file) = a.menu_link.clone()?;
+            let dir = if is_file {
+                std::path::Path::new(&p).parent()?.display().to_string()
+            } else {
+                p
+            };
+            let m = crate::mail::mail_for_path(&a.mails, &dir)?;
+            Some((m.cwd.clone(), a.config.mail_done_cmd.clone()))
+        });
+        let Some((cwd, done_cmd)) = ctx else { return };
+        if id == ID_MAIL_OPEN {
+            let dir = crate::mail::inbox_dir(&cwd);
+            let wide: Vec<u16> =
+                dir.display().to_string().encode_utf16().chain(std::iter::once(0)).collect();
+            unsafe {
+                ShellExecuteW(None, w!("open"), PCWSTR(wide.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
+            }
+        } else {
+            // значок снимет роутер, пересчитав .inbox; панель только просит (владение не наше)
+            crate::spawn_session(&done_cmd, &cwd);
+        }
         return;
     }
     // M-MAIL: запустить сессию агента в папке проекта. Значок входящих при этом НЕ гаснет —

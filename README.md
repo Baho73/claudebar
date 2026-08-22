@@ -136,6 +136,10 @@ not when you open a session.
   just needs a new `<source>.ico` there — no code change. Without a file, a brand-coloured mark is
   drawn instead, so sources stay distinguishable.
 - **Hover** shows the breakdown: `✉ 7 новых: Mail.ru 6, Яндекс 1`.
+- **Click the badge** to open the newest item (picked by the date in its filename — the router
+  rewrites the folder in batches, so mtime is useless). Right-click the row for
+  **"Открыть входящие (N)"** and **"Входящие разобраны"**; the latter runs the `maildonecmd=`
+  command so the *router* — not the panel — moves the files and clears the badge.
 - **Right-click → "Запустить Claude Code здесь"** starts a session in that folder. The command is
   the `sessioncmd=` ini key, `wt.exe -d {dir} claude` by default.
 
@@ -281,6 +285,8 @@ p=ConstructMan	3	opus
 
 - `sessioncmd=<template>` — command behind "Запустить Claude Code здесь"; `{dir}` is replaced with
   the quoted folder path. Default `wt.exe -d {dir} claude`.
+- `maildonecmd=<template>` — command behind "Входящие разобраны" (e.g. `python "…outer.py" --done {dir}`).
+  Empty by default, which greys the menu item out: clearing the badge belongs to the router.
 
 ## Build from source
 
@@ -371,7 +377,7 @@ powershell -ExecutionPolicy Bypass -File "hooks\install-kimi-hook.ps1"   # Kimi 
 
 Если письма и сообщения раскладываются по папкам проектов внешним роутером, панель показывает, **куда что прилетело** — и на живых сессиях, и на закрытых проектах в «Недавних». Роутер кладёт по файлу на проект в `%APPDATA%\claudebar\mail\`; ClaudeBar эти файлы только **читает** — в `.inbox` не ходит и сигналы не удаляет. Поэтому значок гаснет, когда работа сделана, а не когда ты открыла сессию.
 
-Значок **один**, в самом левом краю строки, и раз в секунду циклится по источникам (при единственном источнике — статичен). Логотипы берутся из `%APPDATA%\claudebar\mail-icons\<ключ>.ico`; готовый набор лежит в [`assets/mail-icons/`](assets/mail-icons/) — скопировать оттуда и перезапустить панель. Новый источник у роутера означает просто новый файл, код не трогаем; без файла рисуется марка фирменного цвета. Наведение показывает разбивку: `✉ 7 новых: Mail.ru 6, Яндекс 1`. ПКМ → **«Запустить Claude Code здесь»** открывает сессию в этой папке (команда — ключ `sessioncmd=`, по умолчанию `wt.exe -d {dir} claude`).
+Значок **один**, в самом левом краю строки, и раз в секунду циклится по источникам (при единственном источнике — статичен). Логотипы берутся из `%APPDATA%\claudebar\mail-icons\<ключ>.ico`; готовый набор лежит в [`assets/mail-icons/`](assets/mail-icons/) — скопировать оттуда и перезапустить панель. Новый источник у роутера означает просто новый файл, код не трогаем; без файла рисуется марка фирменного цвета. Наведение показывает разбивку: `✉ 7 новых: Mail.ru 6, Яндекс 1`. **Клик по значку** открывает самое свежее письмо (берётся по дате в имени файла: роутер переписывает папку пачкой, поэтому время файла ни о чём не говорит). ПКМ по строке — «Открыть входящие (N)» и «Входящие разобраны»; второе запускает команду `maildonecmd=`, то есть переносит письма и гасит значок **роутер**, а не панель. ПКМ → **«Запустить Claude Code здесь»** открывает сессию в этой папке (команда — ключ `sessioncmd=`, по умолчанию `wt.exe -d {dir} claude`).
 
 ### Диктовка
 

@@ -333,6 +333,46 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                         return LRESULT(0);
                     }
                 }
+                // клик по значку входящих (M-MAIL): открыть самое свежее письмо.
+                // Каталог .inbox читаем ЗДЕСЬ, по клику, а не на тике — запрет из ТЗ соблюдён.
+                if !APP.with(|c| c.borrow().as_ref().map(|a| a.reorder).unwrap_or(false))
+                    && x >= render::MAIL_X
+                    && x < render::MAIL_X + render::MAIL_PX
+                {
+                    let cwd = APP.with(|c| {
+                        let b = c.borrow();
+                        let a = b.as_ref()?;
+                        let row = a.rows.get(render::row_at(y, a.rows.len()).max(0) as usize)?;
+                        let (path, name) = match row {
+                            render::Row::Window { idx } => {
+                                let it = a.items.get(*idx)?;
+                                (it.path.clone(), it.name.clone())
+                            }
+                            render::Row::Recent { ridx } => {
+                                let d = a.recent.get(*ridx)?;
+                                let p = match &d.open {
+                                    recent::OpenCmd::Editor { folder, .. } => Some(folder.clone()),
+                                    recent::OpenCmd::Lnk(_) => None,
+                                };
+                                (p, d.name.clone())
+                            }
+                            _ => return None,
+                        };
+                        mail::mail_for_row(&a.mails, path.as_deref(), &name).map(|m| m.cwd.clone())
+                    });
+                    if let Some(cwd) = cwd {
+                        match mail::latest_item(&cwd) {
+                            Some(f) => {
+                                let wide: Vec<u16> =
+                                    f.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+                                ShellExecuteW(None, w!("open"), PCWSTR(wide.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
+                                voice::vlog(&format!("входящие: открыт {}", f.display()));
+                            }
+                            None => voice::vlog(&format!("входящие: в .inbox пусто ({cwd})")),
+                        }
+                        return LRESULT(0);
+                    }
+                }
                 // режим reorder: начать перетаскивание за ручку
                 let reorder = APP.with(|c| c.borrow().as_ref().map(|a| a.reorder).unwrap_or(false));
                 if reorder {

@@ -1,5 +1,5 @@
 // FILE: src/mail.rs
-// VERSION: 1.0.0
+// VERSION: 1.1.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Индикатор входящих: чтение сигналов внешнего роутера почты/мессенджеров о неразобранных письмах по проектам.
 //   SCOPE: скан %APPDATA%\claudebar\mail\*.mail (по файлу на проект), разбор ключ=значение, матч со строкой панели, человеческие названия источников и текст подсказки.
@@ -25,7 +25,8 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.0.0 - M-MAIL: чтение сигналов роутера входящих (ТЗ docs/TZ-mail-badge.md), матч со строками панели, подписи источников.
+//   LAST_CHANGE: v1.1.0 - клик по значку: inbox_dir/latest_item + чистая pick_latest (свежее письмо по ДАТЕ В ИМЕНИ — роутер переписывает файлы пачкой, mtime у всех одинаковый); mail_for_path для меню. Каталог .inbox читается только по клику, не на тике.
+//   v1.0.0 - M-MAIL: чтение сигналов роутера входящих (ТЗ docs/TZ-mail-badge.md), матч со строками панели, подписи источников.
 // END_CHANGE_SUMMARY
 
 use std::cell::RefCell;
@@ -281,6 +282,57 @@ pub fn fallback_color(key: &str) -> (u8, u8, u8) {
     }
 }
 
+// START_CONTRACT: inbox_dir
+//   PURPOSE: Папка входящих проекта: <cwd>\.inbox
+//   INPUTS: { cwd: &str }
+//   OUTPUTS: { PathBuf }
+//   SIDE_EFFECTS: none (не создаём — каталог заводит роутер)
+// END_CONTRACT: inbox_dir
+pub fn inbox_dir(cwd: &str) -> PathBuf {
+    PathBuf::from(cwd).join(".inbox")
+}
+
+// START_CONTRACT: pick_latest
+//   PURPOSE: Чистое — выбрать самое свежее входящее по ИМЕНИ файла.
+//   INPUTS: { names: &[String] - имена файлов в .inbox }
+//   OUTPUTS: { Option<String> - максимальное имя среди *.md }
+//   SIDE_EFFECTS: none
+//   NOTE: Именно по имени, а не по mtime: роутер переписывает файлы пачкой, и время у всех
+//         одинаковое. Имя начинается с даты «ГГГГ-ММ-ДД-…», поэтому лексикографический максимум
+//         и есть самое свежее письмо.
+// END_CONTRACT: pick_latest
+pub fn pick_latest(names: &[String]) -> Option<String> {
+    names.iter().filter(|n| n.to_lowercase().ends_with(".md")).max().cloned()
+}
+
+// START_CONTRACT: latest_item
+//   PURPOSE: Путь к самому свежему неразобранному письму проекта (для клика по значку).
+//   INPUTS: { cwd: &str - папка проекта из сигнала }
+//   OUTPUTS: { Option<PathBuf> - <cwd>\.inbox\<самое свежее>.md }
+//   SIDE_EFFECTS: чтение каталога .inbox — ТОЛЬКО по клику, не на тике (запрет из ТЗ)
+//   LINKS: M-MAIL, M-MAIN (клик по значку)
+// END_CONTRACT: latest_item
+pub fn latest_item(cwd: &str) -> Option<PathBuf> {
+    let dir = inbox_dir(cwd);
+    let names: Vec<String> = std::fs::read_dir(&dir)
+        .ok()?
+        .flatten()
+        .filter(|e| e.path().is_file())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    pick_latest(&names).map(|n| dir.join(n))
+}
+
+// START_CONTRACT: mail_for_path
+//   PURPOSE: Сигнал входящих по известной папке (меню знает путь, имя строки не нужно).
+//   INPUTS: { mails: &[Mail]; path: &str }
+//   OUTPUTS: { Option<&Mail> }
+//   SIDE_EFFECTS: none
+// END_CONTRACT: mail_for_path
+pub fn mail_for_path<'a>(mails: &'a [Mail], path: &str) -> Option<&'a Mail> {
+    mail_for_row(mails, Some(path), "")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,6 +387,21 @@ mod tests {
         let bare = Mail { cwd: "x".into(), count: 3, sources: vec![] };
         assert_eq!(tooltip_text(&bare), "3 новых");
         assert_eq!(source_label("неизвестный_ключ"), "неизвестный_ключ"); // пополняемый список
+    }
+
+    #[test]
+    fn pick_latest_uses_name_not_mtime() {
+        // роутер переписывает файлы пачкой -> mtime одинаковый; дата в имени и есть порядок
+        let names: Vec<String> = vec![
+            "2026-08-16-АО-Почта-России.md".into(),
+            "2026-08-22-новые-в-StroyControl.md".into(),
+            "2026-07-22-Пора-оплатить-налоги.md".into(),
+            "done".into(),          // подпапка разобранного — не письмо
+            "заметка.txt".into(),   // не .md
+        ];
+        assert_eq!(pick_latest(&names).as_deref(), Some("2026-08-22-новые-в-StroyControl.md"));
+        assert_eq!(pick_latest(&[]), None);
+        assert_eq!(pick_latest(&["readme.txt".to_string()]), None);
     }
 
     #[test]
