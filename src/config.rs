@@ -77,10 +77,16 @@ pub const DEFAULT_WHISPER_URL: &str = "http://127.0.0.1:8771/transcribe";
 // {dir} подставляется как путь в кавычках. Ключ ini: sessioncmd=
 pub const DEFAULT_SESSION_CMD: &str = "wt.exe -d {dir} claude";
 
-// Команда «входящие разобраны» (пункт меню): роутер помечает письма разобранными (+++ в первой
-// строке) и снимает значок; письма остаются на месте. То же самое можно сделать руками, дописав
-// +++ в открытое письмо. {dir} -> папка проекта в кавычках. Пусто -> пункт серый. Ключ: maildonecmd=
+// Команда «входящие разобраны» (пункт меню): роутер снимает флаг со всех писем проекта — то же,
+// что делает агент, прочитав письмо (удаляет первую строку-флаг), только пачкой. Письма остаются
+// на месте. {dir} -> папка проекта в кавычках. Пусто -> пункт серый. Ключ: maildonecmd=
 pub const DEFAULT_MAIL_DONE_CMD: &str = "";
+
+// Чем открывать письмо по клику на значке. {dir} -> папка проекта, {file} -> путь к письму
+// (оба подставляются в кавычках). Дефолт открывает файл В УЖЕ ОТКРЫТОМ окне этого проекта:
+// «code <папка> <файл>» переиспользует окно, где папка открыта, вместо нового (проверено).
+// Пусто -> ShellExecute, то есть приложением по умолчанию (новое окно). Ключ: mailopencmd=
+pub const DEFAULT_MAIL_OPEN_CMD: &str = "code {dir} {file}";
 pub const DEFAULT_VOICE_LANG: &str = "ru";
 
 // Модификаторы RegisterHotKey (значения Win32 MOD_*); держим локально, чтобы config не тянул UI-импорты.
@@ -169,6 +175,7 @@ pub struct Config {
     pub search_cmd: String, // команда запуска dense-демона (clfind serve) — Phase-12
     pub session_cmd: String, // команда запуска сессии агента в папке (ключ sessioncmd=) — M-MAIL
     pub mail_done_cmd: String, // команда «входящие разобраны» (ключ maildonecmd=) — M-MAIL
+    pub mail_open_cmd: String, // чем открывать письмо по клику (ключ mailopencmd=) — M-MAIL
     pub search_port: u16, // порт HTTP-демона dense — Phase-12
     pub chats_db: String, // своя FTS5-база чатов (нативный BM25 на Rust) — Phase-13
     pub files_db: String, // своя FTS5-база файлов (Ф-C) — Phase-13
@@ -327,6 +334,7 @@ struct ParsedIni {
     search_cmd: String,
     session_cmd: String,
     mail_done_cmd: String,
+    mail_open_cmd: String,
     search_port: u16,
     chats_db: String,
     files_db: String,
@@ -361,6 +369,7 @@ fn parse_ini(text: &str) -> ParsedIni {
     let mut search_cmd: String = DEFAULT_SEARCH_CMD.to_string();
     let mut session_cmd: String = DEFAULT_SESSION_CMD.to_string();
     let mut mail_done_cmd: String = DEFAULT_MAIL_DONE_CMD.to_string();
+    let mut mail_open_cmd: String = DEFAULT_MAIL_OPEN_CMD.to_string();
     let mut search_port: u16 = DEFAULT_SEARCH_PORT;
     let mut chats_db: String = default_chats_db();
     let mut files_db: String = default_files_db();
@@ -451,6 +460,8 @@ fn parse_ini(text: &str) -> ParsedIni {
             if !v.trim().is_empty() {
                 voice_hotkey = v.trim().to_string();
             }
+        } else if let Some(v) = line.strip_prefix("mailopencmd=") {
+            mail_open_cmd = v.trim().to_string();
         } else if let Some(v) = line.strip_prefix("maildonecmd=") {
             mail_done_cmd = v.trim().to_string();
         } else if let Some(v) = line.strip_prefix("sessioncmd=") {
@@ -513,7 +524,7 @@ fn parse_ini(text: &str) -> ParsedIni {
         }
     }
     // END_BLOCK_PARSE_LINES
-    ParsedIni { projects, proj_numbers, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, session_cmd, mail_done_cmd, search_port, chats_db, files_db, projects_root, search_files, sort_recent, voice_hotkey, whisper_url, voice_language, vocab, hotwords, initial_prompt, voice_keep_clipboard, voice_always_on, voice_trailing_space, voice_streaming }
+    ParsedIni { projects, proj_numbers, collapsed, recent_expanded, recent_showall, section_order, window_order, font_face, font_size, font_weight, pos, search_db, search_cmd, session_cmd, mail_done_cmd, mail_open_cmd, search_port, chats_db, files_db, projects_root, search_files, sort_recent, voice_hotkey, whisper_url, voice_language, vocab, hotwords, initial_prompt, voice_keep_clipboard, voice_always_on, voice_trailing_space, voice_streaming }
 }
 
 impl Config {
@@ -537,6 +548,7 @@ impl Config {
             search_cmd: p.search_cmd,
             session_cmd: p.session_cmd,
             mail_done_cmd: p.mail_done_cmd,
+            mail_open_cmd: p.mail_open_cmd,
             search_port: p.search_port,
             chats_db: p.chats_db,
             files_db: p.files_db,
@@ -881,6 +893,7 @@ mod tests {
             voice_hotkey: DEFAULT_VOICE_HOTKEY.to_string(),
             session_cmd: DEFAULT_SESSION_CMD.to_string(),
             mail_done_cmd: String::new(),
+            mail_open_cmd: String::new(),
             whisper_url: DEFAULT_WHISPER_URL.to_string(),
             voice_language: DEFAULT_VOICE_LANG.to_string(),
             vocab: String::new(),

@@ -78,7 +78,7 @@ pub(crate) unsafe fn show_menu(hwnd: HWND, minimal: bool) {
     let _ = AppendMenuW(menu, lflag, ID_OPEN_DIR, w!("Открыть в проводнике"));
     let _ = AppendMenuW(menu, lflag, ID_RUN_SESSION, w!("Запустить Claude Code здесь"));
     // Входящие (M-MAIL): пункты появляются только если по этой папке есть неразобранное.
-    // «Разобраны» просит РОУТЕР (команда из ini) пометить письма +++ — панель в .inbox не пишет.
+    // «Разобраны» просит РОУТЕР (команда из ini) снять флаги — панель в .inbox не пишет.
     let mail = APP.with(|c| {
         let b = c.borrow();
         let a = b.as_ref()?;
@@ -303,7 +303,7 @@ pub(crate) fn handle_command(hwnd: HWND, id: usize) {
                 ShellExecuteW(None, w!("open"), PCWSTR(wide.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
             }
         } else {
-            // Роутер пометит письма (+++ в первой строке) и пересчитает .inbox — значок погаснет.
+            // Роутер снимет флаг с писем и пересчитает .inbox — значок погаснет.
             // Панель только просит: писать в чужие файлы не её дело.
             crate::spawn_session(&done_cmd, &cwd);
         }

@@ -343,10 +343,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                         let b = c.borrow();
                         let a = b.as_ref()?;
                         let row = a.rows.get(render::row_at(y, a.rows.len()).max(0) as usize)?;
-                        let (path, name) = match row {
+                        let (path, name, hrow) = match row {
                             render::Row::Window { idx } => {
                                 let it = a.items.get(*idx)?;
-                                (it.path.clone(), it.name.clone())
+                                (it.path.clone(), it.name.clone(), it.hwnd)
                             }
                             render::Row::Recent { ridx } => {
                                 let d = a.recent.get(*ridx)?;
@@ -354,19 +354,31 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                                     recent::OpenCmd::Editor { folder, .. } => Some(folder.clone()),
                                     recent::OpenCmd::Lnk(_) => None,
                                 };
-                                (p, d.name.clone())
+                                (p, d.name.clone(), HWND(std::ptr::null_mut()))
                             }
                             _ => return None,
                         };
-                        mail::mail_for_row(&a.mails, path.as_deref(), &name).map(|m| m.cwd.clone())
+                        mail::mail_for_row(&a.mails, path.as_deref(), &name)
+                            .map(|m| (m.cwd.clone(), hrow))
                     });
-                    if let Some(cwd) = cwd {
+                    if let Some((cwd, hwnd_row)) = cwd {
                         match mail::latest_item(&cwd) {
                             Some(f) => {
-                                let wide: Vec<u16> =
-                                    f.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
-                                ShellExecuteW(None, w!("open"), PCWSTR(wide.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
-                                voice::vlog(&format!("входящие: открыт {}", f.display()));
+                                // Окно проекта — вперёд: письмо должно открыться в НЁМ, а не в новом.
+                                if !hwnd_row.0.is_null() {
+                                    activate::activate(hwnd_row);
+                                }
+                                let path = f.display().to_string();
+                                let cmd = APP.with(|c| {
+                                    c.borrow().as_ref().map(|a| a.config.mail_open_cmd.clone()).unwrap_or_default()
+                                });
+                                // Пусто или команда не запустилась -> приложение по умолчанию.
+                                if !spawn_tpl(&cmd, &cwd, Some(&path)) {
+                                    let wide: Vec<u16> =
+                                        f.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+                                    ShellExecuteW(None, w!("open"), PCWSTR(wide.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
+                                }
+                                voice::vlog(&format!("входящие: открыт {path}"));
                             }
                             None => voice::vlog(&format!("входящие: в .inbox пусто ({cwd})")),
                         }
@@ -920,33 +932,40 @@ fn spawn_whisper_start() {
     });
 }
 
-// START_CONTRACT: spawn_session
-//   PURPOSE: Запустить сессию агента в папке проекта (пункт меню «Запустить Claude Code здесь»).
-//   INPUTS: { cmd: &str - шаблон из ini (sessioncmd=), {dir} -> путь в кавычках; dir: &str - папка }
-//   OUTPUTS: { () }
-//   SIDE_EFFECTS: спавн процесса в фоновом потоке (окно терминала показываем — оно и есть цель)
-//   LINKS: M-MAIN, M-MENU (вызов), M-MAIL (сценарий: прилетело письмо -> открыть сессию оттуда)
-//   NOTE: Путь проверяется и кавычится ровно как в open_in_explorer_select (FPF D-20/D-21):
-//         кавычка внутри разорвала бы командную строку, а несуществующая папка дала бы
-//         невнятную ошибку терминала. Запуск сессии НЕ гасит значок входящих — его гасит
-//         только разбор входящего роутером.
-// END_CONTRACT: spawn_session
-pub(crate) fn spawn_session(cmd: &str, dir: &str) {
-    if cmd.trim().is_empty() || dir.contains('"') {
-        voice::vlog(&format!("spawn_session: отказ (пустая команда или кавычка в пути): {dir}"));
-        return;
+// START_CONTRACT: spawn_tpl
+//   PURPOSE: Запустить команду-шаблон из ini, подставив папку и (опционально) файл.
+//   INPUTS: { cmd: &str - шаблон с {dir}/{file}; dir: &str - папка; file: Option<&str> - файл }
+//   OUTPUTS: { bool - false, если команда пустая или путь не прошёл проверку }
+//   SIDE_EFFECTS: спавн процесса в фоновом потоке через cmd /C (шаблон может быть любой командой)
+//   LINKS: M-MAIN, M-MENU (сессия, «входящие разобраны»), M-MAIL (открыть письмо)
+//   NOTE: Пути кавычатся и проверяются как в open_in_explorer_select (FPF D-20/D-21): кавычка
+//         внутри разорвала бы командную строку, несуществующий путь дал бы невнятную ошибку.
+// END_CONTRACT: spawn_tpl
+pub(crate) fn spawn_tpl(cmd: &str, dir: &str, file: Option<&str>) -> bool {
+    if cmd.trim().is_empty() || dir.contains('"') || file.is_some_and(|f| f.contains('"')) {
+        voice::vlog(&format!("spawn_tpl: отказ (пустая команда или кавычка в пути): {dir}"));
+        return false;
     }
     if !std::path::Path::new(dir).is_dir() {
-        voice::vlog(&format!("spawn_session: папки нет: {dir}"));
-        return;
+        voice::vlog(&format!("spawn_tpl: папки нет: {dir}"));
+        return false;
     }
-    let line = cmd.replace("{dir}", &format!("\"{dir}\""));
-    voice::vlog(&format!("spawn_session: {line}"));
-    // Через cmd /C, чтобы шаблон из ini мог быть любой командой с аргументами, а не только exe.
+    let mut line = cmd.replace("{dir}", &format!("\"{dir}\""));
+    if let Some(f) = file {
+        line = line.replace("{file}", &format!("\"{f}\""));
+    }
+    voice::vlog(&format!("spawn_tpl: {line}"));
     std::thread::spawn(move || {
         let r = std::process::Command::new("cmd").args(["/C", &line]).status();
-        voice::vlog(&format!("spawn_session -> {r:?}"));
+        voice::vlog(&format!("spawn_tpl -> {r:?}"));
     });
+    true
+}
+
+// Запустить сессию агента в папке проекта (пункт меню «Запустить Claude Code здесь»).
+// Значок входящих запуск сессии НЕ гасит — его гасит только пометка письма разобранным.
+pub(crate) fn spawn_session(cmd: &str, dir: &str) {
+    spawn_tpl(cmd, dir, None);
 }
 
 // START_CONTRACT: spawn_doc_paths
