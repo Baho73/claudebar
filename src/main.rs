@@ -956,7 +956,14 @@ pub(crate) fn spawn_tpl(cmd: &str, dir: &str, file: Option<&str>) -> bool {
     }
     voice::vlog(&format!("spawn_tpl: {line}"));
     std::thread::spawn(move || {
-        let r = std::process::Command::new("cmd").args(["/C", &line]).status();
+        // raw_arg, а НЕ args(): Rust экранирует кавычки обратными слэшами (\"), а cmd.exe ждёт
+        // удвоенные — из-за этого вся строка приезжала одним искорёженным аргументом, и редактор
+        // открывал новый пустой файл с именем несуществующего пути. /S + внешние кавычки: cmd
+        // снимает первую и последнюю, остальное берёт дословно.
+        use std::os::windows::process::CommandExt;
+        let mut c = std::process::Command::new("cmd");
+        c.raw_arg("/S").raw_arg("/C").raw_arg(format!("\"{line}\""));
+        let r = c.status();
         voice::vlog(&format!("spawn_tpl -> {r:?}"));
     });
     true
