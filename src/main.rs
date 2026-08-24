@@ -358,12 +358,16 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                             }
                             _ => return None,
                         };
-                        mail::mail_for_row(&a.mails, path.as_deref(), &name)
-                            .map(|m| (m.cwd.clone(), hrow))
+                        let ms = mail::mails_for_row(&a.mails, path.as_deref(), &name);
+                        let f = mail::latest_in(&ms)?;
+                        // Открываем в папке СТРОКИ (это она открыта в редакторе), а не в папке
+                        // письма: у вложенного проекта своего окна нет, и VS Code завёл бы новое.
+                        let dir = path.clone().unwrap_or_else(|| ms[0].cwd.clone());
+                        Some((dir, f, hrow))
                     });
-                    if let Some((cwd, hwnd_row)) = cwd {
-                        match mail::latest_item(&cwd) {
-                            Some(f) => {
+                    if let Some((dir, f, hwnd_row)) = cwd {
+                        {
+                            {
                                 // Окно проекта — вперёд: письмо должно открыться в НЁМ, а не в новом.
                                 if !hwnd_row.0.is_null() {
                                     activate::activate(hwnd_row);
@@ -373,14 +377,13 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                                     c.borrow().as_ref().map(|a| a.config.mail_open_cmd.clone()).unwrap_or_default()
                                 });
                                 // Пусто или команда не запустилась -> приложение по умолчанию.
-                                if !spawn_tpl(&cmd, &cwd, Some(&path)) {
+                                if !spawn_tpl(&cmd, &dir, Some(&path)) {
                                     let wide: Vec<u16> =
                                         f.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
                                     ShellExecuteW(None, w!("open"), PCWSTR(wide.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
                                 }
                                 voice::vlog(&format!("входящие: открыт {path}"));
                             }
-                            None => voice::vlog(&format!("входящие: в .inbox пусто ({cwd})")),
                         }
                         return LRESULT(0);
                     }

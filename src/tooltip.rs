@@ -189,7 +189,8 @@ fn tip_text_for(app: &App, tip_row: i32) -> Option<String> {
     // Входящие (M-MAIL): строка «7 новых: Mail.ru 6, Яндекс 1» дописывается к обычной подсказке,
     // чтобы наведение на значок объясняло, что за источники и сколько.
     let mail_line = |path: Option<&str>, name: &str| {
-        crate::mail::mail_for_row(&app.mails, path, name).map(crate::mail::tooltip_text)
+        let ms = crate::mail::mails_for_row(&app.mails, path, name);
+        crate::mail::merge_mails(&ms).map(|m| crate::mail::tooltip_text(&m))
     };
     let with_mail = |base: String, extra: Option<String>| match extra {
         Some(m) => format!("{base}\r\n\u{2709} {m}"),

@@ -397,8 +397,9 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                 }
                 // значок входящих (M-MAIL) — в самом левом краю строки, до цветной плашки проекта:
                 // «пришло письмо» читается раньше имени и не толкает квадраты сессий.
-                if let Some(m) = crate::mail::mail_for_row(&app.mails, it.path.as_deref(), &it.name) {
-                    draw_mail_badge(mem, MAIL_X, top + (ROW - MAIL_PX) / 2, m, app.mail_tick);
+                let mrow = crate::mail::mails_for_row(&app.mails, it.path.as_deref(), &it.name);
+                if let Some(m) = crate::mail::merge_mails(&mrow) {
+                    draw_mail_badge(mem, MAIL_X, top + (ROW - MAIL_PX) / 2, &m, app.mail_tick);
                 }
                 // цветная плашка (с отступом — окна вложены в секцию)
                 let cy = top + (ROW - SWATCH) / 2;
@@ -511,8 +512,9 @@ pub unsafe fn paint(hwnd: HWND, app: &App) {
                     crate::recent::OpenCmd::Lnk(_) => None,
                 };
                 // тот же левый край, что и у строк окон — значки входящих выстраиваются в колонку
-                if let Some(m) = crate::mail::mail_for_row(&app.mails, dpath, &d.name) {
-                    draw_mail_badge(mem, MAIL_X, top + (ROW - MAIL_PX) / 2, m, app.mail_tick);
+                let mrow = crate::mail::mails_for_row(&app.mails, dpath, &d.name);
+                if let Some(m) = crate::mail::merge_mails(&mrow) {
+                    draw_mail_badge(mem, MAIL_X, top + (ROW - MAIL_PX) / 2, &m, app.mail_tick);
                 }
                 dt(mem, &d.name, RECT { left: 58, top, right: w - 10, bottom: top + ROW }, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
             }

@@ -88,7 +88,8 @@ pub(crate) unsafe fn show_menu(hwnd: HWND, minimal: bool) {
         } else {
             p
         };
-        let m = crate::mail::mail_for_path(&a.mails, &dir)?;
+        let ms = crate::mail::mails_for_row(&a.mails, Some(&dir), "");
+        let m = crate::mail::merge_mails(&ms)?;
         Some((m.count, a.config.mail_done_cmd.trim().is_empty()))
     });
     if let Some((count, done_off)) = mail {
@@ -291,21 +292,31 @@ pub(crate) fn handle_command(hwnd: HWND, id: usize) {
             } else {
                 p
             };
-            let m = crate::mail::mail_for_path(&a.mails, &dir)?;
-            Some((m.cwd.clone(), a.config.mail_done_cmd.clone()))
+            let ms = crate::mail::mails_for_row(&a.mails, Some(&dir), "");
+            if ms.is_empty() {
+                return None;
+            }
+            // папки всех вложенных проектов: «разобрать» надо каждый, а не первый попавшийся
+            let cwds: Vec<String> = ms.iter().map(|m| m.cwd.clone()).collect();
+            Some((cwds, a.config.mail_done_cmd.clone()))
         });
-        let Some((cwd, done_cmd)) = ctx else { return };
+        let Some((cwds, done_cmd)) = ctx else { return };
         if id == ID_MAIL_OPEN {
-            let dir = crate::mail::inbox_dir(&cwd);
-            let wide: Vec<u16> =
-                dir.display().to_string().encode_utf16().chain(std::iter::once(0)).collect();
-            unsafe {
-                ShellExecuteW(None, w!("open"), PCWSTR(wide.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
+            // несколько вложенных проектов -> открываем каждую папку входящих
+            for cwd in &cwds {
+                let dir = crate::mail::inbox_dir(cwd);
+                let wide: Vec<u16> =
+                    dir.display().to_string().encode_utf16().chain(std::iter::once(0)).collect();
+                unsafe {
+                    ShellExecuteW(None, w!("open"), PCWSTR(wide.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
+                }
             }
         } else {
             // Роутер снимет флаг с писем и пересчитает .inbox — значок погаснет.
             // Панель только просит: писать в чужие файлы не её дело.
-            crate::spawn_session(&done_cmd, &cwd);
+            for cwd in &cwds {
+                crate::spawn_session(&done_cmd, cwd);
+            }
         }
         return;
     }

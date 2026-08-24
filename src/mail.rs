@@ -1,9 +1,16 @@
 // FILE: src/mail.rs
-// VERSION: 1.1.0
+// VERSION: 1.2.0
 // START_MODULE_CONTRACT
 //   PURPOSE: Индикатор входящих: чтение сигналов внешнего роутера почты/мессенджеров о неразобранных письмах по проектам.
 //   SCOPE: скан %APPDATA%\claudebar\mail\*.mail (по файлу на проект), разбор ключ=значение, матч со строкой панели, человеческие названия источников и текст подсказки.
 //   DEPENDS: M-SIGNAL (sess_matches_row — готовый матч cwd со строкой, включая вложенные папки)
+//   EFFECTS: своё: %APPDATA%\claudebar\mail-icons\ — каталог логотипов источников, создаётся
+//                  пустым (файлы кладёт пользователь).
+//            чужое: %APPDATA%\claudebar\mail\ создаём, если роутер ещё не стартовал, но НИЧЕГО
+//                  в нём не пишем и не удаляем; письма в <проект>\.inbox\ — только чтение,
+//                  и только по клику. Владелец обоих — роутер (D:\Python\mail-mcp).
+//   REVERT:  удалить mail-icons (значки вернутся к запасным цветным маркам). Каталог сигналов
+//            и письма не наши — их чистит роутер.
 //   LINKS: M-MAIL
 //   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS
@@ -22,14 +29,18 @@
 //   parse_mail    - чистое: текст файла -> Option<Mail>; неизвестные ключи игнорируются
 //   parse_sources - чистое: "mailru:6,yandex:1" -> [(mailru,6),(yandex,1)]
 //   list          - скан каталога -> Vec<Mail> (порядок стабилен: по cwd)
-//   mail_for_row  - найти сигнал для строки панели (полный путь приоритетнее имени) через M-SIGNAL
+//   mails_for_row - ВСЕ сигналы строки, включая вложенные проекты (у них своих строк нет)
+//   merge_mails   - чистое: свести сигналы в один (сумма писем, объединённые источники)
+//   latest_in     - самое свежее письмо среди проектов строки (по дате в имени)
+//   inbox_dir / latest_item / pick_latest - папка входящих и свежее письмо одного проекта
 //   source_label  - чистое: ключ источника -> человеческое название («mailru» -> «Mail.ru»)
 //   tooltip_text  - чистое: Mail -> «7 новых: Mail.ru 6, Яндекс 1»
 //   cycle_pick    - чистое: выбор источника для показа по номеру такта (один значок, циклится)
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: v1.1.0 - клик по значку: inbox_dir/latest_item + чистая pick_latest (свежее письмо по ДАТЕ В ИМЕНИ — роутер переписывает файлы пачкой, mtime у всех одинаковый); mail_for_path для меню. Каталог .inbox читается только по клику, не на тике.
+//   LAST_CHANGE: v1.2.0 - fix: строка-родитель (ConstructMan) собирает письма ВСЕХ вложенных проектов (mails_for_row + merge_mails), а не первое совпадение — счётчик врал, клик открывал письмо случайного проекта. latest_in берёт самое свежее среди них. Матч использует имя проекта из сигнала, а не имя строки (без пути подходил любой сигнал).
+//   v1.1.0 - клик по значку: inbox_dir/latest_item + чистая pick_latest (свежее письмо по ДАТЕ В ИМЕНИ — роутер переписывает файлы пачкой, mtime у всех одинаковый); mail_for_path для меню. Каталог .inbox читается только по клику, не на тике.
 //   v1.0.0 - M-MAIL: чтение сигналов роутера входящих (ТЗ docs/TZ-mail-badge.md), матч со строками панели, подписи источников.
 // END_CHANGE_SUMMARY
 
@@ -135,18 +146,63 @@ pub fn list() -> Vec<Mail> {
     out
 }
 
-// START_CONTRACT: mail_for_row
-//   PURPOSE: Найти сигнал входящих для строки панели (окно или недавний проект).
-//   INPUTS: { mails: &[Mail]; row_path: Option<&str> - полный путь строки; row_name: &str - имя строки }
-//   OUTPUTS: { Option<&Mail> - первый подходящий сигнал }
+// START_CONTRACT: mails_for_row
+//   PURPOSE: ВСЕ сигналы, относящиеся к строке панели (включая вложенные проекты).
+//   INPUTS: { mails: &[Mail]; row_path: Option<&str>; row_name: &str }
+//   OUTPUTS: { Vec<&Mail> - порядок как в mails (по cwd); пусто, если совпадений нет }
 //   SIDE_EFFECTS: none
-//   NOTE: Матч переиспользует M-SIGNAL.sess_matches_row — там уже решены вложенные папки,
-//         одноимённые проекты (D-06) и регистр. Для недавних путь берётся из OpenCmd::Editor.folder,
-//         поэтому совпадение идёт по ПОЛНОМУ пути, а не по basename.
-// END_CONTRACT: mail_for_row
-pub fn mail_for_row<'a>(mails: &'a [Mail], row_path: Option<&str>, row_name: &str) -> Option<&'a Mail> {
-    let key = row_name.to_lowercase();
-    mails.iter().find(|m| crate::signal::sess_matches_row(&m.cwd, &key, row_path, row_name))
+//   NOTE: Строка «ConstructMan» — одно окно, а письма лежат в ConstructMan\KSK, \Shale, \VINODEL,
+//         своих строк у них нет. Брать первое совпадение нельзя: счётчик показывал бы письма
+//         одного вложенного проекта, а клик открывал бы письмо случайного из них.
+// END_CONTRACT: mails_for_row
+pub fn mails_for_row<'a>(mails: &'a [Mail], row_path: Option<&str>, row_name: &str) -> Vec<&'a Mail> {
+    mails
+        .iter()
+        .filter(|m| {
+            // key — имя проекта ИЗ СИГНАЛА (как в M-SIGNAL у сессии), а не имя строки: иначе при
+            // отсутствии пути у строки сравнивалось бы имя само с собой и подходил бы любой сигнал.
+            let key = m.cwd.trim_end_matches(['\\', '/']).rsplit(['\\', '/']).next().unwrap_or(&m.cwd).to_lowercase();
+            crate::signal::sess_matches_row(&m.cwd, &key, row_path, row_name)
+        })
+        .collect()
+}
+
+// START_CONTRACT: merge_mails
+//   PURPOSE: Чистое — свести несколько сигналов в один: сумма писем и объединённые источники.
+//   INPUTS: { ms: &[&Mail] }
+//   OUTPUTS: { Option<Mail> - cwd первого, count = сумма, sources сложены по ключу }
+//   SIDE_EFFECTS: none
+//   NOTE: Источники сортируются по убыванию количества, затем по имени — порядок значка стабилен
+//         между тиками, иначе иконки прыгали бы при каждом пересчёте.
+// END_CONTRACT: merge_mails
+pub fn merge_mails(ms: &[&Mail]) -> Option<Mail> {
+    let first = ms.first()?;
+    if ms.len() == 1 {
+        return Some((*first).clone());
+    }
+    let mut acc: Vec<(String, u32)> = Vec::new();
+    let mut count = 0u32;
+    for m in ms {
+        count += m.count;
+        for (k, n) in &m.sources {
+            match acc.iter_mut().find(|(ak, _)| ak == k) {
+                Some((_, an)) => *an += n,
+                None => acc.push((k.clone(), *n)),
+            }
+        }
+    }
+    acc.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    Some(Mail { cwd: first.cwd.clone(), count, sources: acc })
+}
+
+// START_CONTRACT: latest_in
+//   PURPOSE: Самое свежее письмо среди НЕСКОЛЬКИХ проектов строки (по дате в имени файла).
+//   INPUTS: { ms: &[&Mail] }
+//   OUTPUTS: { Option<PathBuf> }
+//   SIDE_EFFECTS: чтение каталогов .inbox — только по клику, не на тике
+// END_CONTRACT: latest_in
+pub fn latest_in(ms: &[&Mail]) -> Option<PathBuf> {
+    ms.iter().filter_map(|m| latest_item(&m.cwd)).max_by(|a, b| a.file_name().cmp(&b.file_name()))
 }
 
 // START_CONTRACT: source_label
@@ -327,16 +383,6 @@ pub fn latest_item(cwd: &str) -> Option<PathBuf> {
     pick_latest(&names).map(|n| dir.join(n))
 }
 
-// START_CONTRACT: mail_for_path
-//   PURPOSE: Сигнал входящих по известной папке (меню знает путь, имя строки не нужно).
-//   INPUTS: { mails: &[Mail]; path: &str }
-//   OUTPUTS: { Option<&Mail> }
-//   SIDE_EFFECTS: none
-// END_CONTRACT: mail_for_path
-pub fn mail_for_path<'a>(mails: &'a [Mail], path: &str) -> Option<&'a Mail> {
-    mail_for_row(mails, Some(path), "")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -373,15 +419,15 @@ mod tests {
             Mail { cwd: "D:\\Python\\margo-ai".into(), count: 2, sources: vec![("telegram".into(), 2)] },
         ];
         // строка с полным путём: точное совпадение
-        assert_eq!(mail_for_row(&mails, Some("D:\\Python\\margo-ai"), "margo-ai").unwrap().count, 2);
+        assert_eq!(mails_for_row(&mails, Some("D:\\Python\\margo-ai"), "margo-ai")[0].count, 2);
         // сигнал во вложенной папке засчитывается строке проекта-родителя (механика M-SIGNAL)
-        assert_eq!(mail_for_row(&mails, Some("D:\\Python\\ConstructMan"), "ConstructMan").unwrap().count, 4);
+        assert_eq!(mails_for_row(&mails, Some("D:\\Python\\ConstructMan"), "ConstructMan")[0].count, 4);
         // регистр и слэши не мешают
-        assert!(mail_for_row(&mails, Some("d:/python/margo-ai"), "margo-ai").is_some());
+        assert!(mails_for_row(&mails, Some("d:/python/margo-ai"), "margo-ai").len() == 1);
         // одноимённый проект в другом месте не ловится (D-06)
-        assert!(mail_for_row(&mails, Some("D:\\Other\\margo-ai"), "margo-ai").is_none());
+        assert!(mails_for_row(&mails, Some("D:\\Other\\margo-ai"), "margo-ai").is_empty());
         // без пути падаем на имя строки
-        assert!(mail_for_row(&mails, None, "margo-ai").is_some());
+        assert!(mails_for_row(&mails, None, "margo-ai").len() == 1);
     }
 
     #[test]
