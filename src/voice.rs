@@ -4,6 +4,10 @@
 //   PURPOSE: Оркестрация голосового ввода: стейт-машина idle->recording->transcribing, спавн worker-потока распознавания, доставка текста в UI.
 //   SCOPE: VoiceState/VoiceEvent + чистая next_state; Voice (toggle: старт/стоп записи + спавн worker stt->transform; on_done; state; set_always_on). Worker шлёт текст в UI через PostMessage(WM_APP_VOICE_DONE).
 //   DEPENDS: M-AUDIO (захват), M-STT (распознавание), M-TRANSFORM (чистка/словарь), M-CONFIG (параметры)
+//   EFFECTS: своё: %APPDATA%\claudebar\voice.log — append-only, БЕЗ РОТАЦИИ.
+//                  Туда же пишутся все запуски внешних команд из M-MAIN (spawn_tpl).
+//   REVERT:  удалить voice.log. Долг: файл растёт неограниченно — нужна ротация
+//            по размеру, иначе за годы работы он станет заметным.
 //   LINKS: M-VOICE
 //   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS

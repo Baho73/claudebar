@@ -4,6 +4,8 @@
 //   PURPOSE: Виджет поиска в шапке: EDIT-поле (субкласс Enter/Esc/✕/▾), выпадающая история запросов, цвет поля, cue-подсказка.
 //   SCOPE: создание EDIT+LISTBOX, субкласс-процедура, значок ✕/▾, история (файл %APPDATA%\claudebar\search_history.txt), диспетчеризация WM_COMMAND/WM_CTLCOLOREDIT от родителя.
 //   DEPENDS: M-STATE, M-RENDER, M-TOOLTIP, M-MAIN (run_live_search/commit_search_enter — оркестрация поиска остаётся в M-MAIN)
+//   EFFECTS: своё: %APPDATA%\claudebar\search_history.txt (история запросов)
+//   REVERT:  удалить search_history.txt
 //   LINKS: M-SEARCHBOX
 //   ROLE: UI_COMPONENT
 //   MAP_MODE: EXPORTS
