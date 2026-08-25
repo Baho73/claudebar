@@ -1,0 +1,40 @@
+<GraceVerificationDocument graceVersion="4.0">
+  <VD-SIGNALS>
+    <V-M-SIGNAL>
+      <Priority>high</Priority>
+      <Command>cargo test signal</Command>
+      <Scenario>success: parse_signal(содержимое .signal) извлекает cwd проекта</Scenario>
+      <Scenario>success: project_key("d:\\Python\\claudebar") == "claudebar" (basename, lower); хвостовые слэши обрезаются</Scenario>
+      <Scenario>success: bell_keys содержит имя проекта при наличии активного .signal</Scenario>
+      <Scenario>success: reconcile удаляет .signal, чьё окно проекта сейчас foreground; иначе сохраняет</Scenario>
+      <Scenario>failure: Папка signals отсутствует -&gt; пустой набор, без паники</Scenario>
+      <Scenario>success: Phase-15: should_clear гасит по полному cwd == путь окна в фокусе. Два одноимённых проекта (D:\a\claudebar, E:\b\claudebar): фокус на одном гасит ТОЛЬКО его сигнал, второй остаётся. Fallback на basename, если у окна нет пути. Тест should_clear_by_full_path</Scenario>
+      <Scenario>success: Phase-17: busy_cwds/busy_keys читают .busy (cwd lower + basename lower); is_stale(mtime, now, ttl=BUSY_STALE_SECS=90) -&gt; свежий .busy в наборе, старше 90с игнорируется; keep-alive (PostToolUse обновляет mtime) держит точки всю длинную работу; матч окна по cwd==path (fallback basename). Тесты is_stale/busy-разбор</Scenario>
+      <Scenario>regression: fix(grace-fix): при включённом FULLPATHS у строки появлялся путь -&gt; матч bell/busy становился ТОЛЬКО по точному пути, fallback на basename пропадал. Если Claude-сессия в ПОДПАПКЕ открытого проекта (окно D:\Python\Mosco, cwd D:\Python\Mosco\doc) — ни точный путь, ни basename "doc" не совпадали со строкой "Mosco"/"D:\Python\Mosco" -&gt; подсветка/точки гасли. Фикс: row_signaled/path_within — строка матчит, если cwd сигнала == путь окна ИЛИ ВЛОЖЕН в него (по границе сегмента); D-06 (одноимённые в разных путях) сохранён; should_clear тоже на path_within. Тест row_signaled_matches_session_in_subfolder (+ подпапка в should_clear_by_full_path)</Scenario>
+      <Scenario>success: Phase-25: busy_list()/done_list() дают по одной записи (cwd,key) НА КАЖДЫЙ .busy/.signal файл (с дублями — две сессии одного проекта = две записи). count_for_row(row_path,row_name,list) суммирует совпадения: путь через path_within (сессия в подпапке -&gt; матч родителя), иначе basename==row_name; одноимённые в разных путях НЕ суммируются (D-06). Тесты count_for_row_counts_duplicates, count_for_row_subfolder_and_d06</Scenario>
+      <Scenario>regression: fix(grace-fix): path_within нормализует слэши (/ -&gt; \). Kimi через Git Bash пишет cwd со слэшами (D:/Python/claudebar), Claude PowerShell — с бэкслэшами; матч по пути не срабатывал -&gt; квадрат/подсветка сессии Kimi пропадали на строке окна. Тест count_for_row_normalizes_slashes</Scenario>
+      <Scenario>success: Phase-26 presence: Signal += agent (parse_agent из agent=-строки). sessions() склеивает .alive (присутствие+агент) + .busy (работает) + .signal (готово) по session-id -&gt; Vec&lt;Sess&gt;, состояние busy&gt;signal&gt;idle. sess_matches_row матчит сессию к строке (path_within/basename). Тест parse_agent_and_sess_matches_row; sessions() — ручной smoke (файлы .alive/.busy/.signal)</Scenario>
+      <Scenario>regression: FPF D-16: .alive читались без TTL (list_ext("alive", None)) -&gt; краш/ребут без graceful SessionEnd оставлял вечный фантомный квадрат. Фикс: TTL ALIVE_STALE_SECS=12ч; busy-хук keep-alive трогает .alive (активные сессии свежие). Ручной smoke: убитая сессия -&gt; квадрат гаснет в пределах TTL</Scenario>
+      <Scenario>regression: Квадраты тасовались местами каждый опрос: sessions() отдавал Vec из HashMap (недетерминированный порядок). Фикс: Sess += sid; sort_sessions — Claude слева, Kimi справа, внутри агента по sid (стабильно). Тест sort_sessions_claude_left_kimi_right</Scenario>
+      <TestFiles>
+        <File>src/signal.rs</File>
+      </TestFiles>
+    </V-M-SIGNAL>
+    <V-M-MAIL>
+      <Priority>medium</Priority>
+      <Command>cargo test mail (parse_mail/parse_sources/mail_for_row/tooltip_text/cycle_pick/safe_key)</Command>
+      <Scenario>check: Ручной smoke по ТЗ: python D:\Python\mail-mcp\router.py --sync -&gt; значки у проектов с неразобранным</Scenario>
+      <Scenario>success: parse_mail читает формат роутера (cwd/count/sources) и терпит незнакомые ключи; count=0 или пустой cwd -&gt; сигнала нет. Тест parse_mail_reads_router_format</Scenario>
+      <Scenario>success: Матч со строкой идёт по ПОЛНОМУ пути (окно — WinItem.path, недавнее — OpenCmd::Editor.folder): вложенная папка засчитывается проекту-родителю, одноимённый проект в другом месте НЕ ловится (наследие D-06), регистр и слэши не мешают. Тест mail_for_row_matches_full_path_and_subfolders</Scenario>
+      <Scenario>success: Значок ОДИН и циклится по источникам раз в секунду; при единственном источнике статичен (cycle_pick всегда 0) — без мигания. Тест cycle_pick_is_static_for_single_source</Scenario>
+      <Scenario>failure: Граница доверия: ключ источника приходит из файла ВНЕШНЕГО роутера и подставляется в имя файла иконки. safe_key пропускает только [a-z0-9_-] -&gt; «..», пути и пробелы отклоняются, чтения за пределами mail-icons нет. Тест safe_key_blocks_path_tricks</Scenario>
+      <Scenario>success: Нет %APPDATA%\claudebar\mail-icons\&lt;ключ&gt;.ico -&gt; рисуется запасная марка фирменного цвета (источники различимы), значок не пропадает. Положенный .ico подхватывается при следующем запуске без правок кода</Scenario>
+      <Scenario>success: Жизненный цикл сигнала принадлежит роутеру: панель НЕ удаляет .mail, не ходит в .inbox проектов, TTL не заводит. Разобрал входящее -&gt; роутер убрал файл -&gt; значок погас. Запуск сессии из меню значок НЕ гасит</Scenario>
+      <Scenario>success: Клик по значку открывает САМОЕ СВЕЖЕЕ письмо проекта: pick_latest берёт максимум по имени файла, а не по mtime — роутер переписывает .inbox пачкой и время у всех файлов одинаковое, поэтому mtime непригоден. Работает и в строке окна, и в «Недавнем». Каталог .inbox читается в момент клика, не на тике (запрет ТЗ соблюдён). Тест pick_latest_uses_name_not_mtime</Scenario>
+      <Scenario>success: ПКМ по строке с входящими: «Открыть входящие (N)» открывает папку .inbox; «Входящие разобраны» зовёт РОУТЕР командой maildonecmd=, который снимает флаг со ВСЕХ писем проекта — то же, что делает читатель, удаляя первую строку письма, только пачкой. Письма остаются на месте, в .inbox/done/ ничего не переносится. Панель файлы не трогает — владение остаётся за роутером. Дефолт ключа пуст, поэтому пункт серый, пока команда не прописана в ini</Scenario>
+      <TestFiles>
+        <File>src/mail.rs</File>
+      </TestFiles>
+    </V-M-MAIL>
+  </VD-SIGNALS>
+</GraceVerificationDocument>

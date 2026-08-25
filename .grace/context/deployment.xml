@@ -1,0 +1,5 @@
+<GraceDeployment graceVersion="4.0">
+  <Applicability>applicable</Applicability>
+  <Target>Не сервис, а распространение бинарника: один .exe (~2.8 МБ) под Windows 10/11, собираемый cargo build --release. Установщика нет, копируется вручную.</Target>
+  <Notes>Хуки агентов (hooks/*.ps1) ставятся отдельными скриптами и правят чужие конфиги (~/.claude/settings.json, ~/.kimi-code/config.toml) — деинсталлятора у них нет, см. EFFECTS/REVERT модуля M-SIGNAL. Настройки лежат в claudebar.ini рядом с exe, рабочие данные — в %APPDATA%\claudebar.</Notes>
+</GraceDeployment>

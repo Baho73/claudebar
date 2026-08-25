@@ -1,0 +1,65 @@
+<GraceVerificationDocument graceVersion="4.0">
+  <VD-CORE>
+    <V-M-MAIN>
+      <Priority>medium</Priority>
+      <Command>cargo build --release затем запуск exe: процесс жив ~3с, окно создано, краха нет</Command>
+      <Scenario>success: Старт без краха, панель отображает текущие окна</Scenario>
+      <Scenario>success: v0.3: на тике опрашивает M-SIGNAL (bell_keys + reconcile) и пробрасывает набор bell в paint; диспетчеризация зон (Close/RecentMore/DragHandle) и режим reorder по ПКМ не ломают активацию/меню</Scenario>
+      <Scenario>success: v0.4: шрифт читается из конфига (make_font(face,…)); клик «⚙» открывает меню «Шрифт…»; после choose_font — rebuild_fonts удаляет старые HFONT и перерисовывает без утечки/краха</Scenario>
+      <Scenario>success: Phase-13 Ф-A: ensure_index в фоновом потоке при старте + по таймеру (~3 мин, INDEXING-guard); live BM25 читает chats_db; свежий проект находится без ручной переиндексации</Scenario>
+      <Scenario>success: Phase-13 Ф-B: tracking-подсказка (dwell ~0.5с) — полный путь/имя на строках окон/недавних, путь+сниппет (snippet_for) для чат-результатов, правила синтаксиса над строкой поиска; уход курсора прячет (WM_MOUSELEAVE)</Scenario>
+      <Scenario>success: Phase-13 Ф-C: меню «Искать в файлах» включает scope -&gt; spawn_files_index (COM-резолв .lnk из Recent в фоновом потоке с CoInitializeEx, ensure_files_index) -&gt; поиск через search_bm25 находит и в файлах; выключение возвращает только чаты</Scenario>
+      <Scenario>regression: ПКМ по строке окна / клик «⚙»: контекстное меню (TrackPopupMenu, модальный цикл) НЕ закрывается само через ~0.5с и тултип не всплывает поверх. Механизм: флаг MENU_ACTIVE выставлен вокруг TrackPopupMenu; WM_TIMER при нём ничего не делает (ни show_tooltip по dwell ~0.5с, ни refresh/resize по ~1с — любой из них закрывал меню). KillTimer ненадёжен: не удаляет уже синтезированное WM_TIMER из очереди. Smoke: правый клик, подержать без движения мыши &gt;1с — меню остаётся, тултипа нет</Scenario>
+      <Scenario>success: Phase-14: ПКМ по VS Code/Cursor -&gt; «Скопировать ссылку» кладёт путь папки проекта в буфер, «Открыть в проводнике» открывает папку. ПКМ по Word/Excel/MS Project -&gt; «ссылка» = полный путь файла, «проводник» = Explorer с выделением файла (/select). ПКМ по терминалу или нерезолвимому пути -&gt; оба пункта MF_GRAYED (для Проводника путь теперь резолвится — см. scenario-11, Phase-21). doc_paths И кэш папок проектов (PROJ_FOLDERS/project_folders) строятся в фоне; ПКМ матчит по basename в памяти — D-02: синхронного открытия SQLite на UI-потоке при правом клике больше нет. D-03: copy_to_clipboard освобождает hmem (GlobalFree) во всех путях отказа (GlobalLock null, OpenClipboard fail, SetClipboardData err); владение буферу переходит только при успешном SetClipboardData — утечки нет</Scenario>
+      <Scenario>success: Phase-15/16: WinItem.path участвует в идентичности (цвет/метка/звоночек/меню по полному пути); пункт ⚙ «Полные пути в заголовках» -&gt; configure_editor_titles; карта hwnd-&gt;ordinal метит новые окна (сортировка recent, «новое -&gt; вниз»); переключатель ⚙ alpha/recent -&gt; set+save+rebuild. Smoke: два одноимённых проекта различимы; recent кладёт новое окно вниз</Scenario>
+      <Scenario>success: Phase-17: refresh_items наполняет App.busy_paths (busy_cwds); ID_ANIM_TIMER (~350мс) стартует при непустом busy и гаснет в простое; anim_frame++ -&gt; InvalidateRect. Smoke: промпт Claude -&gt; «...» бегут на строке проекта; Stop -&gt; точки гаснут, строка золотая (звоночек); в простое не мигает</Scenario>
+      <Scenario>success: Phase-21: «Скопировать ссылку»/«Открыть в проводнике» там, где раньше было нельзя. (a) ПКМ по окну Проводника -&gt; explorer_folder_path (Shell COM IShellWindows-&gt;IWebBrowserApp по hwnd -&gt; LocationURL -&gt; url_to_path) даёт путь открытой папки, пункты активны. (b) ПКМ по недавнему/закрытому документу или результату поиска «Найдено ещё» -&gt; мини-меню (show_menu minimal=true) только «Скопировать ссылку»/«Открыть в проводнике» (путь из recent_path / hit.folder), без палитры. Чистые url_to_path/percent_decode под cargo test (url_to_path_local_and_unc, percent_decode_basic). COM/UI — ручной smoke: ПКМ по папке в Проводнике -&gt; путь в буфере; ПКМ по недавнему файлу -&gt; /select в Explorer</Scenario>
+      <Scenario>success: Phase-24 (стриминг оркестрован): ⚙-пункт «Стриминг длинной диктовки» (ID_STREAMING, MF_CHECKED по voice_streaming) toggle+save. При Recording+voice_streaming стрим-таймер зовёт voice.stream_tick (интервал STREAM_TICK_SECS); WM_APP_STREAM_PARTIAL -&gt; voice.on_partial. Вставка результата — как сейчас, разом по WM_APP_VOICE_DONE. Smoke: галочка ВКЛ -&gt; длинная диктовка финиширует быстро; ВЫКЛ -&gt; legacy (весь WAV на стопе)</Scenario>
+      <Scenario>regression: audit #1: percent_decode паниковал на срезе &amp;s[i+1..i+3] при '%' перед многобайтовым символом. Фикс: побайтно (hex2). Тест percent_decode_no_panic_on_multibyte</Scenario>
+    </V-M-MAIN>
+    <V-M-STATE>
+      <Priority>low</Priority>
+      <Command>cargo build --release (тип App компилируется; потребители видят через ре-экспорт crate::App)</Command>
+      <Scenario>success: M-STATE — держатель данных без логики: покрывается компиляцией + модульными тестами потребителей (M-RENDER/M-MAIN). Рефактор App-&gt;state (вынос из main.rs, FPF D-5) не меняет поведение — все тесты зелёные до и после (102/102)</Scenario>
+    </V-M-STATE>
+    <V-M-CONFIG>
+      <Priority>high</Priority>
+      <Command>cargo test config</Command>
+      <Scenario>success: Round-trip: load(save(cfg)) == cfg для цветов, меток, свёрнутости, позиции, AppDef</Scenario>
+      <Scenario>failure: Битый/отсутствующий ini -&gt; дефолты, без паники</Scenario>
+      <Scenario>success: v0.3 Phase-7: recent_showall round-trip через ra= (toggle -&gt; serialize -&gt; parse сохраняет состояние)</Scenario>
+      <Scenario>success: v0.3 Phase-8: ручной порядок секций (os=) и окон (o=) round-trip; перемещение элемента меняет позицию детерминированно</Scenario>
+      <Scenario>success: v0.4 Phase-9: font= round-trip (set_font -&gt; serialize -&gt; parse сохраняет face и size); отсутствие font= -&gt; дефолт Iosevka Fixed/16</Scenario>
+      <Scenario>success: v0.4 Phase-10: default_apps содержит Windows Terminal, cmd (class ConsoleWindowClass), PowerShell (powershell/pwsh), Git Bash, Проводник (explorer + CabinetWClass) с верными proc_alts/class/NameMode::Whole</Scenario>
+      <Scenario>regression: Вес шрифта не сохранялся -&gt; панель всегда жирная (600), диалог не предзаполнял начертание. Фикс: font_weight (3-е поле font=), set_font(face,size,weight). Тест font_weight_persisted_and_honored (вкл. обратную совместимость 2-польного font=)</Scenario>
+      <Scenario>regression: После смены конфигурации мониторов сохранённая pos= оказывается вне виртуального экрана -&gt; окно создаётся за экраном (видно лишь в панели задач). Фикс: visible_start_pos(saved, default, win_w/h, virtual screen rect) -&gt; дефолт на первичном экране, если видимой площади &lt; MIN_VISIBLE; M-MAIN вызывает её с SM_*VIRTUALSCREEN при CreateWindow. Тест offscreen_pos_falls_back_to_default (за правым/левым/нижним краем -&gt; дефолт; частично видимое и валидное -&gt; сохраняется)</Scenario>
+      <Scenario>success: v0.5 Phase-12: конфиг поиска round-trip — search_db/search_cmd/search_port через ключи searchdb=/searchcmd=/searchport= (serialize -&gt; parse сохраняет); без ключей -&gt; дефолты (порт 8799, db оканчивается clfind.db, cmd содержит clfind). Тест search_config_roundtrip_and_defaults</Scenario>
+      <Scenario>success: Phase-15: реестр путь-&gt;№ (pn=) round-trip + СТАБИЛЬНОСТЬ — assign_number для нового пути даёт первый свободный № среди одноимённых basename; повторный вызов для того же пути возвращает ТОТ ЖЕ №; закрытие «(1)» не меняет № у «(2)». Цвет/метка по полному пути с fallback на basename (старый конфиг по basename продолжает работать)</Scenario>
+      <Scenario>success: Phase-16: sort=alpha|recent round-trip (set -&gt; serialize -&gt; parse); отсутствие ключа -&gt; дефолт alpha</Scenario>
+      <Scenario>regression: При смене конфигурации мониторов НА ХОДУ (переключение/отключение экрана) окно остаётся за пределами видимых экранов и его не схватить (WS_EX_TOOLWINDOW: нет в Alt+Tab/таскбаре). Фикс: recover_pos(cur, default, win_w/h, virtual screen rect) -&gt; Some(новая поз.), если видимой площади &lt; MIN_VISIBLE, иначе None; M-MAIN зовёт её на WM_DISPLAYCHANGE и при Some делает SetWindowPos + save_pos. Тест recover_pos_pulls_back_after_monitor_disconnect (вне экрана -&gt; Some(default); видимое -&gt; None). Ручной smoke: отключить второй монитор при окне на нём -&gt; окно возвращается на первичный.</Scenario>
+      <Scenario>success: Phase-20: voice_keep_clipboard round-trip — voicekeepclip= (0/1), деф. true (нет ключа -&gt; сохранять прежний буфер). Тест voice_keep_clipboard_roundtrip_default_true (нет ключа/=1 -&gt; true; выкл -&gt; serialize/parse сохраняет false). Управляет восстановлением буфера в M-PASTE.paste_text.</Scenario>
+      <Scenario>success: Phase-22: voice_always_on round-trip — voicealwayson= (0/1), деф. false (нет ключа -&gt; always-on ВЫКЛ). Тест voice_always_on_roundtrip_default_false (нет ключа/=0 -&gt; false; вкл -&gt; serialize/parse сохраняет true). Управляет персистентным Mic в M-VOICE.set_always_on.</Scenario>
+      <Scenario>success: Phase-23: voice_trailing_space round-trip — voicetrailspace= (0/1), деф. true (нет ключа -&gt; добавлять пробел). Тест voice_trailing_space_roundtrip_default_true (нет ключа/=1 -&gt; true; выкл -&gt; serialize/parse сохраняет false). Управляет хвостовым пробелом в M-TRANSFORM.process.</Scenario>
+      <Scenario>success: Phase-24: voice_streaming round-trip — voicestreaming= (0/1), деф. false (нет ключа -&gt; стриминг ВЫКЛ). Тест voice_streaming_roundtrip_default_false (нет ключа/=0 -&gt; false; вкл -&gt; serialize/parse сохраняет true). Управляет инкрементальным распознаванием в M-VOICE.</Scenario>
+      <TestFiles>
+        <File>src/config.rs</File>
+      </TestFiles>
+    </V-M-CONFIG>
+    <V-M-SETTINGS>
+      <Priority>medium</Priority>
+      <Command>cargo test settings</Command>
+      <Scenario>check: Ручной smoke: «⚙» открывает ChooseFontW; выбор шрифта применяется к панели</Scenario>
+      <Scenario>check: Ручной smoke: «⚙» -&gt; «О программе…» показывает версию, Telegram и GitHub</Scenario>
+      <Scenario>success: parse_face(UTF-16 буфер lfFaceName с хвостовыми нулями) -&gt; корректная String без \0</Scenario>
+      <Scenario>success: choose_font на OK возвращает Some((face, size)) выбранного шрифта (ручной smoke)</Scenario>
+      <Scenario>failure: Отмена диалога -&gt; None; конфиг не меняется</Scenario>
+      <Scenario>regression: Диалог не предзаполнял текущий шрифт (пустой/жирный по умолчанию): lf.lfWeight хардкодился 400, флаги избыточны. Фикс: choose_font(parent,face,size,weight) предзаполняет lf.lfWeight текущим и возвращает (face,size,weight); флаги CF_SCREENFONTS|CF_INITTOLOGFONTSTRUCT (ручной smoke)</Scenario>
+      <Scenario>success: v0.4.1 Phase-11: about_text(version) содержит «ClaudeBar v{version}», TELEGRAM (@IvanPonomarev) и GITHUB_URL (тест about_text_has_version_and_contacts); show_about открывает MessageBox из меню «⚙» -&gt; «О программе…» (ручной smoke)</Scenario>
+      <Scenario>success: Phase-15: configure_editor_titles делает бэкап settings.json VS Code+Cursor, вставляет/обновляет window.title с ${rootPath} идемпотентно (повторный вызов не дублирует); settings.json не парсится (JSONC) -&gt; не портит, предупреждает (risk-24). Smoke + чистый тест на вставку ключа в валидный JSON</Scenario>
+      <Scenario>regression: FPF D-15: ошибка чтения settings.json (залочен/не-UTF-8) трактовалась как пустой файл (unwrap_or_default) -&gt; backup+write затирали существующий файл синтезированным window.title. Фикс: на Err чтения — «ошибка чтения — не тронут», continue (не синтезировать контент из неудачного чтения существующего пути)</Scenario>
+      <TestFiles>
+        <File>src/settings.rs</File>
+      </TestFiles>
+    </V-M-SETTINGS>
+  </VD-CORE>
+</GraceVerificationDocument>

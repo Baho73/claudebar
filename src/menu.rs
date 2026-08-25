@@ -5,7 +5,7 @@
 //   SCOPE: show_menu / show_settings_menu (TrackPopupMenu + флаг MENU_ACTIVE), handle_command (все ID_*), copy_to_clipboard, open_in_explorer_select.
 //   DEPENDS: M-STATE, M-CONFIG, M-SETTINGS, M-PROMPT, M-TOOLTIP, M-VOICE, M-MAIN (rebuild_rows/rebuild_fonts/spawn_files_index/run_live_search)
 //   LINKS: M-MENU
-//   ROLE: UI_COMPONENT
+//   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS
 //   NOTE: Вынесено из main.rs (рефактор god-object, FPF D-5). MENU_ACTIVE живёт здесь — wndproc читает его, чтобы тики таймера не закрывали модальный TrackPopupMenu (Phase-14 fix).
 // END_MODULE_CONTRACT

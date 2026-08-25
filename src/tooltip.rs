@@ -5,7 +5,7 @@
 //   SCOPE: create_tooltip/arm_tip/show_tooltip/hide_tooltip (плюмбинг окна + dwell) и tip_text_for (правила/путь/сниппет) поверх App.
 //   DEPENDS: M-STATE, M-RENDER, M-SEARCH, M-RECENT
 //   LINKS: M-TOOLTIP
-//   ROLE: UI_COMPONENT
+//   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS
 //   NOTE: Вынесено из main.rs (рефактор god-object, FPF D-5). Константы dwell (ID_TIP_TIMER/TIP_DELAY/TIP_SEARCHBOX) и хелперы edit_text/recent_path остаются в M-MAIN (их делит wndproc), импортируются сюда.
 // END_MODULE_CONTRACT

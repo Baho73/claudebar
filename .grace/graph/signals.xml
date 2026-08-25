@@ -1,0 +1,14 @@
+<GraceGraphDocument graceVersion="4.0">
+  <GD-SIGNALS>
+    <M-SIGNAL>
+      <Summary>«Звоночек» завершения ИИ (.signal) + индикатор работы (.busy) из %APPDATA%\claudebar\signals\: наборы проектов для подсветки и бегущих точек, сброс сигнала при фокусе окна. Матч по полному cwd==WinItem.path (fallback basename). Пишущая сторона — hooks/claudebar-bell.ps1 (Stop) и claudebar-busy.ps1 (UserPromptSubmit). Phase-17: .busy со staleness-фильтром.</Summary>
+      <Path>src/signal.rs</Path>
+      <M-WINENUM />
+    </M-SIGNAL>
+    <M-MAIL>
+      <Summary>Индикатор входящих: читает сигналы внешнего роутера почты/мессенджеров (%APPDATA%\claudebar\mail\&lt;hash&gt;.mail, по файлу на проект) и отдаёт панели, в какой проект что-то прилетело и из каких источников. Работает и для живых сессий, и для проектов в «Недавних». ТЗ: docs/TZ-mail-badge.md.</Summary>
+      <Path>src/mail.rs</Path>
+      <M-SIGNAL />
+    </M-MAIL>
+  </GD-SIGNALS>
+</GraceGraphDocument>

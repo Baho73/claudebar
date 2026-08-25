@@ -1,0 +1,8 @@
+<GracePrinciples graceVersion="4.0">
+  <Principle>Контракт первым: назначение, границы и внешние эффекты модуля объявляются до реализации.</Principle>
+  <Principle>Семантические якоря стабильны и ищутся грепом (MODULE_CONTRACT, MODULE_MAP, CHANGE_SUMMARY).</Principle>
+  <Principle>Модуль объявляет, что он меняет ЗА своими границами (EFFECTS) и как это откатить (REVERT).</Principle>
+  <Principle>Чистая логика отделена от Win32-вызовов и покрыта детерминированными тестами; ручной smoke — только там, где без окна не проверить.</Principle>
+  <Principle>Жизненным циклом ресурса владеет тот, кто его создал; остальные только читают.</Principle>
+  <Principle>Граф и верификация живут в .grace и держатся в согласии с кодом, который описывают.</Principle>
+</GracePrinciples>

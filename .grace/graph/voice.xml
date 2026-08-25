@@ -1,0 +1,28 @@
+<GraceGraphDocument graceVersion="4.0">
+  <GD-VOICE>
+    <M-AUDIO>
+      <Summary>Захват аудио с микрофона по умолчанию (cpal) в WAV 16-bit PCM mono в память для голосового ввода: start_recording -&gt; Recorder, Recorder::stop -&gt; WAV-байты. Phase-18.</Summary>
+      <Path>src/audio.rs</Path>
+    </M-AUDIO>
+    <M-STT>
+      <Summary>Синхронное распознавание: POST WAV на whisper-dictate /transcribe (localhost http через std::net::TcpStream, без HTTP-крейта), разбор {"text"}. Опц. language/hotwords/initial_prompt. Phase-18.</Summary>
+      <Path>src/stt.rs</Path>
+    </M-STT>
+    <M-TRANSFORM>
+      <Summary>Пост-обработка текста перед вставкой: хардкод-чистка мусора Whisper (галлюцинации/повторы/пробелы) + кастомный словарь пост-заменой (wrong-&gt;right) + шов под внешний API (off в v1). Phase-18.</Summary>
+      <Path>src/transform.rs</Path>
+    </M-TRANSFORM>
+    <M-VOICE>
+      <Summary>Оркестрация голосового ввода (стейт-машина idle-&gt;recording-&gt;transcribing): toggle стартует/останавливает запись (M-AUDIO); на стопе worker-поток (M-STT -&gt; M-TRANSFORM); результат в UI через PostMessage(WM_APP_VOICE_DONE) — вставку делает M-MAIN. UI не морозим. Phase-19.</Summary>
+      <Path>src/voice.rs</Path>
+      <M-AUDIO />
+      <M-STT />
+      <M-TRANSFORM />
+      <M-CONFIG />
+    </M-VOICE>
+    <M-PASTE>
+      <Summary>Вставка текста в активное поле: сохранить буфер обмена, положить текст (CF_UNICODETEXT), Ctrl+V (SendInput) в foreground-окно, вернуть прежний буфер. Win32-фичи уже подключены. Phase-18.</Summary>
+      <Path>src/paste.rs</Path>
+    </M-PASTE>
+  </GD-VOICE>
+</GraceGraphDocument>

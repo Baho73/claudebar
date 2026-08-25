@@ -1,0 +1,68 @@
+<GraceGraphIndex graceVersion="4.0">
+  <GraphDocuments>
+    <GD-CORE>
+      <Path>graph/core.xml</Path>
+      <Owns>
+        <M-MAIN />
+        <M-STATE />
+        <M-CONFIG />
+        <M-SETTINGS />
+      </Owns>
+    </GD-CORE>
+    <GD-UI>
+      <Path>graph/ui.xml</Path>
+      <Owns>
+        <M-RENDER />
+        <M-ICON />
+        <M-TOOLTIP />
+        <M-PROMPT />
+        <M-SEARCHBOX />
+        <M-MENU />
+      </Owns>
+    </GD-UI>
+    <GD-WINDOWS>
+      <Path>graph/windows.xml</Path>
+      <Owns>
+        <M-WINENUM />
+        <M-ACTIVATE />
+        <M-RECENT />
+      </Owns>
+    </GD-WINDOWS>
+    <GD-SIGNALS>
+      <Path>graph/signals.xml</Path>
+      <Owns>
+        <M-SIGNAL />
+        <M-MAIL />
+      </Owns>
+    </GD-SIGNALS>
+    <GD-SEARCH>
+      <Path>graph/search.xml</Path>
+      <Owns>
+        <M-SEARCH />
+        <M-INDEX />
+        <M-SDAEMON />
+      </Owns>
+    </GD-SEARCH>
+    <GD-VOICE>
+      <Path>graph/voice.xml</Path>
+      <Owns>
+        <M-AUDIO />
+        <M-STT />
+        <M-TRANSFORM />
+        <M-VOICE />
+        <M-PASTE />
+      </Owns>
+    </GD-VOICE>
+    <GD-FLOWS>
+      <Path>graph/flows.xml</Path>
+      <Owns>
+        <DF-SWITCH />
+        <DF-RECENT />
+        <DF-BELL />
+        <DF-CLOSE />
+        <DF-SETTINGS />
+        <DF-APPS />
+      </Owns>
+    </GD-FLOWS>
+  </GraphDocuments>
+</GraceGraphIndex>

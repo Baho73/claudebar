@@ -1,0 +1,78 @@
+<GraceVerificationDocument graceVersion="4.0">
+  <VD-VOICE>
+    <V-M-AUDIO>
+      <Priority>high</Priority>
+      <Command>cargo test audio (encode_wav, ring_keep, pre_roll_samples)</Command>
+      <Scenario>check: Ручной smoke: start_recording -&gt; речь -&gt; stop -&gt; WAV распознаётся</Scenario>
+      <Scenario>success: encode_wav: &amp;[i16] из N сэмплов, rate, ch -&gt; RIFF/fmt/data: размер RIFF=36+2N, fmt PCM(1)/mono/16бит, byterate/blockalign верны, data-чанк=2N</Scenario>
+      <Scenario>failure: Нет устройства ввода -&gt; start_recording -&gt; NO_INPUT_DEVICE (Err), без краха</Scenario>
+      <Scenario>success: Phase-22: ring_keep(len,cap) — len&lt;=cap -&gt; 0 (ничего не выкидываем); len&gt;cap -&gt; len-cap (держим кольцо &lt;= cap). Тест ring_keep_basic.</Scenario>
+      <Scenario>success: Phase-22: pre_roll_samples(rate,ms) — 48000,500 -&gt; 24000; 16000,500 -&gt; 8000; 0мс -&gt; 0. Тест pre_roll_samples_basic.</Scenario>
+      <Scenario>success: Phase-22 ручной smoke: always-on ВКЛ -&gt; хоткей -&gt; слово СРАЗУ после пика попадает в распознавание (pre-roll ловит начало, cold-start снят). disarm_take не роняет поток (повторная диктовка работает).</Scenario>
+      <Scenario>success: Phase-24: wav_slice(samples[start..], rate) -&gt; валидный WAV с data-чанком = 2*(len-start); start=0 == encode_wav целиком; start=len -&gt; пустой WAV (44 байта). snapshot_from не останавливает запись (armed/поток не тронуты). Тест wav_slice_basic (+ ручной smoke: снимок во время записи не рвёт поток)</Scenario>
+      <TestFiles>
+        <File>src/audio.rs</File>
+      </TestFiles>
+    </V-M-AUDIO>
+    <V-M-STT>
+      <Priority>high</Priority>
+      <Command>cargo test stt (build_multipart/parse_text/parse_url)</Command>
+      <Scenario>check: Ручной round-trip против :8771: sample.wav -&gt; ожидаемый русский текст</Scenario>
+      <Scenario>success: build_multipart: boundary, поля language/hotwords, файл -&gt; корректное тело (Content-Disposition, CRLF, завершающий boundary--)</Scenario>
+      <Scenario>success: parse_text: {"text":"привет","duration":1.9} -&gt; Some("привет"); {} / пусто / битый JSON -&gt; None</Scenario>
+      <Scenario>success: parse_url: http://127.0.0.1:8771/transcribe -&gt; ("127.0.0.1",8771,"/transcribe"); порт по умолчанию 80 если опущен</Scenario>
+      <Scenario>failure: Контейнер недоступен -&gt; transcribe -&gt; Err(CONNECT_FAILED), панель не падает</Scenario>
+      <Scenario>success: health_url: http://127.0.0.1:18771/transcribe -&gt; http://127.0.0.1:18771/health (host:port сохраняются, путь заменяется); без host -&gt; None — Phase-27, тест health_url_keeps_host_port</Scenario>
+      <Scenario>failure: is_alive на закрытом порту (127.0.0.1:1) и на неразбираемом URL -&gt; false за таймаут, без зависания — Phase-27, тест is_alive_false_on_closed_port</Scenario>
+      <TestFiles>
+        <File>src/stt.rs</File>
+      </TestFiles>
+    </V-M-STT>
+    <V-M-TRANSFORM>
+      <Priority>high</Priority>
+      <Command>cargo test transform</Command>
+      <Scenario>success: clean_whisper: « привет мир. » -&gt; «Привет мир.»; повтор «да да да» -&gt; «да»; двойные пробелы схлопнуты</Scenario>
+      <Scenario>success: clean_whisper выкидывает галлюцинации: весь вывод == «Продолжение следует...» / «Спасибо за просмотр» / «[музыка]» -&gt; «»; хвостовая титр-строка отрезана</Scenario>
+      <Scenario>success: apply_vocab: [(«клодбар»,«ClaudeBar»)] на «открой клодбар» -&gt; «открой ClaudeBar» (регистронезависимо, по границе слова; «клодбарный» не трогается)</Scenario>
+      <Scenario>success: process: clean_whisper -&gt; apply_vocab в связке; пустой вход -&gt; «»</Scenario>
+      <Scenario>success: Phase-23: process(text, vocab, trailing_space) — при trailing_space=true и непустом результате в хвосте один пробел («Раз.» -&gt; «Раз. »); trailing_space=false -&gt; без пробела; пустой результат -&gt; «» (пробел не клеим к пустоте). Тест process_trailing_space</Scenario>
+      <Scenario>success: Phase-24: stable_prefix(prev, cur, margin) -&gt; общий префикс по словам, устоявшийся между заходами, минус последние margin слов. prev=«Первое предложение. Втор», cur=«Первое предложение. Второе и», margin=1 -&gt; «Первое предложение.» (совпавший префикс без плавающего хвоста). Расхождение с первого слова -&gt; «». prev пустой -&gt; «». Тест stable_prefix_commits_agreed_words</Scenario>
+      <Scenario>success: Phase-24: merge_committed(fixed, tail) -&gt; склейка без дублей/двойных пробелов на стыке. («Первое.», «Второе.») -&gt; «Первое. Второе.»; fixed с хвостовым пробелом + tail с ведущим -&gt; один пробел; пустой tail -&gt; fixed без изменений. Тест merge_committed_no_double_space</Scenario>
+      <TestFiles>
+        <File>src/transform.rs</File>
+      </TestFiles>
+    </V-M-TRANSFORM>
+    <V-M-VOICE>
+      <Priority>high</Priority>
+      <Command>cargo test voice (next_state)</Command>
+      <Scenario>check: Ручной smoke: end-to-end хоткей -&gt; запись -&gt; распознавание -&gt; вставка</Scenario>
+      <Scenario>success: next_state: Idle+toggle-&gt;Recording; Recording+toggle-&gt;Transcribing; Transcribing+done-&gt;Idle; Transcribing+toggle-&gt;Transcribing (игнор)</Scenario>
+      <Scenario>environment: ЛОВУШКА СРЕДЫ (Phase-27, воспроизведено): свежесобранный claudebar.exe при voicealwayson=1 виснет на захвате микрофона ДО создания окна — панель не появляется, в voice.log нет строки RegisterHotKey. Это НЕ баг кода: подтверждено контрольным экспериментом — свежая сборка того же коммита без правок виснет так же, а ранее собранный (известный антивирусу) exe стартует за 2с; с voicealwayson=0 свежий exe стартует за 2с. Причина — поведенческий анализ Касперского (avp.exe) на неизвестном бинаре, перехватывающий доступ к микрофону. Обход: добавить claudebar.exe в исключения Касперского, либо запустить с выключенной галочкой «Микрофон всегда включён» и вернуть её после прогрева. Диагностика: наличие новой строки RegisterHotKey в voice.log = старт дошёл до конца (окно создано). Проверять окно через FindWindow/EnumWindows из агентской сессии НЕЛЬЗЯ — окно панели оттуда не видно (ложный вывод «окна нет»)</Scenario>
+      <Scenario>failure: STT вернул Err -&gt; состояние возвращается в Idle, индикатор гаснет, вставки нет</Scenario>
+      <Scenario>success: Phase-22 ручной smoke: set_always_on(true) на Idle -&gt; persistent Mic стартует (индикатор ОС горит); хоткей -&gt; arm/disarm_take путь (тёплый поток, первое слово не теряется). set_always_on(false) -&gt; Mic дропается, индикатор гаснет, toggle падает на legacy Recorder (cold-start). Legacy-путь (галочка ВЫКЛ) end-to-end не сломан.</Scenario>
+      <Scenario>success: Phase-24 ручной smoke: voice_streaming ВКЛ -&gt; диктовка &gt;30с с паузами-раздумьями в середине предложений -&gt; предложения НЕ рвутся (граница по стабильности текста, не по тишине); на стопе финальный заход на короткий хвост -&gt; финиш заметно быстрее, чем без стриминга; итоговый текст полный и корректный (без дублей на стыках окон). Скользящее окно держится ≤STREAM_WINDOW_SECS (диктовка &gt;60с не упирается в обрыв 30с). voice_streaming ВЫКЛ -&gt; legacy stop_to_transcribe (весь WAV на стопе) не сломан.</Scenario>
+      <Scenario>regression: audit #3: обработчик WM_APP_VOICE_DONE безусловно разыменовывал lparam как *mut String (Box::from_raw) -&gt; любой локальный процесс мог послать WM_APP+2 с мусорным указателем -&gt; UB/порча кучи. Фикс: worker кладёт текст в реестр (stash_result) и шлёт id; UI забирает take_result(id) -&gt; неизвестный id даёт None, без разыменования. Тест stash_take_result_roundtrip_and_unknown_none</Scenario>
+      <Scenario>regression: FPF D-13: паника воркера (panic=unwind) или отказ PostMessageW оставляли состояние Transcribing навсегда (голос мёртв до рестарта). Фикс: воркер оборачивает stt/transform в catch_unwind (текст постится всегда, пустой при панике); poll — watchdog (transcribe_start + TRANSCRIBE_TIMEOUT_SECS=150) возвращает зависшую Transcribing в Idle. Ручной smoke: убить сервис mid-transcribe -&gt; через ~150с голос снова рабочий</Scenario>
+      <Scenario>regression: FPF D-14: тоггл «микрофон всегда вкл» во время записи сохранял конфиг, но set_always_on был no-op (не Idle) -&gt; ini/галочка разъезжались с реальностью. Фикс: set_always_on-&gt;bool; ID_MIC_ALWAYS меняет конфиг ТОЛЬКО при успехе (на Idle). Ручной smoke: тоггл во время записи не меняет галочку</Scenario>
+      <Scenario>success: Phase-27 индикация: сервер whisper остановлен (docker stop whisper-dictate) -&gt; в течение ≤15с фоновый health-опрос ставит whisper_ok=false, в voice.log «health: whisper НЕ отвечает», окно вырастает на STRIP и внизу тёмно-красный баннер «⚠ Whisper не запущен — клик, чтобы поднять». Контейнер поднят обратно -&gt; «health: whisper поднялся», баннер исчезает, высота возвращается. ПРОВЕРЕНО (лог), баннер визуально пользователем не подтверждён</Scenario>
+      <Scenario>success: Phase-27 действие: клик по баннеру -&gt; фоновый `docker start whisper-dictate` (CREATE_NO_WINDOW, UI не ждёт), результат в voice.log; следующий health-опрос гасит баннер</Scenario>
+      <Scenario>regression: COM снесён с UI-потока -&gt; микрофон мёртв до перезапуска. explorer_folder_path (ПКМ по окну Проводника) звал CoInitializeEx(APARTMENTTHREADED) на UI-потоке, ИГНОРИРУЯ результат, и потом безусловно CoUninitialize. Но cpal (M-AUDIO) уже держит на этом потоке COM как MTA: наш вызов возвращает RPC_E_CHANGED_MODE и счётчик НЕ увеличивает, а CoUninitialize его уменьшал -&gt; COM на потоке уносился. Дальше любой захват падал с AUDCLNT_E_SERVICE_NOT_RUNNING (0x88890010) до перезапуска панели; в логе — только STREAM_BUILD_FAILED без причины. Фикс: CoUninitialize только при hr.is_ok() (S_OK/S_FALSE), тот же guard в двух фоновых потоках. Проверка: ПКМ по окну Проводника -&gt; затем Ctrl+Space -&gt; запись стартует (в voice.log «start_recording ok», НЕ 0x88890010). Диагностика при повторе: cargo test probe_input_devices -- --ignored --nocapture</Scenario>
+      <Scenario>success: Отказ захвата виден в UI: start_recording -&gt; Err поднимает нижний баннер «⚠ Микрофон недоступен …» (short_mic_error переводит код WASAPI в человеческую строку), баннер приоритетнее баннера whisper; успешный захват его снимает. Раньше отказ уходил только в voice.log — пользователь жал хоткей и не понимал, почему тишина</Scenario>
+      <Scenario>failure: Phase-27 нагрузка: сервер молчит (порт открыт, ответа нет) -&gt; гейт HEALTH_INFLIGHT не даёт копить потоки: пока опрос висит, новые не спавнятся; таймаут HEALTH_TIMEOUT_MS=1200 закрывает попытку</Scenario>
+      <TestFiles>
+        <File>src/voice.rs</File>
+      </TestFiles>
+    </V-M-VOICE>
+    <V-M-PASTE>
+      <Priority>medium</Priority>
+      <Command>Ручной smoke: paste_text в Блокнот вставляет текст; прежний буфер обмена восстановлен</Command>
+      <Scenario>success: paste_text(text, keep=true): текст оказался в активном поле (Ctrl+V); get_clipboard до/после совпадает (прежний буфер восстановлен через ~400мс)</Scenario>
+      <Scenario>failure: Пустой текст -&gt; no-op (буфер не трогается, Ctrl+V не шлётся)</Scenario>
+      <Scenario>success: Phase-20 keep=false: после вставки в буфере остаётся РАСПОЗНАННЫЙ текст (прежний не восстанавливается). Ручной smoke: ⚙-галочку «Сохранять прежний буфер обмена» снять -&gt; скопировать X -&gt; продиктовать -&gt; буфер = распознанный; галочку поставить -&gt; буфер = X</Scenario>
+      <Scenario>regression: audit #2: get_clipboard сканировал `while *ptr.add(len)!=0` без границы — данные CF_UNICODETEXT не обязаны быть NUL-терминированы -&gt; чтение за буфером. Фикс: кап по GlobalSize(h)/2 + чистая utf16_len_bounded (NUL или конец буфера). Тест utf16_len_bounded_stops_at_nul_or_cap</Scenario>
+      <TestFiles>
+        <File>src/paste.rs</File>
+      </TestFiles>
+    </V-M-PASTE>
+  </VD-VOICE>
+</GraceVerificationDocument>

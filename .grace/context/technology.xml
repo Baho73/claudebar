@@ -1,0 +1,12 @@
+<GraceTechnology graceVersion="4.0">
+  <Language>Rust 1.96 (edition 2021)</Language>
+  <Runtime>Native Windows (x86_64-pc-windows-gnu) — Windows 10/11</Runtime>
+  <Framework>Win32 API via `windows` crate 0.58</Framework>
+  <TestingStack>cargo test Чистые функции: извлечение имени проекта/документа из заголовка, round-trip claudebar.ini, парсинг пути из .lnk, сопоставление окно-файл по basename cargo build --release Полная сборка после слияния модулей; smoke-запуск exe (окно создаётся, краха на старте нет) cargo test &amp;&amp; cargo build --release Все юнит-тесты + релизная сборка + ручная визуальная проверка панели Win32-вызовы не мокаем. Логику выносим в чистые функции (строки, структуры) и тестируем их детерминированно. GUI проверяется ручным smoke-запуском (антивирус Kaspersky приходится держать в исключениях/паузе).</TestingStack>
+  <Observability>Опциональный файловый лог рядом с exe (claudebar.log). GUI собран с #![windows_subsystem = "windows"], консоли и stdout нет. [Module][function][BLOCK_NAME] message — Логировать только заголовки окон и пути файлов; содержимое документов не логировать</Observability>
+  <OperationalConstraints>
+    <Constraint>Один исполняемый файл без установщика и без внешних зависимостей времени выполнения.</Constraint>
+    <Constraint>Отрисовка и опрос окон идут в UI-потоке по таймеру ~1с — длительные операции выносятся в фоновые потоки.</Constraint>
+    <Constraint>Чужими ресурсами (сигналы роутера, файлы .inbox) владеет их источник; панель только читает.</Constraint>
+  </OperationalConstraints>
+</GraceTechnology>

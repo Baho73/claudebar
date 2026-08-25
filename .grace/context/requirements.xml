@@ -1,0 +1,22 @@
+<GraceRequirements graceVersion="4.0">
+  <ProjectName>ClaudeBar</ProjectName>
+  <Annotation>Всегда-поверх нативная Windows-панель (Rust + Win32) со списком открытых окон редакторов и приложений (VS Code, Cursor, Word, Excel, MS Project), сгруппированных в сворачиваемые секции по приложению. Клик переключает на окно; можно задавать цвет и метку по проекту; под каждой секцией показываются недавние/закрытые документы (из Windows Recent) для повторного открытия одним кликом.</Annotation>
+  <Keywords>claudebar, переключатель окон, Win32, EnumWindows, SetForegroundWindow, секции по приложению, недавние документы, Windows Recent, ShellExecute, Rust, настройки шрифта, ChooseFontW, терминалы, cmd, PowerShell, Git Bash, Windows Terminal, Проводник, CabinetWClass, ConsoleWindowClass</Keywords>
+  <Goals>
+    <Goal>Мгновенно переключиться на нужное окно</Goal>
+    <Goal>Визуально отличать проекты друг от друга</Goal>
+    <Goal>Быстро получить путь проекта/документа в буфер или открыть его расположение в Проводнике</Goal>
+    <Goal>Различать их в панели (цвет/метка/звоночек привязаны к нужному), видеть нумерацию дублей</Goal>
+    <Goal>Видеть окна в удобном порядке (новые внизу при recent)</Goal>
+    <Goal>Видеть, в каком проекте сейчас идёт работа, не переключаясь в окно</Goal>
+  </Goals>
+  <Users>
+    <User>Пользователь с десятками открытых окон редакторов/Office без вкладок; переключается между ними и помечает их.</User>
+    <User>Фоновый опрос: по таймеру (~1с) перечисляет окна и читает Windows Recent, обновляет панель.</User>
+  </Users>
+  <Constraints>
+    <Constraint>Только Windows; нативный exe без внешних зависимостей и установки.</Constraint>
+    <Constraint>Конфиг локальный (claudebar.ini рядом с exe), без сети.</Constraint>
+    <Constraint>Размер и «лёгкость» важны: панель не должна нагружать систему (опрос ~1с).</Constraint>
+  </Constraints>
+</GraceRequirements>

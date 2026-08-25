@@ -13,8 +13,8 @@
 //          UI-виджеты вынесены: состояние -> M-STATE, поле поиска -> M-SEARCHBOX, меню -> M-MENU, подсказки -> M-TOOLTIP, ввод метки -> M-PROMPT.
 //   DEPENDS: M-STATE, M-CONFIG, M-WINENUM, M-ACTIVATE, M-RENDER, M-RECENT, M-ICON, M-SIGNAL, M-SETTINGS, M-SEARCH, M-INDEX, M-SDAEMON, M-VOICE, M-AUDIO, M-STT, M-TRANSFORM, M-PASTE, M-PROMPT, M-TOOLTIP, M-SEARCHBOX, M-MENU
 //   LINKS: M-MAIN
-//   ROLE: ENTRY_POINT
-//   MAP_MODE: SUMMARY
+//   ROLE: RUNTIME
+//   MAP_MODE: EXPORTS
 //   NOTE: Рефактор god-object (FPF D-5) выполнен инкрементами 1-5: state -> prompt -> tooltip -> searchbox -> menu. main.rs 2137 -> ~1250 строк.
 // END_MODULE_CONTRACT
 //

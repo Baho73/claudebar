@@ -1,0 +1,46 @@
+<GraceVerificationDocument graceVersion="4.0">
+  <VD-SEARCH>
+    <V-M-SEARCH>
+      <Priority>high</Priority>
+      <Command>cargo test search</Command>
+      <Scenario>check: Ручной smoke: поиск «telegram» подсвечивает папки жёлтым (BM25 нативно, Python не запускается). Вторая половина проверки — «на пустом BM25 поднимается демон и появляются синие» — DORMANT: dense-ветка усыплена с Phase-13, проверять при оживлении Python-модуля (см. scenario-6)</Scenario>
+      <Scenario>success: fts_query Google-синтаксис: пробел=И (a b*); a+b=фраза («a b»); a++b=NEAR(a b, 10); -w=исключить ((q) NOT w); OR=или; последнее слово — префикс; кириллица сохраняется. Тест fts_query_operators</Scenario>
+      <Scenario>failure: fts_query санитизирует спецсимволы FTS5 (инъекция невозможна): ввод с кавычками/операторами -&gt; только \w+ токены</Scenario>
+      <Scenario>regression: Токен с внутренней пунктуацией (IP «187.124.242.233», url, дата, имя_файла) схлопывался санитайзером в один токен «187124242233» и не находился (индекс токенизирует по точкам). Фикс: words() дробит токен как unicode61, atom() ищет несколько под-слов фразой «187 124 242 233» (соседние). Тест fts_query_operators (IP-кейсы)</Scenario>
+      <Scenario>success: bm25_search против временной БД, созданной ПРОД-схемой (тест-фикстура seed_db зовёт index::init_schema + ручной INSERT в standalone chunks_fts(rowid,text), как индексатор) -&gt; верные папки по префиксу. Регрессия D-01: раньше тесты строили отдельную external-content схему (content='chunks'+триггер) ≠ прод, зелёный не доказывал боевой read-path; теперь схема одна (init_schema)</Scenario>
+      <Scenario>success: aggregate_to_folders: чанки нескольких папок -&gt; дедуп по папке, флаги bm25/dense, лучший чанк; color_of(bm25-only)=жёлтый, (dense-only)=синий</Scenario>
+      <Scenario>success: parse_dense_response: JSON демона -&gt; папки с dense-скором (ручной разбор, как recent.rs)</Scenario>
+      <Scenario>dormant: Оркестрация dense-fallback (пустой BM25 -&gt; M-SDAEMON) — ОТЛОЖЕНО (Phase-13): search() = BM25-only, dense-ветка усыплена. Проверять при оживлении dense-модуля (Python)</Scenario>
+      <Scenario>success: project_folders + folder_for_project (Phase-14): temp-БД (прод-схема) с project_folder «D:\Python\claudebar» (source='chat') и «D:\Python\other» (source='file'); project_folders -&gt; только chat-папка (file отброшен); чистый folder_for_project(&amp;folders, name) -&gt; «claudebar»/«CLAUDEBAR» Some (регистронезависимо), «нет-такого»/«other» None. Тест project_folders_and_match</Scenario>
+      <TestFiles>
+        <File>src/search.rs</File>
+      </TestFiles>
+    </V-M-SEARCH>
+    <V-M-INDEX>
+      <Priority>high</Priority>
+      <Command>cargo test index</Command>
+      <Scenario>check: Ручной smoke: после старта (авто-индекс) свежий проект (run-pig: «подстроечник») находится без ручной переиндексации</Scenario>
+      <Scenario>success: parse_transcript: jsonl -&gt; тексты user/assistant + project_folder из cwd; служебный/tool-шум отсеян</Scenario>
+      <Scenario>success: chunk_text: длинный текст -&gt; чанки ~512 слов (границы корректны, хвост не теряется)</Scenario>
+      <Scenario>success: ensure_index на temp dir с фейковыми jsonl -&gt; claudebar_chats.db (chunks+chunks_fts) заполнена; FTS5 MATCH находит слово</Scenario>
+      <Scenario>success: Инкремент по mtime: повторный ensure_index без изменений не переиндексирует (files_meta); изменённый файл — переиндексирует</Scenario>
+      <Scenario>failure: Битая/незнакомая строка jsonl -&gt; пропуск (skip), не паника; индексация продолжается</Scenario>
+      <Scenario>success: Ф-C: extract_text — txt/md дают текст, .mpp/неизвестное -&gt; None; strip_xml_text оставляет текстовые узлы; ensure_files_index пишет source='file', FTS5 находит слово, инкремент по mtime</Scenario>
+      <Scenario>regression: audit #4: индексатор исполняет чужие файлы из Windows Recent. (a) Кап: extract_text пропускает файлы &gt; MAX_INDEX_BYTES (50 МБ) -&gt; нет OOM на гигантских docx/pdf. (b) Паника: парсеры (lopdf/calamine/zip) обёрнуты в catch_unwind (профиль panic=unwind) -&gt; паника на битом файле ловится пер-файл, файл пропускается, индексатор и панель живы. Ручной smoke: битый/огромный файл в индексируемой папке не роняет панель</Scenario>
+      <TestFiles>
+        <File>src/index.rs</File>
+      </TestFiles>
+    </V-M-INDEX>
+    <V-M-SDAEMON>
+      <Priority>medium</Priority>
+      <Command>cargo test sdaemon (чистые parse_health/build_dense_request — реальны и зелены)</Command>
+      <Scenario>check: ОТЛОЖЕНО: ручной smoke живого демона (спавн clfind serve, /health ready, dense-запрос) — проверять при оживлении dense</Scenario>
+      <Scenario>success: parse_health: тело -&gt; cold|loading|ready; мусор -&gt; безопасный дефолт</Scenario>
+      <Scenario>success: build_dense_request: запрос -&gt; корректный HTTP POST /search (заголовки, тело JSON mode=dense)</Scenario>
+      <Scenario>failure: Демон недоступен/таймаут -&gt; dense пропускается без краха панели (только BM25)</Scenario>
+      <TestFiles>
+        <File>src/sdaemon.rs</File>
+      </TestFiles>
+    </V-M-SDAEMON>
+  </VD-SEARCH>
+</GraceVerificationDocument>

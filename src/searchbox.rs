@@ -7,7 +7,7 @@
 //   EFFECTS: своё: %APPDATA%\claudebar\search_history.txt (история запросов)
 //   REVERT:  удалить search_history.txt
 //   LINKS: M-SEARCHBOX
-//   ROLE: UI_COMPONENT
+//   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS
 //   NOTE: Вынесено из main.rs (рефактор god-object, FPF D-5). Сам поиск (M-SEARCH/M-INDEX, потоки, WM_APP_SEARCH) не здесь — здесь только окно ввода и история.
 // END_MODULE_CONTRACT

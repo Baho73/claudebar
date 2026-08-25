@@ -1,0 +1,57 @@
+<GraceVerificationIndex graceVersion="4.0">
+  <VerificationDocuments>
+    <VD-CORE>
+      <Path>verification/core.xml</Path>
+      <Owns>
+        <V-M-MAIN />
+        <V-M-STATE />
+        <V-M-CONFIG />
+        <V-M-SETTINGS />
+      </Owns>
+    </VD-CORE>
+    <VD-UI>
+      <Path>verification/ui.xml</Path>
+      <Owns>
+        <V-M-RENDER />
+        <V-M-ICON />
+        <V-M-TOOLTIP />
+        <V-M-PROMPT />
+        <V-M-SEARCHBOX />
+        <V-M-MENU />
+      </Owns>
+    </VD-UI>
+    <VD-WINDOWS>
+      <Path>verification/windows.xml</Path>
+      <Owns>
+        <V-M-WINENUM />
+        <V-M-ACTIVATE />
+        <V-M-RECENT />
+      </Owns>
+    </VD-WINDOWS>
+    <VD-SIGNALS>
+      <Path>verification/signals.xml</Path>
+      <Owns>
+        <V-M-SIGNAL />
+        <V-M-MAIL />
+      </Owns>
+    </VD-SIGNALS>
+    <VD-SEARCH>
+      <Path>verification/search.xml</Path>
+      <Owns>
+        <V-M-SEARCH />
+        <V-M-INDEX />
+        <V-M-SDAEMON />
+      </Owns>
+    </VD-SEARCH>
+    <VD-VOICE>
+      <Path>verification/voice.xml</Path>
+      <Owns>
+        <V-M-AUDIO />
+        <V-M-STT />
+        <V-M-TRANSFORM />
+        <V-M-VOICE />
+        <V-M-PASTE />
+      </Owns>
+    </VD-VOICE>
+  </VerificationDocuments>
+</GraceVerificationIndex>

@@ -3,9 +3,9 @@
 // START_MODULE_CONTRACT
 //   PURPOSE: Модальный prompt-диалог ввода одной строки (метка проекта): окно + EDIT + OK/Отмена.
 //   SCOPE: prompt_text(parent, hinst, initial) -> Option<String>; своя WNDCLASS + локальный модальный цикл.
-//   DEPENDS:
+//   DEPENDS: none (только Win32; диалог вызывается из M-MENU для ввода метки проекта)
 //   LINKS: M-PROMPT
-//   ROLE: UI_COMPONENT
+//   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS
 //   NOTE: Вынесено из main.rs (рефактор god-object, FPF D-5). Без зависимости от App/APP — чистый Win32-диалог.
 // END_MODULE_CONTRACT

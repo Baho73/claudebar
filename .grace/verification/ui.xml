@@ -1,0 +1,63 @@
+<GraceVerificationDocument graceVersion="4.0">
+  <VD-UI>
+    <V-M-RENDER>
+      <Priority>high</Priority>
+      <Command>cargo test render</Command>
+      <Scenario>success: build_rows группирует окна по приложению; свёрнутая секция не порождает строк содержимого</Scenario>
+      <Scenario>success: hit_test по координате Y возвращает правильную строку и зону (заголовок секции / окно / недавний)</Scenario>
+      <Scenario>success: v0.3 Phase-6: hit_test(x,y) по строке окна возвращает Zone::Close в правой зоне ✕ и Zone::Body иначе</Scenario>
+      <Scenario>success: v0.3 Phase-7: build_rows при &gt;6 недавних и !showall даёт 6 строк + Row::RecentMore; при showall — полный список</Scenario>
+      <Scenario>success: v0.3 Phase-8: build_rows применяет ручной порядок секций и окон; элементы без порядка идут после по прежней сортировке</Scenario>
+      <Scenario>success: v0.3 Phase-4: paint подсвечивает строку окна, чьё имя проекта присутствует в наборе bell</Scenario>
+      <Scenario>regression: Перетаскивание было необнаружимо (хватать только за 24px ручку, режим невидим). Фикс: в reorder hit_test отдаёт DragHandle для всей строки секции/окна; шапка показывает подсказку режима. Тест hit_test_reorder_gives_drag_handle</Scenario>
+      <Scenario>success: v0.4 Phase-9: paint рисует глиф «⚙» в шапке слева от «✕» (ручной smoke); зона клика «⚙» открывает меню настроек</Scenario>
+      <Scenario>success: v0.5 Phase-12: folder_project (basename пути в lower), search_color_for (открытый проект среди совпадений -&gt; цвет, иначе None), search_result_rows (закрытые совпадения -&gt; SearchHeader + SearchResult, открытые исключены). Тесты folder_project_basename_lower, search_color_and_result_rows. Глиф «🔍» в шапке, цветная полоса совпавших строк, блок «Найдено ещё» — ручной smoke</Scenario>
+      <Scenario>success: Phase-15/16: display_name даёт «basename» для одиночного проекта и «basename (N)» при дублях basename (первый без числа, № из реестра); build_rows порядок — ручной первичен, остальные по sort= (alpha=имя | recent=ordinal возр.), окно без позиции/ordinal в конец секции. Тесты display_name_numbers_duplicates, build_rows_order_modes</Scenario>
+      <Scenario>success: Phase-17→26 (историческое): индикатор работы эволюционировал — бегущие точки (Phase-17) → квадраты-сессии (Phase-25) → presence-квадраты по агенту (Phase-26). Актуальное поведение и покрытие — scenario-14/15; функции dots_for_frame и squares_to_draw удалены (тесты сняты вместе с ними, FPF D-19)</Scenario>
+      <Scenario>regression: Поиск в шапке не находил недавние документы/проекты (искал только project_folder в индексе чатов; имена RecentDoc не сравнивались). Фикс: name_matches (token-AND, подстрока, ci) + build_rows(query): при активном запросе недавние фильтруются по имени и показываются даже из свёрнутого под-блока и за лимитом «6», секция видна при окнах или совпавших недавних. Тесты name_matches_is_token_and_ci, recent_search_reveals_matches_ignoring_collapse_and_limit</Scenario>
+      <Scenario>success: Phase-25: paint рисует на строке окна квадраты-сессии — синие (C_BUSY) с пульсом яркости (работает, count_for_row по busy_sessions) и золотые (C_BELL_BAR) мигающие (готово, по done_sessions), кап MAX_SQUARES=5 (дальше «N»), справа от имени; заменяют бегущие точки busy, полоса-звоночек строки без изменений. Геометрия/кап (squares_layout) — юнит если чистая; визуал/анимация — ручной smoke (2 сессии -&gt; 2 квадрата; одна завершила -&gt; её квадрат золотой мигает)</Scenario>
+      <Scenario>success: Phase-26: редизайн квадратов (яркое мигание убрано). Простой -&gt; пустой нейтральный контур (C_IDLE) на КАЖДОЙ строке-окне; работает -&gt; приглушённый контур + бегущая змейка из SNAKE_DOTS точек по периметру (perimeter_point + draw_marching_dots, сдвиг по anim_frame); готово -&gt; РОВНАЯ золотая заливка (C_BELL_BAR, без мигания). Чистая perimeter_point (обход границы, rem_euclid оборот) — тест perimeter_point_walks_border; визуал — ручной smoke. Цвет по агенту (бирюза/фиолет) — step-2/3 (тег агента)</Scenario>
+      <Scenario>success: Phase-26 presence: paint рисует квадрат на КАЖДУЮ живую сессию (app.sessions/sess_matches_row), agent_color (Kimi фиолет C_KIMI; Claude/неизвестный бирюза C_BUSY); состояние Working-&gt;контур+змейка, Done-&gt;золото, Idle-&gt;контур; нет сессии на строке -&gt; нейтральный C_IDLE контур. Ручной smoke: Claude+Kimi в одном проекте -&gt; два квадрата разного цвета</Scenario>
+      <TestFiles>
+        <File>src/render.rs</File>
+      </TestFiles>
+    </V-M-RENDER>
+    <V-M-ICON>
+      <Priority>low</Priority>
+      <Command>cargo test icon</Command>
+      <Scenario>check: Ручной smoke: иконки приложений видны в заголовках секций (Code/Cursor/Word/Excel/MS Project)</Scenario>
+      <Scenario>success: section_icon возвращает HICON для окна; кэш не запрашивает повторно при успехе</Scenario>
+      <Scenario>failure: Окно без иконки -&gt; None, заголовок рисуется без иконки (без краха)</Scenario>
+      <Scenario>regression: Иконки не отображались у Cursor/Word/Excel/MS Project (источник WM_GETICON/class кросс-процессно ненадёжен). Фикс: иконка из exe-файла (SHGetFileInfo). Guard: icon_from_path("C:\Windows\explorer.exe") -&gt; Some</Scenario>
+      <TestFiles>
+        <File>src/icon.rs</File>
+      </TestFiles>
+    </V-M-ICON>
+    <V-M-TOOLTIP>
+      <Priority>low</Priority>
+      <Command>cargo test (debug компилируется; tooltip::{create_tooltip,arm_tip,show_tooltip,hide_tooltip} резолвятся в main.rs через use; импорт крейт-констант ID_TIP_TIMER/TIP_DELAY/TIP_SEARCHBOX и хелперов edit_text/recent_path)</Command>
+      <Scenario>success: Наведение на строку окна/недавнего/результата → через ~0.5с попап с путём/сниппетом; над строкой поиска → правила; попап привязан к монитору под курсором. Ручной smoke (UI-dwell). Рефактор (вынос tooltip из main.rs, FPF D-5) не меняет поведение — 102/102 до и после</Scenario>
+    </V-M-TOOLTIP>
+    <V-M-PROMPT>
+      <Priority>low</Priority>
+      <Command>cargo test (debug компилируется; prompt::prompt_text резолвится из main.rs)</Command>
+      <Scenario>success: Меню окна «Метка» → диалог; ввод + OK возвращает строку, Отмена/крестик → None. Ручной smoke (UI-модальность). Рефактор (вынос prompt из main.rs, FPF D-5) не меняет поведение — 102/102 до и после</Scenario>
+    </V-M-PROMPT>
+    <V-M-SEARCHBOX>
+      <Priority>medium</Priority>
+      <Command>cargo test (debug компилируется; on_command/ctl_color_edit подключены в wndproc вместо инлайновых веток ID_SEARCH/ID_HIST_LIST/WM_CTLCOLOREDIT)</Command>
+      <Scenario>success: Ввод ≥3 символов → живой BM25 (run_live_search через on_command/EN_CHANGE); Enter → commit_search_enter; Esc → очистка поля; ✕ очищает, ▾ открывает историю; стрелки ↑↓ ходят по истории, Enter подставляет</Scenario>
+      <Scenario>success: История переживает перезапуск (%APPDATA%\claudebar\search_history.txt); дедуп и лимит 15; запрос пишется при потере фокуса и при очистке</Scenario>
+      <Scenario>success: Поле остаётся голубым (ctl_color_edit возвращает кэш-кисть); cue меняется на «⏳ Индексирую файлы…» во время индексации и обратно по WM_APP_SEARCH</Scenario>
+      <Scenario>failure: Рефактор (вынос из main.rs, FPF D-5) не меняет поведение — 102/102 и 0 warnings до и после; ручной smoke UI обязателен (субкласс/фокус не покрыты автотестами)</Scenario>
+    </V-M-SEARCHBOX>
+    <V-M-MENU>
+      <Priority>medium</Priority>
+      <Command>cargo test (debug компилируется; show_menu/show_settings_menu/handle_command/MENU_ACTIVE резолвятся в wndproc через use menu::{...})</Command>
+      <Scenario>success: ПКМ по строке окна → меню с палитрой и меткой; ПКМ по недавнему/результату → minimal-меню (только путь/проводник); «Скопировать ссылку» кладёт путь в буфер, «Открыть в проводнике» открывает папку или /select для документа</Scenario>
+      <Scenario>success: ⚙ → галочки отражают конфиг; переключение персистится (config.save) и применяется сразу: шрифт → rebuild_fonts, сортировка → rebuild_rows, «+Файлы» → spawn_files_index + cue + run_live_search</Scenario>
+      <Scenario>failure: Меню не закрывается само: пока открыто, MENU_ACTIVE=true и WM_TIMER в wndproc выходит сразу (Phase-14 regression — dwell-тултип 0.5с и refresh 1с не трогают окно)</Scenario>
+      <Scenario>failure: Тоггл «Микрофон всегда включён» во время записи игнорируется: config не меняется, в лог идёт «ID_MIC_ALWAYS: игнор» (FPF D-14)</Scenario>
+    </V-M-MENU>
+  </VD-UI>
+</GraceVerificationDocument>

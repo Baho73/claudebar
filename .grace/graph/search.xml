@@ -1,0 +1,16 @@
+<GraceGraphDocument graceVersion="4.0">
+  <GD-SEARCH>
+    <M-SEARCH>
+      <Summary>Поиск по чатам: нативный BM25 (rusqlite поверх своей claudebar_chats.db FTS5, ro) с агрегацией по project_folder, цвет жёлтый. snippet_for — фраза-сниппет для тултипа. Dense отложен (M-SDAEMON dormant). Phase-13.</Summary>
+      <Path>src/search.rs</Path>
+    </M-SEARCH>
+    <M-INDEX>
+      <Summary>Rust-индексатор BM25: транскрипты Claude Code (~/.claude/projects/**/*.jsonl) -&gt; чанки -&gt; FTS5 claudebar_chats.db; позже доки history -&gt; claudebar_files.db. Инкремент по mtime; авто-запуск при старте + по таймеру (фон). Заменяет Python-сборку BM25; clfind остаётся для отложенного dense. Phase-13.</Summary>
+      <Path>src/index.rs</Path>
+    </M-INDEX>
+    <M-SDAEMON>
+      <Summary>DORMANT (Phase-13: dense отложен, не вызывается; оживёт с Python-модулем смысла). Клиент Python-демона clfind (только dense): спавн `clfind serve` при молчащем /health (команда из M-CONFIG.search_daemon_cmd, pythonw без консоли), поллинг /health до ready, dense-запрос HTTP POST /search через std::net (без HTTP-крейта). Phase-12. [статус: dormant]</Summary>
+      <Path>src/sdaemon.rs</Path>
+    </M-SDAEMON>
+  </GD-SEARCH>
+</GraceGraphDocument>

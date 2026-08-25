@@ -1,0 +1,36 @@
+<GraceVerificationDocument graceVersion="4.0">
+  <VD-WINDOWS>
+    <V-M-WINENUM>
+      <Priority>high</Priority>
+      <Command>cargo test win_enum</Command>
+      <Scenario>success: extract_name извлекает проект из "file - Project - Visual Studio Code" и документ из "Doc.docx - Word"</Scenario>
+      <Scenario>success: Заголовок без " - " -&gt; весь заголовок как имя; ведущие маркеры (точка несохранённого) обрезаются</Scenario>
+      <Scenario>regression: MS Project: заголовок "App - Файл" (имя приложения первым) -&gt; DocumentLast берёт имя файла из последнего сегмента</Scenario>
+      <Scenario>success: v0.4: match_windows с предикатом класса — explorer.exe+CabinetWClass матчится в Проводник; explorer.exe с иным классом (Shell_TrayWnd) отбрасывается</Scenario>
+      <Scenario>success: v0.4: NameMode::Whole возвращает весь заголовок (папка "A - B" не режется по " - ")</Scenario>
+      <Scenario>success: v0.4: console_client по snapshot pid-&gt;parent классифицирует консоль: conhost с родителем cmd.exe -&gt; cmd; с powershell.exe/pwsh.exe -&gt; PowerShell; нет клиента -&gt; None (окно не показывается)</Scenario>
+      <Scenario>success: Phase-15: extract_project_path находит полный путь в заголовке — "claudebar — D:\Python\claudebar - Visual Studio Code" -&gt; Some("D:\Python\claudebar"); UNC \\server\share\proj -&gt; Some; заголовок без пути ("Doc.docx - Word") -&gt; None; имя файла не принимается за путь. match_windows заполняет WinItem.path</Scenario>
+      <TestFiles>
+        <File>src/win_enum.rs</File>
+      </TestFiles>
+    </V-M-WINENUM>
+    <V-M-ACTIVATE>
+      <Priority>medium</Priority>
+      <Command>Ручной smoke: переключение между окнами работает</Command>
+      <Scenario>success: Свёрнутое окно восстанавливается и выходит на передний план</Scenario>
+      <Scenario>success: v0.3 Phase-6: close(hwnd) отправляет WM_CLOSE; приложение показывает диалог сохранения; окно закрывается штатно (ручной smoke)</Scenario>
+    </V-M-ACTIVATE>
+    <V-M-RECENT>
+      <Priority>high</Priority>
+      <Command>cargo test recent</Command>
+      <Scenario>success: Фильтр по расширению относит .docx-&gt;Word, .xlsx-&gt;Excel, .mpp-&gt;Project</Scenario>
+      <Scenario>success: Документ, открытый сейчас (по basename без расширения), исключается из недавних</Scenario>
+      <Scenario>success: Недавние проекты редакторов: decode_file_uri (file:///d%3A/... -&gt; d:\...) и extract_target (folder/workspace) из workspace.json</Scenario>
+      <Scenario>success: v0.3 Phase-7: при &gt;6 недавних list_recent возвращает все до STORE_LIMIT (~50), отсортированные по mtime убыв.; жёсткий лимит 6 снят</Scenario>
+      <Scenario>regression: audit #1: decode_file_uri паниковал "not a char boundary" на срезе &amp;s[i+1..i+3], когда '%' стоит перед многобайтовым символом (3-байтным и др.) — на UI-таймере при panic=abort роняло панель. Фикс: побайтное декодирование (hex2). Тест decode_file_uri_no_panic_on_multibyte_after_percent</Scenario>
+      <TestFiles>
+        <File>src/recent.rs</File>
+      </TestFiles>
+    </V-M-RECENT>
+  </VD-WINDOWS>
+</GraceVerificationDocument>

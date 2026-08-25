@@ -1,0 +1,18 @@
+<GraceGraphDocument graceVersion="4.0">
+  <GD-WINDOWS>
+    <M-WINENUM>
+      <Summary>Перечисление видимых top-level окон, определение приложения по имени процесса И классу окна, извлечение имени проекта/документа из заголовка по правилам приложения. v0.4: класс окна (GetClassNameW) в кортеже окна; для классической консоли (ConsoleWindowClass) реальный shell (cmd/powershell/pwsh) разрешается по дереву процессов через conhost.</Summary>
+      <Path>src/win_enum.rs</Path>
+      <M-CONFIG />
+    </M-WINENUM>
+    <M-ACTIVATE>
+      <Summary>Управление чужим окном: надёжная активация (restore из свёрнутого, AttachThreadInput-трюк, SetForegroundWindow, SetFocus) и штатное закрытие (PostMessage WM_CLOSE)</Summary>
+      <Path>src/activate.rs</Path>
+    </M-ACTIVATE>
+    <M-RECENT>
+      <Summary>Чтение Windows Recent (%APPDATA%\Microsoft\Windows\Recent\*.lnk через IShellLinkW), фильтр по расширению на приложение, исключение открытых сейчас, открытие документа через ShellExecuteW. Плюс недавние проекты редакторов (VS Code/Cursor) из workspaceStorage (workspace.json -&gt; папка), открываемые запуском редактора (OpenCmd::Editor). v0.3: жёсткий лимит 6 снят (хранить до ~50 на приложение, сорт. по mtime); обрезку до 6 решает M-RENDER через «показать все».</Summary>
+      <Path>src/recent.rs</Path>
+      <M-CONFIG />
+    </M-RECENT>
+  </GD-WINDOWS>
+</GraceGraphDocument>

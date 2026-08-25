@@ -1,0 +1,52 @@
+<GraceGraphDocument graceVersion="4.0">
+  <GD-UI>
+    <M-RENDER>
+      <Summary>Построение списка типизированных строк (заголовок секции, окно, под-заголовок недавних, недавний документ, «показать все»), отрисовка через GDI с двойной буферизацией, зональный hit-testing, контекст-меню цвет/метка. v0.3: иконки секций (M-ICON), кнопка ✕ и ручки drag, подсветка «звенящих» строк, ручной порядок. v0.4: глиф «⚙» (настройки) в шапке рядом с «✕».</Summary>
+      <Path>src/render.rs</Path>
+      <M-STATE />
+      <M-CONFIG />
+      <M-WINENUM />
+      <M-RECENT />
+      <M-ICON />
+      <M-SEARCH />
+      <M-SIGNAL />
+      <M-VOICE />
+    </M-RENDER>
+    <M-ICON>
+      <Summary>Иконка приложения для заголовка секции: взять у exe-файла приложения (SHGetFileInfo по полному пути процесса окна), кэшировать по приложению; рисуется через DrawIconEx в M-RENDER</Summary>
+      <Path>src/icon.rs</Path>
+    </M-ICON>
+    <M-TOOLTIP>
+      <Summary>Собственный popup-тултип (Phase-13 Ф-B): окно подсказки (WNDCLASS ClbarTip), dwell-таймер, позиционирование по рабочей области монитора под курсором, текст цели (правила поиска / полный путь-имя окна / путь+сниппет). Вынесено из main.rs (рефактор god-object, FPF D-5). Константы dwell (ID_TIP_TIMER/TIP_DELAY/TIP_SEARCHBOX) и хелперы edit_text/recent_path делит wndproc — остаются в M-MAIN, импортируются сюда.</Summary>
+      <Path>src/tooltip.rs</Path>
+      <M-STATE />
+      <M-RENDER />
+      <M-SEARCH />
+      <M-RECENT />
+    </M-TOOLTIP>
+    <M-PROMPT>
+      <Summary>Модальный prompt-диалог ввода одной строки (метка проекта): своя WNDCLASS + EDIT + OK/Отмена + локальный модальный цикл. Вынесено из main.rs (рефактор god-object, FPF D-5). Не зависит от App/APP — чистый Win32-диалог.</Summary>
+      <Path>src/prompt.rs</Path>
+    </M-PROMPT>
+    <M-SEARCHBOX>
+      <Summary>Виджет поиска в шапке: EDIT-поле (субкласс Enter/Esc/стрелки, значок ✕/▾, hover-тултип), выпадающий LISTBOX истории запросов с персистом в %APPDATA%\claudebar\search_history.txt, цвет поля (WM_CTLCOLOREDIT) и cue-подсказка (индикатор индексации). Вынесено из main.rs (рефактор god-object, FPF D-5). Сам поиск (M-SEARCH/M-INDEX, потоки, WM_APP_SEARCH) остаётся оркестрацией в M-MAIN — модуль зовёт run_live_search/commit_search_enter обратно.</Summary>
+      <Path>src/searchbox.rs</Path>
+      <M-STATE />
+      <M-RENDER />
+      <M-TOOLTIP />
+      <M-MAIN />
+    </M-SEARCHBOX>
+    <M-MENU>
+      <Summary>Контекст-меню по ПКМ (ссылка/проводник + палитра цветов + метка; minimal=true для недавних/результатов) и ⚙-меню настроек (шрифт, поиск в файлах, полные пути, сортировка, 4 галочки диктовки, о программе), плюс обработчик всех команд меню и хелперы буфера обмена/Explorer. Вынесено из main.rs (рефактор god-object, FPF D-5). Флаг MENU_ACTIVE живёт здесь — wndproc читает его, чтобы тики таймера не закрывали модальный TrackPopupMenu (Phase-14 fix).</Summary>
+      <Path>src/menu.rs</Path>
+      <M-STATE />
+      <M-CONFIG />
+      <M-SETTINGS />
+      <M-PROMPT />
+      <M-TOOLTIP />
+      <M-VOICE />
+      <M-SEARCHBOX />
+      <M-MAIN />
+    </M-MENU>
+  </GD-UI>
+</GraceGraphDocument>

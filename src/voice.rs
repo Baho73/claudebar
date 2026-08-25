@@ -147,7 +147,7 @@ pub fn vlog(msg: &str) {
     }
 }
 
-// START_BLOCK_HEALTH (Phase-27): фоновая проверка «сервер whisper поднят».
+// Phase-27: фоновая проверка «сервер whisper поднят».
 // Опрос делает TCP-connect (блокирует до таймаута) — только в отдельном потоке, никогда на UI.
 // Стартовое значение true: пока первый опрос не прошёл, не мигаем красным баннером на ровном месте.
 static WHISPER_OK: AtomicBool = AtomicBool::new(true);
@@ -193,9 +193,9 @@ pub fn spawn_health_check(hwnd: HWND, url: String) {
 
 // Сообщение «статус whisper сменился» -> UI перерисовывает баннер (WM_APP+1..+3 заняты).
 pub const WM_APP_HEALTH: u32 = WM_APP + 4;
-// END_BLOCK_HEALTH
 
-// START_BLOCK_MIC_ERROR: последняя ошибка захвата микрофона — для баннера.
+// START_BLOCK_MIC_ERROR
+// последняя ошибка захвата микрофона — для баннера.
 // Пустая строка = ошибки нет. Живёт в статике (а не в App), чтобы M-AUDIO/M-VOICE могли
 // сообщить об отказе, не зная про состояние UI; UI забирает на тике, как whisper_ok.
 static MIC_ERROR: Mutex<String> = Mutex::new(String::new());

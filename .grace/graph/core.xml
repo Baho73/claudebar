@@ -1,0 +1,44 @@
+<GraceGraphDocument graceVersion="4.0">
+  <GD-CORE>
+    <M-MAIN>
+      <Summary>Точка входа: GetModuleHandle, регистрация класса, создание topmost-окна, таймер опроса, message loop, диспетчеризация в обработчики. v0.3: опрос M-SIGNAL (bell_keys + reconcile) на тике, проброс bell в paint, зоны клика и режим reorder. v0.4: шрифт панели читается из конфига (make_font(face,…)); «⚙» в шапке открывает меню настроек → M-SETTINGS.choose_font → rebuild_fonts + repaint. v0.5 (Phase-14): в меню окна «Скопировать ссылку»/«Открыть в проводнике» — путь проекта (M-SEARCH.folder_for_project) или документа (фоновая карта doc_paths из Recent .lnk). Phase-15/16: идентичность проекта по полному пути из заголовка (extract_project_path) + нумерация дублей «(N)»; пункт ⚙ «Полные пути» (configure_editor_titles); настройка порядка окон sort=alpha|recent с картой ordinal первого появления. [статус: partial]</Summary>
+      <Path>src/main.rs</Path>
+      <M-STATE />
+      <M-CONFIG />
+      <M-WINENUM />
+      <M-ACTIVATE />
+      <M-RENDER />
+      <M-RECENT />
+      <M-SIGNAL />
+      <M-SETTINGS />
+      <M-SEARCH />
+      <M-INDEX />
+      <M-VOICE />
+      <M-PASTE />
+      <M-PROMPT />
+      <M-TOOLTIP />
+      <M-SEARCHBOX />
+      <M-MENU />
+      <M-MAIL />
+    </M-MAIN>
+    <M-STATE>
+      <Summary>Держатель состояния панели: структура App (окна/недавние/строки/конфиг/шрифты/сигналы/сессии/поиск/голос) и thread_local APP на UI-потоке. Логики нет. Вынесено из main.rs (рефактор god-object, FPF D-5) — развязка для отделения UI-кусков (tooltip/searchbox/menu/prompt) в свои файлы.</Summary>
+      <Path>src/state.rs</Path>
+      <M-CONFIG />
+      <M-WINENUM />
+      <M-RECENT />
+      <M-RENDER />
+      <M-SEARCH />
+      <M-SIGNAL />
+      <M-VOICE />
+    </M-STATE>
+    <M-CONFIG>
+      <Summary>Чтение/запись claudebar.ini: определения приложений (процесс+класс-блок-расширения), цвета и метки по проекту, свёрнутость секций, раскрытие/«показать все» недавних, ручной порядок секций и окон, позиция панели, шрифт панели. v0.4: настройки шрифта (font_face/font_size, ключ font=); расширенный AppDef (proc_alts, class) и набор приложений для терминалов и Проводника.</Summary>
+      <Path>src/config.rs</Path>
+    </M-CONFIG>
+    <M-SETTINGS>
+      <Summary>Окно настроек и сведений панели: нативный выбор шрифта (ChooseFontW) предзаполненный текущей гарнитурой/размером (возвращает (face, size, weight) или None); окно «О программе» (версия + Telegram/GitHub автора). Хранение значений — в M-CONFIG; меню вызова — в M-MAIN. Заготовка под будущие настройки (цвета, размер строки, угол).</Summary>
+      <Path>src/settings.rs</Path>
+    </M-SETTINGS>
+  </GD-CORE>
+</GraceGraphDocument>
