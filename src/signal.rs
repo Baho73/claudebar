@@ -4,13 +4,8 @@
 //   PURPOSE: «Звоночек» завершения ИИ: читать файлы-сигналы из %APPDATA%\claudebar\signals\, отдавать проекты для подсветки, гасить сигнал при фокусе окна проекта.
 //   SCOPE: путь папки сигналов, парсинг .signal (cwd проекта), ключ проекта (basename) + полный cwd, наборы «звенящих» (basename и cwd), сброс по фокусу с матчем по полному пути.
 //   DEPENDS: M-WINENUM (сопоставление сигнала с открытым окном по полному пути WinItem.path, иначе по basename)
-//   EFFECTS: своё: создаёт каталог %APPDATA%\claudebar\signals\; УДАЛЯЕТ оттуда *.signal
-//                  при фокусе окна проекта (reconcile).
-//            чужое: сами файлы *.busy / *.alive / *.signal пишут хуки агентов
-//                   (hooks\claudebar-*.ps1), а не этот модуль — владение общее.
-//   REVERT:  удалить каталог signals\ целиком. Отдельно: снять блоки хуков из
-//            ~/.claude/settings.json и ~/.kimi-code/config.toml — иначе они будут
-//            звать несуществующие скрипты. Долг: деинсталлятора хуков нет.
+//   EFFECTS: своё: создаёт %APPDATA%\claudebar\signals\ и УДАЛЯЕТ оттуда *.signal при фокусе окна проекта (reconcile); чужое: сами файлы *.busy/*.alive/*.signal пишут хуки агентов (hooks\claudebar-*.ps1), владение общее
+//   REVERT: удалить каталог signals\ целиком; ОТДЕЛЬНО снять блоки хуков из ~/.claude/settings.json и ~/.kimi-code/config.toml — иначе зовут несуществующие скрипты. Долг: деинсталлятора хуков нет, а сами хуки вне src и контракта не имеют
 //   LINKS: M-SIGNAL
 //   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS

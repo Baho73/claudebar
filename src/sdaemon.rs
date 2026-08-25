@@ -4,10 +4,8 @@
 //   PURPOSE: Клиент Python-демона clfind (dense-поиск): спавн `clfind serve` при молчащем /health, поллинг до доступности, dense-запрос по HTTP через std::net (без HTTP-крейта).
 //   SCOPE: Model (статус модели); parse_health/build_dense_request (чистые, тестируемые); health/dense_search/ensure_running (интеграция: TcpStream + спавн процесса).
 //   DEPENDS: none (команда запуска и порт приходят параметрами из M-CONFIG)
-//   EFFECTS: процесс: спавнит внешний демон `clfind serve` (порт 8799), который
-//                     переживает нашу панель.
-//   REVERT:  остановить демон при выходе. Долг: остановки нет — процесс остаётся
-//            висеть. Сейчас не жжёт только потому, что модуль dormant (не вызывается).
+//   EFFECTS: процесс: спавнит внешний демон `clfind serve` (порт 8799), переживающий нашу панель
+//   REVERT: остановить демон при выходе; долг — остановки нет, процесс остаётся висеть (пока не жжёт: модуль dormant)
 //   LINKS: M-SDAEMON
 //   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS

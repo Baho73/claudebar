@@ -4,9 +4,8 @@
 //   PURPOSE: Rust-индексатор BM25. Чаты: транскрипты Claude Code (~/.claude/projects/**/*.jsonl) -> FTS5 claudebar_chats.db. Файлы (Ф-C): доки history (txt/md/xer/код/xlsx/docx/pptx/pdf) -> FTS5 claudebar_files.db. Инкремент по mtime. Свои базы (заменяют Python-сборку BM25; clfind остаётся для отложенного dense). Phase-13.
 //   SCOPE: init_schema (DDL), parse_transcript/chunk_text/extract_text/strip_xml_text (чистые/тестируемые), ensure_index (чаты) и ensure_files_index (файлы) — инкрементальный обход + запись.
 //   DEPENDS: none (пути базы и корень индексации приходят параметрами через M-MAIN из M-CONFIG; внешние крейты не GRACE-модули)
-//   EFFECTS: своё: %APPDATA%\claudebar\claudebar_chats.db и claudebar_files.db;
-//                  режим WAL добавляет к каждой ещё -wal и -shm
-//   REVERT:  удалить обе базы вместе с их -wal и -shm (пересоздаются индексацией)
+//   EFFECTS: своё: %APPDATA%\claudebar\claudebar_chats.db и claudebar_files.db (режим WAL добавляет к каждой ещё -wal и -shm)
+//   REVERT: удалить обе базы вместе с их -wal и -shm — пересоздаются индексацией
 //   LINKS: M-INDEX
 //   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS

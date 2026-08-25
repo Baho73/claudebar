@@ -4,14 +4,8 @@
 //   PURPOSE: Настройки и сведения панели: нативный выбор шрифта (ChooseFontW); окно «О программе»; включение полных путей в заголовках редакторов (window.title с ${rootPath}).
 //   SCOPE: choose_font (модальный диалог -> (face, size, weight) или None), parse_face (чистое), about_text (чистое), show_about (модальный MessageBox), set_window_title (чистое: правка settings.json без порчи JSONC), configure_editor_titles (бэкап+запись settings.json VS Code/Cursor).
 //   DEPENDS: none (serde_json — внешний крейт для строгого JSON, не модуль)
-//   EFFECTS: чужое: ключ "window.title" в %APPDATA%\Code\User\settings.json и
-//                   %APPDATA%\Cursor\User\settings.json (файлы принадлежат редакторам,
-//                   мы правим ОДИН ключ, остальное не трогаем);
-//                   рядом кладём бэкап settings.json.claudebar-bak
-//   REVERT:  вернуть прежнее значение window.title из .claudebar-bak; если бэкапа нет —
-//            удалить только наш ключ, файл целиком НЕ трогать и не перезаписывать.
-//            Долг: отката нет в коде, и бэкап перезаписывается при каждой записи —
-//            то есть исходное значение теряется после второго вызова.
+//   EFFECTS: чужое: ключ "window.title" в settings.json редакторов (%APPDATA%\Code\User\, %APPDATA%\Cursor\User\) — правим ОДИН ключ, остальное не трогаем; рядом кладём бэкап settings.json.claudebar-bak
+//   REVERT: вернуть window.title из .claudebar-bak; без бэкапа — удалить ТОЛЬКО наш ключ, файл не перезаписывать. Долг: отката нет в коде, бэкап перезаписывается при каждой записи (исходное значение теряется со второго вызова)
 //   LINKS: M-SETTINGS
 //   ROLE: RUNTIME
 //   MAP_MODE: EXPORTS
